@@ -96,6 +96,10 @@ export const paymentIngresses = sqliteTable(
 		lastLatencyMs: integer("last_latency_ms"),
 		lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
 		lastErrorCode: text("last_error_code"),
+		timeoutMs: integer("timeout_ms"),
+		blockLookback: integer("block_lookback"),
+		logBlockRange: integer("log_block_range"),
+		maxScanTransactions: integer("max_scan_transactions"),
 		...timestamps,
 	},
 	(table) => [

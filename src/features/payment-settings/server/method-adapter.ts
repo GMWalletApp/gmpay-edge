@@ -16,6 +16,10 @@ type MethodConnection = {
 	transport: "http" | "websocket";
 	endpoint: string | null;
 	api_key: string | null;
+	timeout_ms: number | null;
+	block_lookback: number | null;
+	log_block_range: number | null;
+	max_scan_transactions: number | null;
 	asset_code: string;
 	rail_code: string;
 	asset_kind: "native" | "token" | "external";
@@ -83,6 +87,7 @@ export async function createPaymentMethodAdapters(
 	const rows = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code,
 			 pa.rail_code,
 			 pa.kind AS asset_kind, pa.contract_address, pa.decimals,
@@ -150,6 +155,7 @@ export async function createPaymentConnectionAdapter(
 	const connection = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
@@ -175,6 +181,7 @@ export async function loadPaymentConnectionHealthTargets(
 	const connections = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
@@ -209,6 +216,7 @@ export async function loadPaymentConnectionHealthTargetsByIds(
 	const connections = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
@@ -258,6 +266,10 @@ async function createAdapter(
 		return new EvmAdapter({
 			rpcUrl: endpoint,
 			apiKey: connection.api_key || undefined,
+			timeoutMs: connection.timeout_ms ?? undefined,
+			blockLookback: connection.block_lookback ?? undefined,
+			logBlockRange: connection.log_block_range ?? undefined,
+			maxScanTransactions: connection.max_scan_transactions ?? undefined,
 			network: connection.rail_code,
 			nativeAsset: nativeAsset(connection),
 			tokens: tokenConfiguration(connection, "address"),

@@ -322,6 +322,71 @@ describe("EVM adapter", () => {
 		]);
 	});
 
+	it("uses provider-safe scan defaults", () => {
+		expect(adapter().config).toMatchObject({
+			timeoutMs: 30_000,
+			logBlockRange: 500,
+		});
+	});
+
+	it("reduces rejected JSON-RPC log ranges and keeps the successful size", async () => {
+		const ranges: Array<[number, number]> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(async (_url, init) => {
+				const request = JSON.parse(String((init as RequestInit).body)) as {
+					method: string;
+					params: Array<{ fromBlock: string; toBlock: string }>;
+				};
+				if (request.method === "eth_blockNumber") return rpc("0x3e8");
+				const [range] = request.params;
+				if (!range) throw new Error("Expected an eth_getLogs range");
+				const from = Number.parseInt(range.fromBlock.slice(2), 16);
+				const to = Number.parseInt(range.toBlock.slice(2), 16);
+				ranges.push([from, to]);
+				return to - from + 1 > 500 ? rpcError(-32_005) : rpc([]);
+			}),
+		);
+		await new EvmAdapter({
+			rpcUrl: "https://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			logBlockRange: 1000,
+			tokens: { USDT: { address: usdt, decimals: 6 } },
+		}).findTransactions({
+			address: recipient,
+			assetCode: "USDT",
+			sinceBlock: 1n,
+		});
+		expect(ranges).toEqual([
+			[1, 1000],
+			[1, 500],
+			[501, 1000],
+		]);
+	});
+
+	it("does not split HTTP provider failures", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(rpc("0x3e8"))
+			.mockResolvedValueOnce(new Response(null, { status: 429 }));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(
+			new EvmAdapter({
+				rpcUrl: "https://rpc.example",
+				network: "ethereum",
+				nativeAsset: "ETH",
+				logBlockRange: 1000,
+				tokens: { USDT: { address: usdt, decimals: 6 } },
+			}).findTransactions({
+				address: recipient,
+				assetCode: "USDT",
+				sinceBlock: 1n,
+			}),
+		).rejects.toThrow();
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
 	it("rejects a sinceBlock outside the configured scan window", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(rpc("0x1e"));
 		vi.stubGlobal("fetch", fetchMock);
@@ -412,6 +477,19 @@ function rpc(result: unknown) {
 		status: 200,
 		headers: { "content-type": "application/json" },
 	});
+}
+function rpcError(code: number) {
+	return new Response(
+		JSON.stringify({
+			jsonrpc: "2.0",
+			id: 1,
+			error: { code, message: "rejected" },
+		}),
+		{
+			status: 200,
+			headers: { "content-type": "application/json" },
+		},
+	);
 }
 function topic(address: string) {
 	return `0x${address.slice(2).padStart(64, "0")}`;

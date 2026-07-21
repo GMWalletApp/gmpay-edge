@@ -31,9 +31,9 @@ const configSchema = z.object({
 		)
 		.default({}),
 	apiKey: z.string().optional(),
-	timeoutMs: z.number().int().min(1000).max(30_000).default(8000),
+	timeoutMs: z.number().int().min(1000).max(30_000).default(30_000),
 	blockLookback: z.number().int().min(1).max(20_000).default(3000),
-	logBlockRange: z.number().int().min(1).max(20_000).default(1000),
+	logBlockRange: z.number().int().min(1).max(20_000).default(500),
 	maxScanTransactions: z.number().int().min(1).max(10_000).default(1000),
 });
 export type EvmConfig = z.infer<typeof configSchema>;
@@ -441,18 +441,14 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 		counters: ProviderOperationCounters,
 	) {
 		const rows: z.infer<typeof logSchema>[] = [];
-		for (
-			let rangeStart = from;
-			rangeStart <= latest;
-			rangeStart += this.config.logBlockRange
-		) {
+		let rangeStart = from;
+		let blockRange = this.config.logBlockRange;
+		while (rangeStart <= latest) {
 			counters.page();
-			const rangeEnd = Math.min(
-				latest,
-				rangeStart + this.config.logBlockRange - 1,
-			);
-			const batch = z.array(logSchema).parse(
-				await this.rpc(
+			const rangeEnd = Math.min(latest, rangeStart + blockRange - 1);
+			let rawBatch: unknown;
+			try {
+				rawBatch = await this.rpc(
 					"eth_getLogs",
 					[
 						{
@@ -465,11 +461,23 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 					deadlineAt,
 					undefined,
 					counters,
-				),
-			);
+				);
+			} catch (error) {
+				if (
+					blockRange > 1 &&
+					error instanceof JsonRpcRequestError &&
+					error.rpcCode != null
+				) {
+					blockRange = Math.max(1, Math.floor(blockRange / 2));
+					continue;
+				}
+				throw error;
+			}
+			const batch = z.array(logSchema).parse(rawBatch);
 			if (rows.length + batch.length > this.config.maxScanTransactions)
 				throw new Error("EVM scan exceeded the configured transaction limit");
 			rows.push(...batch);
+			rangeStart = rangeEnd + 1;
 		}
 		const blocks = new Map<string, z.infer<typeof blockSchema>>();
 		const normalized: NormalizedTransaction[] = [];

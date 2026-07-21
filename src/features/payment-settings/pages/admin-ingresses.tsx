@@ -86,6 +86,7 @@ export function PaymentIngressesPage() {
 	const [editingChain, setEditingChain] = useState<IngressRow | null>(null);
 	const [editingProviderWebhook, setEditingProviderWebhook] =
 		useState<EditableProviderWebhookIngress | null>(null);
+	const [newConnectionRailCode, setNewConnectionRailCode] = useState("");
 	const page = useQuery(paymentIngressesQueryOptions);
 	const rows = page.data?.ingresses ?? [];
 	const rails = page.data?.rails ?? [];
@@ -319,6 +320,9 @@ export function PaymentIngressesPage() {
 								<ModalForm
 									title={m.infrastructure_connection_new()}
 									description={m.infrastructure_connection_new_description()}
+									onOpenChange={(open) => {
+										if (!open) setNewConnectionRailCode("");
+									}}
 									trigger={
 										<ProButton>{m.infrastructure_connection_new()}</ProButton>
 									}
@@ -327,28 +331,41 @@ export function PaymentIngressesPage() {
 										{
 											name: "railCode",
 											label: m.infrastructure_access_target(),
-											valueType: "select",
 											required: true,
-											fieldProps: {
-												searchable: true,
-												options: rails
-													.filter((rail) => rail.kind === "chain")
-													.map((rail) => ({
-														label: (
-															<NetworkLabel
-																displayName={rail.name}
-																network={rail.code}
-															/>
-														),
-														searchText: `${rail.name} ${rail.code}`,
-														value: rail.code,
-													})),
-											},
+											render: (field) => (
+												<Select
+													ariaLabel={m.infrastructure_access_target()}
+													required
+													searchable
+													value={String(field.value ?? "")}
+													onChange={(value) => {
+														const railCode =
+															typeof value === "string" ? value : "";
+														field.onChange(railCode);
+														setNewConnectionRailCode(railCode);
+													}}
+													options={rails
+														.filter((rail) => rail.kind === "chain")
+														.map((rail) => ({
+															label: (
+																<NetworkLabel
+																	displayName={rail.name}
+																	network={rail.code}
+																/>
+															),
+															searchText: `${rail.name} ${rail.code}`,
+															value: rail.code,
+														}))}
+												/>
+											),
 										},
 										{
 											name: "transport",
 											render: (field) => (
-												<NewConnectionTransportFields field={field} />
+												<NewConnectionTransportFields
+													field={field}
+													showEvmScanConfig={isEvmRail(newConnectionRailCode)}
+												/>
 											),
 										},
 									]}
@@ -365,6 +382,9 @@ export function PaymentIngressesPage() {
 												endpoint: String(values.endpoint ?? ""),
 												apiKey: String(values.apiKey ?? "") || undefined,
 												priority: Number(values.priority ?? 100),
+												...(isEvmRail(String(values.railCode ?? ""))
+													? evmScanConfigValues(values)
+													: {}),
 											},
 										});
 										await refresh();
@@ -444,8 +464,10 @@ function providerWebhookEditValue(
 
 function NewConnectionTransportFields({
 	field,
+	showEvmScanConfig,
 }: {
 	field: ProSchemaValueField;
+	showEvmScanConfig: boolean;
 }) {
 	const transport = field.value === "websocket" ? "websocket" : "http";
 	const [priority, setPriority] = useState("100");
@@ -501,6 +523,7 @@ function NewConnectionTransportFields({
 					onChange={(event) => setPriority(event.target.value)}
 				/>
 			</FormItem>
+			{showEvmScanConfig ? <EvmScanConfigFields /> : null}
 		</div>
 	);
 }
@@ -559,6 +582,7 @@ function ChainConnectionForm({
 					required: true,
 					fieldProps: { type: "number", min: 0, max: 10000 },
 				},
+				...(isEvmRail(connection.rail_code) ? evmScanConfigSchemaFields() : []),
 			]}
 			initialValues={{
 				name: connection.name,
@@ -566,6 +590,14 @@ function ChainConnectionForm({
 				endpoint: connection.endpoint ?? "",
 				priority: connection.priority,
 				clearApiKey: false,
+				...(isEvmRail(connection.rail_code)
+					? {
+							timeoutMs: connection.timeout_ms ?? 30_000,
+							blockLookback: connection.block_lookback ?? 3000,
+							logBlockRange: connection.log_block_range ?? 500,
+							maxScanTransactions: connection.max_scan_transactions ?? 1000,
+						}
+					: {}),
 			}}
 			onFinish={async (values) => {
 				await updateChainConnectionFn({
@@ -579,6 +611,9 @@ function ChainConnectionForm({
 						apiKey: String(values.apiKey ?? "") || undefined,
 						clearApiKey: String(values.clearApiKey ?? "false") === "true",
 						priority: Number(values.priority ?? 100),
+						...(isEvmRail(connection.rail_code)
+							? evmScanConfigValues(values)
+							: {}),
 					},
 				});
 				await onSaved();
@@ -587,6 +622,69 @@ function ChainConnectionForm({
 			onFinishFailed={showError}
 		/>
 	);
+}
+
+function EvmScanConfigFields() {
+	return (
+		<div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+			{evmScanConfigSchemaFields().map((item) => (
+				<FormItem
+					key={item.name}
+					htmlFor={`connection-${item.name}`}
+					label={item.label}
+				>
+					<Input
+						id={`connection-${item.name}`}
+						name={item.name}
+						{...item.fieldProps}
+						defaultValue={String(item.initialValue)}
+					/>
+				</FormItem>
+			))}
+		</div>
+	);
+}
+
+function evmScanConfigSchemaFields() {
+	return [
+		{
+			name: "timeoutMs",
+			label: m.infrastructure_evm_timeout_ms(),
+			initialValue: 30_000,
+			fieldProps: { type: "number", min: 1000, max: 30_000 },
+		},
+		{
+			name: "blockLookback",
+			label: m.infrastructure_evm_block_lookback(),
+			initialValue: 3000,
+			fieldProps: { type: "number", min: 1, max: 20_000 },
+		},
+		{
+			name: "logBlockRange",
+			label: m.infrastructure_evm_log_block_range(),
+			initialValue: 500,
+			fieldProps: { type: "number", min: 1, max: 20_000 },
+		},
+		{
+			name: "maxScanTransactions",
+			label: m.infrastructure_evm_max_scan_transactions(),
+			initialValue: 1000,
+			fieldProps: { type: "number", min: 1, max: 10_000 },
+		},
+	];
+}
+
+function evmScanConfigValues(values: Record<string, unknown>) {
+	return {
+		timeoutMs: Number(values.timeoutMs ?? 30_000),
+		blockLookback: Number(values.blockLookback ?? 3000),
+		logBlockRange: Number(values.logBlockRange ?? 500),
+		maxScanTransactions: Number(values.maxScanTransactions ?? 1000),
+	};
+}
+
+function isEvmRail(railCode: string) {
+	return ["ethereum", "base", "bsc", "polygon"].includes(railCode);
 }
 
 function ProviderConfigurationForm({

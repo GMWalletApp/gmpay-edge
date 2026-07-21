@@ -8,6 +8,13 @@
       "when": 1784545697590,
       "tag": "0000_fancy_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784629117662,
+      "tag": "0001_evm_scan_config",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,13 @@ const connectionFields = z.object({
 	priority: z.number().int().min(0).max(10_000),
 });
 
+export const evmScanConfigFields = {
+	timeoutMs: z.number().int().min(1000).max(30_000).optional(),
+	blockLookback: z.number().int().min(1).max(20_000).optional(),
+	logBlockRange: z.number().int().min(1).max(20_000).optional(),
+	maxScanTransactions: z.number().int().min(1).max(10_000).optional(),
+};
+
 function transportMatchesEndpoint(value: {
 	transport: "http" | "websocket";
 	endpoint: string;
@@ -40,6 +47,7 @@ const connectionProtocolIssue = {
 
 export const createPaymentConnectionInput = connectionFields
 	.extend({
+		...evmScanConfigFields,
 		railCode: z.string().trim().min(1).max(50),
 		type: z.literal("rpc"),
 		apiKey: z.string().trim().max(512).optional(),
@@ -50,6 +58,7 @@ export const createPaymentConnectionInput = connectionFields
 export const updateChainPaymentConnectionInput = paymentConnectionIdInput
 	.extend({
 		...connectionFields.shape,
+		...evmScanConfigFields,
 		apiKey: z.string().trim().max(512).optional(),
 		clearApiKey: z.boolean().default(false),
 	})
