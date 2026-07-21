@@ -373,6 +373,8 @@
 	"settings_product_name_description": "显示在站点头部、页面元数据和后台界面中",
 	"settings_default_expiry": "默认订单有效期",
 	"settings_default_expiry_description": "新订单的默认有效秒数",
+	"settings_default_language": "默认语言",
+	"settings_default_language_description": "访客尚未选择语言偏好时使用的语言",
 	"settings_max_expiry": "最长订单有效期",
 	"settings_max_expiry_description": "订单 API 接受的最长有效时间",
 	"settings_late_payment_policy": "逾期付款策略",

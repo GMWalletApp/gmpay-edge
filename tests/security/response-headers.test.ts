@@ -64,7 +64,7 @@ describe("application security headers", () => {
 	});
 
 	it("allows the pinned Scalar CDN host only on API reference pages", () => {
-		for (const path of ["/docs", "/zh-CN/docs"]) {
+		for (const path of ["/docs"]) {
 			const response = applySecurityHeaders(
 				new Request(`https://pay.example${path}`),
 				new Response("ok"),
@@ -86,7 +86,6 @@ describe("application security headers", () => {
 	it("applies an explicit route cache matrix without overriding R2 assets", () => {
 		for (const path of [
 			"/admin",
-			"/zh-CN/admin/orders",
 			"/checkout/order-id",
 			"/sign-in",
 			"/two-factor",
@@ -102,7 +101,7 @@ describe("application security headers", () => {
 				"private, no-store",
 			);
 		}
-		for (const path of ["/", "/docs", "/zh-CN/assets", "/openapi.yaml"]) {
+		for (const path of ["/", "/docs", "/assets", "/openapi.yaml"]) {
 			const response = applySecurityHeaders(
 				new Request(`https://pay.example${path}`),
 				new Response("ok"),
@@ -116,6 +115,13 @@ describe("application security headers", () => {
 			new Response("ok"),
 		);
 		expect(status.headers.get("cache-control")).toBe("no-store");
+		const localized = applySecurityHeaders(
+			new Request("https://pay.example/docs", {
+				headers: { cookie: "PARAGLIDE_LOCALE=zh-CN" },
+			}),
+			new Response("ok"),
+		);
+		expect(localized.headers.get("cache-control")).toBe("private, no-store");
 		const builtAsset = applySecurityHeaders(
 			new Request("https://pay.example/assets/app-C0FFEE12.js"),
 			new Response("ok"),

@@ -373,6 +373,8 @@
   "settings_product_name_description": "サイトヘッダー、ページメタデータ、オペレーターインターフェースに表示されます。",
   "settings_default_expiry": "デフォルトの注文有効期限",
   "settings_default_expiry_description": "新しい注文のデフォルトの有効期間 (秒単位)",
+  "settings_default_language": "デフォルト言語",
+  "settings_default_language_description": "訪問者が言語を選択していない場合に使用する言語",
   "settings_max_expiry": "注文の最大有効期限",
   "settings_max_expiry_description": "注文 API で受け入れられる最大有効期限",
   "settings_late_payment_policy": "支払い遅延ポリシー",

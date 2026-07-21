@@ -13,6 +13,7 @@ describe("site brand presentation", () => {
 			supportUrl: "",
 			backgroundColor: "",
 			backgroundImageUrl: "",
+			defaultLocale: "en-US",
 		};
 		const markup = renderToStaticMarkup(
 			<SiteBrandProvider brand={brand}>

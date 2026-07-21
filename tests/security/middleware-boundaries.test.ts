@@ -50,7 +50,7 @@ describe("server middleware boundaries", () => {
 		const positions = [
 			"handleLivenessRequest(request)",
 			"validateRequestAuthority(request, env.DB)",
-			"handleI18nRequest(request, appFetch)",
+			"handleI18nRequest(",
 			"return applySecurityHeaders(",
 		].map((token) => entry.lastIndexOf(token));
 

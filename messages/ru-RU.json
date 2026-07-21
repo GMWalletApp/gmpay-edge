@@ -373,6 +373,8 @@
   "settings_product_name_description": "Отображается в шапке сайта, метаданных страницы и интерфейсе оператора.",
   "settings_default_expiry": "Срок действия ордера по умолчанию",
   "settings_default_expiry_description": "Срок действия по умолчанию в секундах для новых заказов",
+  "settings_default_language": "Язык по умолчанию",
+  "settings_default_language_description": "Язык для посетителей, которые ещё не выбрали предпочтительный язык",
   "settings_max_expiry": "Максимальный срок действия ордера",
   "settings_max_expiry_description": "Максимальный срок действия, принимаемый API заказов",
   "settings_late_payment_policy": "Политика просроченной оплаты",

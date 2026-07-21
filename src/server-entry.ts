@@ -43,7 +43,12 @@ export default {
 				]),
 			);
 		const appStartedAt = performance.now();
-		const response = await handleI18nRequest(request, appFetch);
+		const response = await handleI18nRequest(
+			request,
+			env.DB,
+			env.CACHE,
+			appFetch,
+		);
 		return applySecurityHeaders(
 			request,
 			appendServerTiming(response, [

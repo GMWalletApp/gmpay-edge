@@ -1,6 +1,6 @@
 export function applySecurityHeaders(request: Request, response: Response) {
 	const headers = new Headers(response.headers);
-	const routePath = localizedRoutePath(new URL(request.url).pathname);
+	const routePath = new URL(request.url).pathname;
 	const scriptSources = ["'self'", "'unsafe-inline'"];
 	if (routePath === "/docs") scriptSources.push("https://cdn.jsdmirror.com");
 	headers.set("x-content-type-options", "nosniff");
@@ -55,8 +55,10 @@ function responseCacheControl(request: Request) {
 	const pathname = new URL(request.url).pathname;
 	if (/^\/assets\/.+/.test(pathname))
 		return "public, max-age=31536000, immutable";
+	if (/(?:^|;\s*)PARAGLIDE_LOCALE=/.test(request.headers.get("cookie") ?? ""))
+		return "private, no-store";
 
-	const routePath = localizedRoutePath(pathname);
+	const routePath = pathname;
 	if (
 		/^\/(?:admin|checkout|sign-in|two-factor|install|api|payments)(?:\/|$)/.test(
 			routePath,
@@ -73,11 +75,4 @@ function responseCacheControl(request: Request) {
 	)
 		return "public, max-age=0, must-revalidate";
 	return "no-store";
-}
-
-function localizedRoutePath(pathname: string) {
-	return pathname.replace(
-		/^\/(?:en-US|ja-JP|ko-KR|ru-RU|zh-TW|zh-CN)(?=\/|$)/,
-		"",
-	);
 }

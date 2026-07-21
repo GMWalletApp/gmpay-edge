@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDefaultSeoHead, siteNameFromMatches } from "#/lib/seo";
+import {
+	createDefaultSeoHead,
+	createHomeSeoHead,
+	siteNameFromMatches,
+} from "#/lib/seo";
 
 describe("locale-preserving UI navigation", () => {
 	it("keeps checkout exits inside the localized router", () => {
@@ -41,5 +45,13 @@ describe("locale-preserving UI navigation", () => {
 			name: "twitter:site",
 			content: "My Gateway",
 		});
+	});
+
+	it("publishes one canonical URL without locale-prefixed alternates", () => {
+		const head = createHomeSeoHead([]);
+
+		expect(head.links).toHaveLength(1);
+		expect(head.links[0]).toMatchObject({ rel: "canonical" });
+		expect(head.links[0]).not.toHaveProperty("hrefLang");
 	});
 });

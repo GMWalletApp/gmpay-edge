@@ -6,11 +6,13 @@ import {
 } from "#/features/settings/secrecy";
 import { invalidateSiteBrandCache } from "#/features/settings/server/site-brand";
 import { DomainError } from "#/lib/domain-error";
+import { supportedLocales } from "#/lib/locales";
 
 export type SettingValue = string | number | boolean | string[];
 
 const definitions = {
 	"site.name": z.string().trim().min(1).max(80),
+	"site.default_locale": z.enum(supportedLocales),
 	"site.logo_url": z.string().max(2_048),
 	"site.support_url": z.union([z.literal(""), z.url().max(2_048)]),
 	"site.background_color": z.union([
@@ -71,6 +73,7 @@ export type SettingKey = keyof typeof definitions;
 
 const defaults: Record<SettingKey, SettingValue> = {
 	"site.name": "GMPay Edge",
+	"site.default_locale": "en-US",
 	"site.logo_url": "",
 	"site.support_url": "",
 	"site.background_color": "",

@@ -3,7 +3,6 @@ import { Activity, ArrowUpRight } from "lucide-react";
 import { useSiteBrand } from "#/context/site-brand-provider";
 import { AppTitle } from "#/layouts/components/app-title";
 import { m } from "#/paraglide/messages";
-import { localizeHref } from "#/paraglide/runtime";
 
 export function PublicFooter() {
 	const brand = useSiteBrand();
@@ -74,7 +73,7 @@ function FooterColumn({
 					<li key={href}>
 						<a
 							className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-							href={href.endsWith(".yaml") ? href : localizeHref(href)}
+							href={href}
 						>
 							{label}
 							{href.endsWith(".yaml") ? (

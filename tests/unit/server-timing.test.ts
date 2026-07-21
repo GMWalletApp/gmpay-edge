@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getLocale } from "#/paraglide/runtime";
 import { applySecurityHeaders } from "#/server/http-security";
 import { handleI18nRequest } from "#/server/middleware/i18n";
 import {
@@ -8,6 +9,59 @@ import {
 } from "#/server/server-timing";
 
 describe("Server-Timing response instrumentation", () => {
+	it("resolves the SSR locale from the locale cookie", async () => {
+		const request = new Request("https://pay.example/docs", {
+			headers: {
+				cookie: "PARAGLIDE_LOCALE=zh-CN",
+				"accept-language": "ja-JP",
+			},
+		});
+		const response = await handleI18nRequest(
+			request,
+			undefined,
+			undefined,
+			() => new Response(getLocale()),
+		);
+
+		expect(await response.text()).toBe("zh-CN");
+		expect(response.headers.get("location")).toBeNull();
+	});
+
+	it("uses the configured default when no locale cookie exists", async () => {
+		const db = {
+			prepare: () => ({
+				all: async () => ({
+					results: [{ key: "site.default_locale", value: '"zh-CN"' }],
+				}),
+			}),
+		} as unknown as D1Database;
+		const response = await handleI18nRequest(
+			new Request("https://pay.example/docs"),
+			db,
+			undefined,
+			() => new Response(getLocale()),
+		);
+
+		expect(await response.text()).toBe("zh-CN");
+		expect(response.headers.get("vary")).toContain("Cookie");
+	});
+
+	it("does not consume a server function request body", async () => {
+		const request = new Request("https://pay.example/_server/install", {
+			method: "POST",
+			headers: { cookie: "PARAGLIDE_LOCALE=zh-CN" },
+			body: JSON.stringify({ email: "root@example.com" }),
+		});
+		const response = await handleI18nRequest(
+			request,
+			undefined,
+			undefined,
+			async (resolvedRequest) => new Response(await resolvedRequest.text()),
+		);
+
+		expect(await response.json()).toEqual({ email: "root@example.com" });
+	});
+
 	it("adds bounded fixed-name duration metrics without changing the response", async () => {
 		const response = appendServerTiming(
 			new Response("ok", {
@@ -68,8 +122,13 @@ describe("Server-Timing response instrumentation", () => {
 				};
 			},
 		});
-		const request = new Request("https://pay.example/en-US/");
-		const streamed = await handleI18nRequest(request, () => new Response(body));
+		const request = new Request("https://pay.example/");
+		const streamed = await handleI18nRequest(
+			request,
+			undefined,
+			undefined,
+			() => new Response(body),
+		);
 		const response = applySecurityHeaders(
 			request,
 			appendServerTiming(streamed, [{ name: "total", durationMs: 1 }]),

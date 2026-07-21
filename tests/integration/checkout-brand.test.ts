@@ -42,7 +42,7 @@ describe("checkout brand settings", () => {
 		vi.spyOn(console, "info").mockImplementation(() => undefined);
 		await database
 			.prepare(
-				"DELETE FROM system_settings WHERE key IN ('site.name', 'site.logo_url', 'site.support_url', 'site.background_color', 'site.background_image_url')",
+				"DELETE FROM system_settings WHERE key IN ('site.name', 'site.logo_url', 'site.support_url', 'site.background_color', 'site.background_image_url', 'site.default_locale')",
 			)
 			.run();
 		const entries = await cache.list({ prefix: "site-brand:" });
@@ -163,6 +163,7 @@ describe("checkout brand settings", () => {
 			supportUrl: "",
 			backgroundColor: "",
 			backgroundImageUrl: "",
+			defaultLocale: "en-US",
 		});
 	});
 
@@ -202,6 +203,7 @@ describe("checkout brand settings", () => {
 			supportUrl: "",
 			backgroundColor: "",
 			backgroundImageUrl: "",
+			defaultLocale: "en-US",
 		});
 	});
 
@@ -220,6 +222,7 @@ describe("checkout brand settings", () => {
 				supportUrl: "",
 				backgroundColor: "",
 				backgroundImageUrl: "",
+				defaultLocale: "en-US",
 			});
 		} finally {
 			await empty.dispose();
@@ -235,6 +238,7 @@ describe("checkout brand settings", () => {
 				"site.support_url": "https://support.example/help",
 				"site.background_color": "#112233cc",
 				"site.background_image_url": "/api/site-background?v=1",
+				"site.default_locale": "zh-CN",
 			}).map(([key, value]) =>
 				database
 					.prepare(
@@ -250,6 +254,7 @@ describe("checkout brand settings", () => {
 			supportUrl: "https://support.example/help",
 			backgroundColor: "#112233cc",
 			backgroundImageUrl: "/api/site-background?v=1",
+			defaultLocale: "zh-CN",
 		});
 	});
 });

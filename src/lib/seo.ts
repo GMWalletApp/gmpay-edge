@@ -1,7 +1,7 @@
 import { defaultSiteBrand } from "#/features/settings/site-brand";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
-import { absoluteSiteUrl, SITE_URL } from "./site-url";
+import { absoluteSiteUrl } from "./site-url";
 
 type DefaultSeoInput = {
 	title?: string;
@@ -85,44 +85,7 @@ export function createHomeSeoHead(matches: readonly RouteLoaderMatch[]) {
 
 	return {
 		meta: head.meta,
-		links: [
-			...head.links,
-			{
-				rel: "alternate",
-				hrefLang: "ja-JP",
-				href: `${SITE_URL}/ja-JP`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "ko-KR",
-				href: `${SITE_URL}/ko-KR`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "ru-RU",
-				href: `${SITE_URL}/ru-RU`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "en-US",
-				href: `${SITE_URL}/`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "zh-CN",
-				href: `${SITE_URL}/zh-CN`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "zh-TW",
-				href: `${SITE_URL}/zh-TW`,
-			},
-			{
-				rel: "alternate",
-				hrefLang: "x-default",
-				href: `${SITE_URL}/`,
-			},
-		],
+		links: head.links,
 	};
 }
 

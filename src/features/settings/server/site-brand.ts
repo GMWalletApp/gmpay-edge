@@ -3,6 +3,7 @@ import {
 	defaultSiteBrand,
 	type SiteBrand,
 } from "#/features/settings/site-brand";
+import { supportedLocales } from "#/lib/locales";
 import { recordKvCacheMetric } from "#/server/cache-observability";
 
 const cacheVersion = 1;
@@ -21,6 +22,7 @@ const brandSchema = z
 			.string()
 			.max(2_048)
 			.refine(isSafeOptionalBackgroundImageUrl),
+		defaultLocale: z.enum(supportedLocales),
 	})
 	.refine(({ name, title }) => name === title);
 const cacheSchema = z.object({
@@ -88,7 +90,7 @@ export async function invalidateSiteBrandCache(cache?: KVNamespace) {
 async function querySiteBrand(db: D1Database): Promise<SiteBrand> {
 	const rows = await db
 		.prepare(
-			"SELECT key, value FROM system_settings WHERE key IN ('site.name', 'site.logo_url', 'site.support_url', 'site.background_color', 'site.background_image_url')",
+			"SELECT key, value FROM system_settings WHERE key IN ('site.name', 'site.logo_url', 'site.support_url', 'site.background_color', 'site.background_image_url', 'site.default_locale')",
 		)
 		.all<{ key: string; value: string }>();
 	const values = new Map(
@@ -104,6 +106,8 @@ async function querySiteBrand(db: D1Database): Promise<SiteBrand> {
 		backgroundImageUrl: safeBackgroundImageUrl(
 			values.get("site.background_image_url"),
 		),
+		defaultLocale:
+			values.get("site.default_locale") || defaultSiteBrand.defaultLocale,
 	});
 	return brand.success ? brand.data : defaultSiteBrand;
 }

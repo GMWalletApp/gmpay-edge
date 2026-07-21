@@ -373,6 +373,8 @@
   "settings_product_name_description": "사이트 헤더, 페이지 메타데이터 및 운영자 인터페이스에 표시됩니다.",
   "settings_default_expiry": "기본 주문 만료",
   "settings_default_expiry_description": "신규 주문의 기본 수명(초)",
+  "settings_default_language": "기본 언어",
+  "settings_default_language_description": "방문자가 언어를 선택하지 않았을 때 사용할 언어",
   "settings_max_expiry": "최대 주문 만료",
   "settings_max_expiry_description": "주문 API에서 허용하는 최대 만료일",
   "settings_late_payment_policy": "연체 정책",

@@ -19,7 +19,6 @@ import { LocaleSwitch } from "#/layouts/components/locale-switch";
 import { ThemeSwitch } from "#/layouts/components/theme-switch";
 import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
-import { localizeHref } from "#/paraglide/runtime";
 
 export function PublicHeader() {
 	const navigation = publicNavigation();
@@ -46,7 +45,7 @@ export function PublicHeader() {
 						{navigation.map(([label, href]) => (
 							<a
 								className="rounded-lg px-3 py-2 transition-colors hover:bg-accent hover:text-foreground"
-								href={localizeHref(href)}
+								href={href}
 								key={href}
 							>
 								{label}
@@ -96,7 +95,7 @@ function MobileNavigation() {
 						<SheetClose asChild key={href}>
 							<a
 								className="rounded-xl px-4 py-3 font-medium transition-colors hover:bg-accent"
-								href={localizeHref(href)}
+								href={href}
 							>
 								{label}
 							</a>

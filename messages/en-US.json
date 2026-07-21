@@ -373,6 +373,8 @@
 	"settings_product_name_description": "Displayed in the site header, page metadata, and operator interface",
 	"settings_default_expiry": "Default order expiry",
 	"settings_default_expiry_description": "Default lifetime in seconds for new orders",
+	"settings_default_language": "Default language",
+	"settings_default_language_description": "Language used when a visitor has not selected a preference",
 	"settings_max_expiry": "Maximum order expiry",
 	"settings_max_expiry_description": "Maximum expiry accepted by order APIs",
 	"settings_late_payment_policy": "Late payment policy",

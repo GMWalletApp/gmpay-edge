@@ -1,3 +1,5 @@
+import type { SupportedLocale } from "#/lib/locales";
+
 export type SiteBrand = {
 	name: string;
 	logoUrl: string;
@@ -5,6 +7,7 @@ export type SiteBrand = {
 	supportUrl: string;
 	backgroundColor: string;
 	backgroundImageUrl: string;
+	defaultLocale: SupportedLocale;
 };
 
 export const defaultSiteBrand: SiteBrand = {
@@ -14,4 +17,5 @@ export const defaultSiteBrand: SiteBrand = {
 	supportUrl: "",
 	backgroundColor: "",
 	backgroundImageUrl: "",
+	defaultLocale: "en-US",
 };

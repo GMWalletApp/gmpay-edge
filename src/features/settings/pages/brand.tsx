@@ -18,10 +18,12 @@ import {
 } from "#/features/settings/queries";
 import { updateSystemSettingsFn } from "#/features/settings/server/admin";
 import { PageHeader } from "#/layouts/components/page-header";
+import { localeLabels, supportedLocales } from "#/lib/locales";
 import { m } from "#/paraglide/messages";
 
 const brandKeys = [
 	"site.name",
+	"site.default_locale",
 	"site.support_url",
 	"site.background_color",
 ] as const;
@@ -99,6 +101,19 @@ const brandSchema = [
 		description: m.settings_product_name_description(),
 		valueType: "text" as const,
 		required: true,
+	},
+	{
+		name: "site.default_locale",
+		label: m.settings_default_language(),
+		description: m.settings_default_language_description(),
+		valueType: "select" as const,
+		required: true,
+		fieldProps: {
+			options: supportedLocales.map((locale) => ({
+				label: localeLabels[locale],
+				value: locale,
+			})),
+		},
 	},
 	{
 		name: "site.support_url",

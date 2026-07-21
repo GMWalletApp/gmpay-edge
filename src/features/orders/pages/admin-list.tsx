@@ -50,7 +50,7 @@ import { formatDateTime } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { useVisiblePolling } from "#/lib/use-visible-polling";
 import { m } from "#/paraglide/messages";
-import { getLocale, localizeHref } from "#/paraglide/runtime";
+import { getLocale } from "#/paraglide/runtime";
 
 type OrderRecord = Awaited<
 	ReturnType<typeof listAdminOrdersFn>
@@ -253,10 +253,7 @@ export function OrdersPage() {
 										<>
 											<DropdownMenuItem
 												onClick={() =>
-													window.open(
-														localizeHref(`/checkout/${row.original.id}`),
-														"_blank",
-													)
+													window.open(`/checkout/${row.original.id}`, "_blank")
 												}
 											>
 												<ExternalLink />
@@ -386,7 +383,7 @@ export function OrdersPage() {
 										if (preview) {
 											preview.opener = null;
 											preview.location.href = new URL(
-												localizeHref(`/checkout/${order.orderId}`),
+												`/checkout/${order.orderId}`,
 												window.location.origin,
 											).href;
 										}

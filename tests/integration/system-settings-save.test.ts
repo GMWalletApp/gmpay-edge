@@ -30,7 +30,7 @@ describe("system settings persistence", () => {
 	beforeEach(async () => {
 		await db.batch([
 			db.prepare(
-				"DELETE FROM system_settings WHERE key IN ('site.name', 'orders.default_expiry_ms', 'runtime.api_key_pepper', 'runtime.integration_config_secret')",
+				"DELETE FROM system_settings WHERE key IN ('site.name', 'site.default_locale', 'orders.default_expiry_ms', 'runtime.api_key_pepper', 'runtime.integration_config_secret')",
 			),
 			db.prepare(
 				"DELETE FROM audit_logs WHERE action = 'system_settings.updated'",
@@ -67,7 +67,10 @@ describe("system settings persistence", () => {
 	it("invalidates only the public brand snapshot for a Brand form save", async () => {
 		await loadSiteBrand(db, cache);
 		await saveSystemSettings(
-			[{ key: "site.name", value: "Updated Edge" }],
+			[
+				{ key: "site.name", value: "Updated Edge" },
+				{ key: "site.default_locale", value: "zh-CN" },
+			],
 			dependencies(),
 		);
 
@@ -77,6 +80,7 @@ describe("system settings persistence", () => {
 		).toHaveLength(0);
 		await expect(loadSiteBrand(db, cache)).resolves.toMatchObject({
 			name: "Updated Edge",
+			defaultLocale: "zh-CN",
 		});
 	});
 
@@ -98,6 +102,12 @@ describe("system settings persistence", () => {
 		await expect(
 			saveSystemSettings([{ key: "unknown", value: true }], dependencies()),
 		).rejects.toMatchObject({ code: "invalid_settings", status: 400 });
+		await expect(
+			saveSystemSettings(
+				[{ key: "site.default_locale", value: "invalid" }],
+				dependencies(),
+			),
+		).rejects.toBeInstanceOf(Error);
 		await expect(
 			saveSystemSettings(
 				[

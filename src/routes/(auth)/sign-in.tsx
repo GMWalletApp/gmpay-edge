@@ -3,7 +3,6 @@ import { safePostAuthRedirect } from "#/features/auth/post-auth-redirect";
 import { getInstallStatus } from "#/features/installation/server/functions";
 import { createDefaultSeoHead, siteNameFromMatches } from "#/lib/seo";
 import { m } from "#/paraglide/messages";
-import { localizeHref } from "#/paraglide/runtime";
 import { SignIn } from "@/features/auth/pages/sign-in";
 
 export const Route = createFileRoute("/(auth)/sign-in")({
@@ -28,5 +27,5 @@ export const Route = createFileRoute("/(auth)/sign-in")({
 
 function SignInRoute() {
 	const { redirect } = Route.useSearch();
-	return <SignIn redirectTo={localizeHref(safePostAuthRedirect(redirect))} />;
+	return <SignIn redirectTo={safePostAuthRedirect(redirect)} />;
 }
