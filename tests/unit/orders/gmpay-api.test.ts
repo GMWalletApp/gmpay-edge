@@ -19,7 +19,7 @@ describe("GMPay create transaction input", () => {
 		notify_url: "https://merchant.example/notify",
 		redirect_url: "https://merchant.example/return",
 		name: "Invoice 1001",
-		signature: "a".repeat(32),
+		signature: "a".repeat(64),
 	};
 
 	it("accepts equivalent JSON and form payloads", () => {

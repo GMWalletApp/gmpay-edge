@@ -14,7 +14,7 @@ paths:
     post:
       operationId: createGmpayTransaction
       summary: Create a GMPay transaction
-      description: Accepts JSON or form data. Sign all non-empty fields except signature by sorting key=value pairs by key, joining them with &, appending the API Secret, and calculating lowercase MD5.
+      description: Accepts JSON or form data. Exclude signature and empty values, sort field names in ASCII order, join key=value pairs with &, and calculate lowercase HMAC-SHA256 using the API Secret as the HMAC key.
       requestBody:
         required: true
         content:
@@ -39,7 +39,7 @@ paths:
           '{$request.body#/notify_url}':
             post:
               summary: GMPay order notification
-              description: The signature is lowercase MD5 of the sorted non-empty callback fields plus the same API Secret. Return plain text ok with HTTP 200.
+              description: The signature is lowercase HMAC-SHA256 over the sorted non-empty callback fields using the same API Secret as the HMAC key. Return plain text ok with HTTP 200.
               requestBody:
                 required: true
                 content:
@@ -55,12 +55,12 @@ paths:
     get:
       operationId: queryGmpayTransaction
       summary: Query a GMPay transaction
-      description: Query by exactly one trade_id or order_id. Sign all non-empty query fields except signature using the same lowercase MD5 contract as order creation.
+      description: Query by exactly one trade_id or order_id. Sign all non-empty query fields except signature using the same lowercase HMAC-SHA256 contract as order creation.
       parameters:
         - { name: pid, in: query, required: true, schema: { type: string } }
         - { name: trade_id, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: order_id, in: query, required: false, schema: { type: string, maxLength: 128 } }
-        - { name: signature, in: query, required: true, schema: { type: string, pattern: "^[0-9a-f]{32}$" } }
+        - { name: signature, in: query, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
       responses:
         "200":
           description: Transaction status and immutable payment snapshot
@@ -235,14 +235,14 @@ components:
         notify_url: { type: string, format: uri, pattern: "^https://" }
         redirect_url: { type: string, format: uri, pattern: "^https://" }
         name: { type: string, maxLength: 500 }
-        signature: { type: string, pattern: "^[0-9a-f]{32}$" }
+        signature: { type: string, pattern: "^[0-9a-f]{64}$" }
       example:
         pid: "100000000001"
         order_id: invoice-1001
         currency: USD
         amount: "12.50"
         notify_url: https://merchant.example/notify
-        signature: 0123456789abcdef0123456789abcdef
+        signature: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     GmpayCreateData:
       type: object
       required: [trade_id, order_id, amount, currency, actual_amount, receive_address, token, network, status, expiration_time, payment_url]
@@ -277,7 +277,7 @@ components:
         token: { type: string }
         block_transaction_id: { type: string }
         status: { $ref: "#/components/schemas/OrderStatus" }
-        signature: { type: string, pattern: "^[0-9a-f]{32}$" }
+        signature: { type: string, pattern: "^[0-9a-f]{64}$" }
       example:
         pid: "100000000001"
         trade_id: "26071406211234567890"
@@ -288,7 +288,7 @@ components:
         token: USDT
         block_transaction_id: transaction-hash
         status: paid
-        signature: 0123456789abcdef0123456789abcdef
+        signature: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     EpayCreateRequest:
       type: object
       required: [pid, money, out_trade_no, notify_url, sign]

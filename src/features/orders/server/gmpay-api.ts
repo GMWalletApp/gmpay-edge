@@ -23,7 +23,7 @@ const gmpayQuerySchema = z
 		signature: z
 			.string()
 			.trim()
-			.regex(/^[0-9a-f]{32}$/),
+			.regex(/^[0-9a-f]{64}$/),
 	})
 	.refine((value) => Boolean(value.trade_id) !== Boolean(value.order_id), {
 		message: "Exactly one order selector is required",
@@ -42,7 +42,7 @@ const gmpayCreateSchema = z.object({
 	signature: z
 		.string()
 		.trim()
-		.regex(/^[0-9a-f]{32}$/),
+		.regex(/^[0-9a-f]{64}$/),
 	redirect_url: z.string().trim().url().optional(),
 	name: z.string().trim().max(500).optional(),
 	payment_type: z.string().trim().max(32).optional(),

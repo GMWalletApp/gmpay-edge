@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { verifyGmpaySignature } from "#/features/api-keys/server/gmpay-signature";
+import {
+	verifyEpaySignature,
+	verifyGmpaySignature,
+} from "#/features/api-keys/server/gmpay-signature";
 import {
 	deliverWebhook,
 	parseRetryAfter,
@@ -21,7 +24,7 @@ describe("webhooks", () => {
 		expect(parseRetryAfter("-1", now)).toBeUndefined();
 	});
 
-	it("delivers GMPay callbacks with the source-compatible MD5 body and ok acknowledgement", async () => {
+	it("delivers GMPay callbacks with the source-compatible HMAC-SHA256 body and ok acknowledgement", async () => {
 		const fetcher = vi
 			.fn<typeof fetch>()
 			.mockResolvedValue(new Response("ok", { status: 200 }));
@@ -55,7 +58,7 @@ describe("webhooks", () => {
 			string | number
 		>;
 		const signature = String(body.signature);
-		expect(signature).toMatch(/^[0-9a-f]{32}$/);
+		expect(signature).toMatch(/^[0-9a-f]{64}$/);
 		expect(verifyGmpaySignature(body, "merchant-secret", signature)).toBe(true);
 		expect(body).toMatchObject({
 			pid: "gmp_merchant",
@@ -181,7 +184,7 @@ describe("webhooks", () => {
 			/externalOrderId|external_order_id/,
 		);
 		expect(
-			verifyGmpaySignature(
+			verifyEpaySignature(
 				signed,
 				"merchant-secret",
 				String(signed.sign),

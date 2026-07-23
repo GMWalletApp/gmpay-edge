@@ -217,7 +217,7 @@ const merchantApiEntries = [
 		route: "src/routes/payments/epay/v1/order/create-transaction/api[.]php.ts",
 		handler: "src/features/orders/server/epay-adapter.ts",
 		handlerName: "handleEpayQueryRequest",
-		authenticator: "authenticateGmpayParameters",
+		authenticator: "authenticateEpayParameters",
 	},
 ] as const;
 

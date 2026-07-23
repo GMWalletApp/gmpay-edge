@@ -1,4 +1,7 @@
-import { signGmpayParameters } from "#/features/api-keys/server/gmpay-signature";
+import {
+	signEpayParameters,
+	signGmpayParameters,
+} from "#/features/api-keys/server/gmpay-signature";
 import type {
 	WebhookDeliveryRequest,
 	WebhookRequestSnapshot,
@@ -35,11 +38,7 @@ export async function deliverWebhook(
 		message.protocol === "epay"
 			? {
 					...message.epay,
-					sign: signGmpayParameters(
-						message.epay,
-						message.secret,
-						new Set(["sign", "sign_type"]),
-					),
+					sign: signEpayParameters(message.epay, message.secret),
 					sign_type: "MD5",
 				}
 			: null;

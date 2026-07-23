@@ -257,7 +257,7 @@ describe("GMPay create transaction HTTP handler", () => {
 					body: JSON.stringify({
 						...createParameters,
 						order_id: "ORDER-COUNTED-REJECTED",
-						signature: "00000000000000000000000000000000",
+						signature: "0".repeat(64),
 					}),
 				},
 			),

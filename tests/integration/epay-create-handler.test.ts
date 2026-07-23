@@ -1,6 +1,6 @@
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { signGmpayParameters } from "#/features/api-keys/server/gmpay-signature";
+import { signEpayParameters } from "#/features/api-keys/server/gmpay-signature";
 import {
 	authenticateEpayInput,
 	handleEpayCreateRequest,
@@ -64,11 +64,7 @@ describe("EPay compatibility HTTP handler", () => {
 		};
 		const signed = {
 			...parameters,
-			sign: signGmpayParameters(
-				parameters,
-				secret,
-				new Set(["sign", "sign_type"]),
-			),
+			sign: signEpayParameters(parameters, secret),
 			sign_type: "MD5",
 		};
 		const encoded = new URLSearchParams(signed).toString();
@@ -145,11 +141,7 @@ describe("EPay compatibility HTTP handler", () => {
 		};
 		const signed = {
 			...parameters,
-			sign: signGmpayParameters(
-				parameters,
-				secret,
-				new Set(["sign", "sign_type"]),
-			),
+			sign: signEpayParameters(parameters, secret),
 			sign_type: "MD5",
 		};
 		const createResponse = await handleEpayCreateRequest(
@@ -191,11 +183,7 @@ describe("EPay compatibility HTTP handler", () => {
 		};
 		const query = {
 			...queryParameters,
-			sign: signGmpayParameters(
-				queryParameters,
-				secret,
-				new Set(["sign", "sign_type"]),
-			),
+			sign: signEpayParameters(queryParameters, secret),
 			sign_type: "MD5",
 		};
 		const queryResponse = await handleEpayQueryRequest(
@@ -243,11 +231,7 @@ describe("EPay compatibility HTTP handler", () => {
 		};
 		const input = {
 			...parameters,
-			sign: signGmpayParameters(
-				parameters,
-				secret,
-				new Set(["sign", "sign_type"]),
-			),
+			sign: signEpayParameters(parameters, secret),
 			sign_type: "MD5" as const,
 		};
 		await db.prepare("UPDATE api_keys SET enabled = 0 WHERE id = 'key'").run();
@@ -269,11 +253,7 @@ describe("EPay compatibility HTTP handler", () => {
 		};
 		const signed = {
 			...parameters,
-			sign: signGmpayParameters(
-				parameters,
-				secret,
-				new Set(["sign", "sign_type"]),
-			),
+			sign: signEpayParameters(parameters, secret),
 			sign_type: "MD5",
 		};
 		const response = await handleEpayCreateRequest(

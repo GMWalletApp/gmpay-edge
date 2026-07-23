@@ -109,8 +109,17 @@ describe("GMPay and EPay OpenAPI contract", () => {
 		expect(notification.properties.amount).toMatchObject({
 			type: "string",
 		});
+		expect(createRequest.properties.signature).toMatchObject({
+			pattern: "^[0-9a-f]{64}$",
+		});
+		expect(notification.properties.signature).toMatchObject({
+			pattern: "^[0-9a-f]{64}$",
+		});
+		expect(JSON.stringify(document)).toContain("HMAC-SHA256");
+		expect(
+			requiredSchema(schemas, "EpayCreateRequest").properties.sign,
+		).toMatchObject({ pattern: "^[0-9a-f]{32}$" });
 		expect(JSON.stringify(document)).not.toContain("X-GMPay-Nonce");
-		expect(JSON.stringify(document)).not.toContain("HMAC");
 	});
 
 	it("resolves every local OpenAPI reference", async () => {

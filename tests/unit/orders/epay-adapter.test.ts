@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signGmpayParameters } from "#/features/api-keys/server/gmpay-signature";
+import { signEpayParameters } from "#/features/api-keys/server/gmpay-signature";
 import {
 	epaySelection,
 	parseEpayInput,
@@ -20,11 +20,7 @@ describe("EPay compatibility adapter", () => {
 			clientip: "203.0.113.10",
 			device: "mobile",
 		};
-		const sign = signGmpayParameters(
-			parameters,
-			"merchant-secret",
-			new Set(["sign", "sign_type"]),
-		);
+		const sign = signEpayParameters(parameters, "merchant-secret");
 		const parsed = parseEpayInput({ ...parameters, sign, sign_type: "MD5" });
 		expect(parsed.success).toBe(true);
 		if (!parsed.success) return;

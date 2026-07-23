@@ -1,5 +1,7 @@
+import { hmac } from "@noble/hashes/hmac.js";
 import { md5 } from "@noble/hashes/legacy.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { constantTimeEqual } from "#/lib/crypto";
 import { decryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
@@ -12,7 +14,6 @@ const LAST_USED_WRITE_INTERVAL_MS = 10 * 60_000;
 
 export function gmpaySignaturePayload(
 	parameters: object,
-	secret: string,
 	excluded = new Set(["signature"]),
 ) {
 	const pairs = Object.entries(parameters)
@@ -22,9 +23,9 @@ export function gmpaySignaturePayload(
 		)
 		.map(([key, value]) => [key, normalizeValue(value)] as const)
 		.filter(([, value]) => value !== "")
-		.sort(([left], [right]) => left.localeCompare(right))
+		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 		.map(([key, value]) => `${key}=${value}`);
-	return `${pairs.join("&")}${secret}`;
+	return pairs.join("&");
 }
 
 export function signGmpayParameters(
@@ -33,11 +34,21 @@ export function signGmpayParameters(
 	excluded?: Set<string>,
 ) {
 	return bytesToHex(
-		md5(
-			new TextEncoder().encode(
-				gmpaySignaturePayload(parameters, secret, excluded),
-			),
+		hmac(
+			sha256,
+			utf8ToBytes(secret),
+			utf8ToBytes(gmpaySignaturePayload(parameters, excluded)),
 		),
+	);
+}
+
+export function signEpayParameters(
+	parameters: object,
+	secret: string,
+	excluded = new Set(["sign", "sign_type"]),
+) {
+	return bytesToHex(
+		md5(utf8ToBytes(`${gmpaySignaturePayload(parameters, excluded)}${secret}`)),
 	);
 }
 
@@ -53,18 +64,54 @@ export function verifyGmpaySignature(
 	);
 }
 
+export function verifyEpaySignature(
+	parameters: object,
+	secret: string,
+	signature: string,
+	excluded?: Set<string>,
+) {
+	return constantTimeEqual(
+		signEpayParameters(parameters, secret, excluded),
+		signature,
+	);
+}
+
 export async function authenticateGmpayParameters(
 	db: D1Database,
 	parameters: object,
 	requiredScope: string,
+) {
+	return authenticateParameters(db, parameters, requiredScope, {
+		signatureField: "signature",
+		verifySignature: verifyGmpaySignature,
+	});
+}
+
+export async function authenticateEpayParameters(
+	db: D1Database,
+	parameters: object,
+	requiredScope: string,
+) {
+	return authenticateParameters(db, parameters, requiredScope, {
+		signatureField: "sign",
+		excluded: new Set(["sign", "sign_type"]),
+		verifySignature: verifyEpaySignature,
+	});
+}
+
+async function authenticateParameters(
+	db: D1Database,
+	parameters: object,
+	requiredScope: string,
 	options: {
-		signatureField?: string;
+		signatureField: string;
 		excluded?: Set<string>;
-	} = {},
+		verifySignature: typeof verifyGmpaySignature;
+	},
 ) {
 	const pid = normalizeValue(parameterValue(parameters, "pid"));
 	const signature = normalizeValue(
-		parameterValue(parameters, options.signatureField ?? "signature"),
+		parameterValue(parameters, options.signatureField),
 	);
 	if (!(pid && signature)) return null;
 	const row = await db
@@ -97,7 +144,7 @@ export async function authenticateGmpayParameters(
 		row.secret_encrypted,
 		runtime.apiKeyPepper,
 	);
-	if (!verifyGmpaySignature(parameters, secret, signature, options.excluded))
+	if (!options.verifySignature(parameters, secret, signature, options.excluded))
 		return null;
 	const rate = await claimApiRateLimit(db, { apiKeyId: row.id, limit: 120 });
 	if (!rate.allowed) throw new GmpayRateLimitError("API rate limit exceeded");

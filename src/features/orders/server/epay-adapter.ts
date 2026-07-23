@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-	authenticateGmpayParameters,
+	authenticateEpayParameters,
 	GmpayRateLimitError,
 } from "#/features/api-keys/server/gmpay-signature";
 import {
@@ -87,10 +87,7 @@ export function parseEpayInput(value: unknown) {
 }
 
 export async function authenticateEpayInput(db: D1Database, input: EpayInput) {
-	return authenticateGmpayParameters(db, input, "orders:create", {
-		signatureField: "sign",
-		excluded: new Set(["sign", "sign_type"]),
-	});
+	return authenticateEpayParameters(db, input, "orders:create");
 }
 
 export function toEpayOrderInput(input: EpayInput): CreateOrderInput {
@@ -206,11 +203,10 @@ export async function handleEpayQueryRequest(
 		);
 		if (!parsed.success)
 			return epayJson({ code: -1, msg: "invalid parameters" }, 400, requestId);
-		const principal = await authenticateGmpayParameters(
+		const principal = await authenticateEpayParameters(
 			env.DB,
 			parsed.data,
 			"orders:read",
-			{ signatureField: "sign", excluded: new Set(["sign", "sign_type"]) },
 		);
 		if (!principal)
 			return epayJson(

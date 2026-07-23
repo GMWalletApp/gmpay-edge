@@ -79,20 +79,46 @@ provider requirements, limits, retry behavior, and the production checklist.
 
 ```mermaid
 flowchart LR
-    Access["Merchant · Payer · Admin · Telegram"]
-    Worker["GMPay Edge Worker<br/>API · Checkout · Admin · grammY<br/>Shared order and payment core"]
+    Merchants["Merchant clients"]
+    Payer["Payer"]
+    Admin["Admin"]
+    TelegramUser["Telegram user"]
+
+    subgraph Worker["Single GMPay Edge Worker"]
+        direction LR
+        GMPay["GMPay boundary<br/>HMAC-SHA256"]
+        EPay["EPay compatibility boundary<br/>legacy MD5"]
+        Checkout["Checkout"]
+        AdminUI["Admin console"]
+        TelegramBot["grammY Bot"]
+        Core["Shared order · payment · Webhook core"]
+
+        GMPay --> Core
+        EPay --> Core
+        Checkout --> Core
+        AdminUI --> Core
+        TelegramBot --> Core
+    end
+
     Cloudflare["Cloudflare services<br/>D1 · KV · R2 · Queues · Cron"]
     Providers["Read-only payment providers<br/>Chains · Binance · OKX · OKPay"]
-    Callbacks["Merchant Webhook endpoints"]
+    Callbacks["Merchant Webhook endpoints<br/>GMPay HMAC-SHA256 · EPay MD5"]
 
-    Access --> Worker
-    Worker <--> Cloudflare
-    Worker <--> Providers
-    Worker --> Callbacks
+    Merchants --> GMPay
+    Merchants --> EPay
+    Payer --> Checkout
+    Admin --> AdminUI
+    TelegramUser --> TelegramBot
+    Core <--> Cloudflare
+    Core <--> Providers
+    Core --> Callbacks
 ```
 
-One Worker owns every product surface and the shared order and payment core. D1
-is authoritative; KV provides validated versioned caches and R2 stores private
+One Worker owns every product surface and the shared order and payment core.
+GMPay HMAC-SHA256 and legacy EPay MD5 terminate at explicit protocol boundaries,
+then use the same order service, state machine, checkout, and Webhook pipeline.
+Outbound callbacks retain the originating protocol's signature format. D1 is
+authoritative; KV provides validated versioned caches and R2 stores private
 artifacts. Cron and Queues move payment scans and Webhook retries outside
 synchronous requests. Payment adapters remain read-only.
 
@@ -186,10 +212,10 @@ POST /payments/gmpay/v1/order/create-transaction
 ```
 
 The endpoint accepts JSON or form data. A request includes the numeric credential
-`pid` and a lowercase MD5 signature calculated from sorted, non-empty parameters
-plus the credential Secret. Supplying an existing `order_id` never creates a
-second order. Omitting both `token` and `network` creates a selectable order;
-GMPay Edge does not silently default it to TRON.
+`pid` and a lowercase HMAC-SHA256 signature over the sorted, non-empty
+parameters, using the credential Secret as the HMAC key. Supplying an existing
+`order_id` never creates a second order. Omitting both `token` and `network`
+creates a selectable order; GMPay Edge does not silently default it to TRON.
 
 ### Query an order
 

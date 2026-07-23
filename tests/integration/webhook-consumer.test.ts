@@ -1,6 +1,9 @@
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { verifyGmpaySignature } from "#/features/api-keys/server/gmpay-signature";
+import {
+	verifyEpaySignature,
+	verifyGmpaySignature,
+} from "#/features/api-keys/server/gmpay-signature";
 import { loadAdminWebhookDelivery } from "#/features/webhooks/server/admin-detail";
 import {
 	processWebhookMessage,
@@ -253,7 +256,7 @@ describe("Webhook queue consumer on D1", () => {
 			].sort(),
 		);
 		expect(
-			verifyGmpaySignature(
+			verifyEpaySignature(
 				signed,
 				"secret",
 				String(signed.sign),
