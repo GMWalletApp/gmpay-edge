@@ -2,13 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { systemPermission } from "#/features/access/system-rbac";
 import { paymentSettingsError } from "#/features/payment-settings/errors";
-import { ReceivingMethodNotReadyError } from "#/features/payment-settings/readiness";
 import {
 	parseReceivingUsdLimits,
 	receivingLimitDecimals,
 } from "#/features/payment-settings/receiving-method-limits";
 import { adminContext } from "#/features/payment-settings/server/admin-context";
-import { assertReceivingMethodReadyForEnable } from "#/features/payment-settings/server/check-method-readiness";
 import { deleteReceivingMethod } from "#/features/payment-settings/server/delete-receiving-method";
 import { parseReceivingProviderConfiguration } from "#/features/payment-settings/server/provider-config";
 import { unitsToDecimal } from "#/lib/money";
@@ -238,63 +236,54 @@ export const createReceivingMethodFn = createServerFn({ method: "POST" })
 					)
 					.bind(crypto.randomUUID(), id, method.id, now, now),
 			),
-			context.db
-				.prepare(
-					`INSERT INTO audit_logs
-					(id, actor_user_id, action, target_type, target_id, request_id, ip_address, after, created_at)
-					VALUES (?, ?, 'receiving_method.created', 'receiving_method', ?, ?, ?, ?, ?)`,
-				)
-				.bind(
-					crypto.randomUUID(),
-					context.user.id,
-					id,
-					context.request.headers.get("x-request-id"),
-					context.request.headers.get("cf-connecting-ip"),
-					JSON.stringify({
-						name: data.name,
-						railCode: first.code,
-						paymentMethodIds: methods.results.map((method) => method.id),
-						assetCodes: methods.results.map((method) => method.asset_code),
-						minAmountMinor: limits.min?.toString() ?? null,
-						maxAmountMinor: limits.max?.toString() ?? null,
-						targetType: target.type,
-						enabled: true,
-					}),
-					now,
-				),
 		]);
 		try {
-			await assertReceivingMethodReadyForEnable(context.db, id);
-		} catch (error) {
 			await context.db.batch([
 				context.db
-					.prepare("DELETE FROM receiving_methods WHERE id = ?")
-					.bind(id),
+					.prepare(
+						"UPDATE receiving_methods SET enabled = 1, updated_at = ? WHERE id = ?",
+					)
+					.bind(now, id),
 				context.db
 					.prepare(
-						"DELETE FROM audit_logs WHERE target_type = 'receiving_method' AND target_id = ? AND action = 'receiving_method.created'",
-					)
-					.bind(id),
-			]);
-			if (error instanceof ReceivingMethodNotReadyError)
-				throw paymentSettingsError("receiving_method_not_ready");
-			throw error;
-		}
-		await context.db.batch([
-			context.db
-				.prepare(
-					"UPDATE receiving_methods SET enabled = 1, updated_at = ? WHERE id = ?",
-				)
-				.bind(now, id),
-			context.db
-				.prepare(
-					`UPDATE payment_ingresses SET reconcile_required_at = ?, updated_at = ?
+						`UPDATE payment_ingresses SET reconcile_required_at = ?, updated_at = ?
 						 WHERE enabled = 1 AND network = (
 						  SELECT rail_code FROM receiving_methods WHERE id = ?
 						 ) AND changes() = 1`,
-				)
-				.bind(now, now, id),
-		]);
+					)
+					.bind(now, now, id),
+				context.db
+					.prepare(
+						`INSERT INTO audit_logs
+					(id, actor_user_id, action, target_type, target_id, request_id, ip_address, after, created_at)
+					VALUES (?, ?, 'receiving_method.created', 'receiving_method', ?, ?, ?, ?, ?)`,
+					)
+					.bind(
+						crypto.randomUUID(),
+						context.user.id,
+						id,
+						context.request.headers.get("x-request-id"),
+						context.request.headers.get("cf-connecting-ip"),
+						JSON.stringify({
+							name: data.name,
+							railCode: first.code,
+							paymentMethodIds: methods.results.map((method) => method.id),
+							assetCodes: methods.results.map((method) => method.asset_code),
+							minAmountMinor: limits.min?.toString() ?? null,
+							maxAmountMinor: limits.max?.toString() ?? null,
+							targetType: target.type,
+							enabled: true,
+						}),
+						now,
+					),
+			]);
+		} catch (error) {
+			await context.db
+				.prepare("DELETE FROM receiving_methods WHERE id = ?")
+				.bind(id)
+				.run();
+			throw error;
+		}
 		return { id };
 	});
 
@@ -415,21 +404,6 @@ export const setReceivingMethodEnabledFn = createServerFn({ method: "POST" })
 		const context = await adminContext(
 			systemPermission("receiving_methods", "update"),
 		);
-		let readiness:
-			| Awaited<ReturnType<typeof assertReceivingMethodReadyForEnable>>
-			| undefined;
-		if (data.enabled) {
-			try {
-				readiness = await assertReceivingMethodReadyForEnable(
-					context.db,
-					data.id,
-				);
-			} catch (error) {
-				if (error instanceof ReceivingMethodNotReadyError)
-					throw paymentSettingsError("receiving_method_not_ready");
-				throw error;
-			}
-		}
 		const now = Date.now();
 		const [result] = await context.db.batch([
 			context.db
@@ -460,9 +434,9 @@ export const setReceivingMethodEnabledFn = createServerFn({ method: "POST" })
 					data.id,
 					context.request.headers.get("x-request-id"),
 					context.request.headers.get("cf-connecting-ip"),
-					JSON.stringify({ enabled: data.enabled, readiness }),
+					JSON.stringify({ enabled: data.enabled }),
 					now,
 				)
 				.run();
-		return { ...data, changed, readiness };
+		return { ...data, changed };
 	});
