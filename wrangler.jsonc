@@ -6,6 +6,7 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"placement": { "mode": "smart" },
 	"observability": { "enabled": true },
+	"cache": { "enabled": true },
 	"d1_databases": [
 		{
 			"binding": "DB",
