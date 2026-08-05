@@ -166,6 +166,21 @@ The deployment declares these bindings:
 | `PAYMENT_QUEUE` | Queues | Asynchronous payment scanning |
 | `WEBHOOK_QUEUE` | Queues | Asynchronous merchant Webhook delivery |
 
+## Keep a fork synchronized
+
+Forks include the `Sync upstream` GitHub Actions workflow. It runs every day at
+00:00 and 12:00 UTC and can also be started manually from **Actions → Sync
+upstream → Run workflow**. The workflow discovers the fork's parent repository
+and merges the upstream default branch into the fork's default branch using
+GitHub's fork sync API.
+
+After creating a fork, open its **Actions** tab and enable workflows; GitHub
+disables workflows in a new fork until its owner opts in. The workflow requests
+only `contents: write` access from the repository `GITHUB_TOKEN` and does not
+require a personal access token. It never force-pushes or overwrites fork-only
+commits. A merge conflict fails the run and must be resolved manually before
+automatic synchronization can continue.
+
 ## Quick start
 
 ### Requirements

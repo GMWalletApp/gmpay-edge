@@ -1,0 +1,45 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 0,12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync fork default branch
+    if: github.event.repository.fork
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Read repository metadata
+        id: repository
+        run: |
+          repository="$(gh api "repos/${GITHUB_REPOSITORY}")"
+
+          echo "default_branch=$(jq -r '.default_branch' <<<"${repository}")" >>"${GITHUB_OUTPUT}"
+          echo "upstream=$(jq -r '.parent.full_name' <<<"${repository}")" >>"${GITHUB_OUTPUT}"
+
+      - name: Merge upstream into the fork
+        env:
+          DEFAULT_BRANCH: ${{ steps.repository.outputs.default_branch }}
+          UPSTREAM: ${{ steps.repository.outputs.upstream }}
+        run: |
+          response="$(
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/merge-upstream" \
+              -f "branch=${DEFAULT_BRANCH}"
+          )"
+
+          message="$(jq -r '.message // "Fork is already up to date."' <<<"${response}")"
+          merge_type="$(jq -r '.merge_type // "none"' <<<"${response}")"
+          echo "${message} Upstream: ${UPSTREAM}; merge type: ${merge_type}."
