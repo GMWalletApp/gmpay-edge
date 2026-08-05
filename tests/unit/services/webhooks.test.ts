@@ -46,7 +46,7 @@ describe("webhooks", () => {
 					receive_address: "TMerchantAddress",
 					token: "USDT",
 					block_transaction_id: "transaction-1",
-					status: "paid",
+					status: 2,
 				},
 			},
 			fetcher,
@@ -64,7 +64,7 @@ describe("webhooks", () => {
 			pid: "gmp_merchant",
 			trade_id: "trade-1",
 			order_id: "ORDER-1001",
-			status: "paid",
+			status: 2,
 		});
 		expect(Object.keys(body).sort()).toEqual(
 			[
@@ -109,7 +109,7 @@ describe("webhooks", () => {
 					receive_address: "TMerchantAddress",
 					token: "USDT",
 					block_transaction_id: "transaction-1",
-					status: "paid",
+					status: 2,
 				},
 			},
 			vi
@@ -289,5 +289,5 @@ const gmpayCallback = {
 	receive_address: "TMerchantAddress",
 	token: "USDT",
 	block_transaction_id: "transaction-1",
-	status: "paid" as const,
+	status: 2 as const,
 };

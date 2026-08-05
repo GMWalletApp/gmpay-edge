@@ -222,6 +222,10 @@ components:
     OrderStatus:
       type: string
       enum: [pending, confirming, partially_paid, paid, overpaid, expired, cancelled, failed, refunded]
+    GmpayStatus:
+      type: integer
+      enum: [1, 2, 3, 4]
+      description: 1 waiting for payment, 2 paid, 3 closed, 4 waiting for payment-method selection.
     GmpayCreateRequest:
       type: object
       required: [pid, order_id, currency, amount, notify_url, signature]
@@ -231,7 +235,10 @@ components:
         currency: { type: string, minLength: 3, maxLength: 3 }
         token: { type: string, pattern: "^[A-Za-z0-9_-]{2,20}$", description: Omit together with network to let checkout select a payment method. }
         network: { type: string, pattern: "^[A-Za-z0-9-]{2,32}$", description: Omit together with token to let checkout select a payment method. }
-        amount: { type: string, pattern: "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,8})?$" }
+        amount:
+          oneOf:
+            - { type: string, pattern: "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,8})?$" }
+            - { type: number, exclusiveMinimum: 0 }
         notify_url: { type: string, format: uri, pattern: "^https://" }
         redirect_url: { type: string, format: uri, pattern: "^https://" }
         name: { type: string, maxLength: 500 }
@@ -245,7 +252,7 @@ components:
         signature: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     GmpayCreateData:
       type: object
-      required: [trade_id, order_id, amount, currency, actual_amount, receive_address, token, network, status, expiration_time, payment_url]
+      required: [trade_id, order_id, amount, currency, actual_amount, receive_address, token, network, status, status_detail, expiration_time, payment_url]
       properties:
         trade_id: { type: string, pattern: "^[0-9]{20}$" }
         order_id: { type: string }
@@ -255,7 +262,8 @@ components:
         receive_address: { type: string }
         token: { type: string }
         network: { type: string }
-        status: { $ref: "#/components/schemas/OrderStatus" }
+        status: { $ref: "#/components/schemas/GmpayStatus" }
+        status_detail: { $ref: "#/components/schemas/OrderStatus" }
         expiration_time: { type: integer }
         payment_url: { type: string, format: uri }
     GmpayCreateResponse:
@@ -276,7 +284,9 @@ components:
         receive_address: { type: string }
         token: { type: string }
         block_transaction_id: { type: string }
-        status: { $ref: "#/components/schemas/OrderStatus" }
+        status:
+          type: integer
+          enum: [1, 2, 3]
         signature: { type: string, pattern: "^[0-9a-f]{64}$" }
       example:
         pid: "100000000001"
@@ -287,7 +297,7 @@ components:
         receive_address: TExampleAddress
         token: USDT
         block_transaction_id: transaction-hash
-        status: paid
+        status: 2
         signature: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     EpayCreateRequest:
       type: object

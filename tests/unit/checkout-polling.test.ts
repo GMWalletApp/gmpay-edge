@@ -24,7 +24,7 @@ describe("checkout polling", () => {
 			"const [order, setOrder] = useState<CheckoutOrder | null>(initialOrder)",
 		);
 		expect(page).toContain(
-			"const pollingEnabled = Boolean(order && !isTerminal(order.status))",
+			"const pollingEnabled = Boolean(order && !isTerminal(statusDetail))",
 		);
 		expect(page).toContain("useVisiblePolling(");
 		expect(page).toContain("pollAfterCurrent()");

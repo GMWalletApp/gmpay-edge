@@ -1,10 +1,11 @@
+import type { OrderStatus } from "#/features/orders/schema";
 import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 
 export interface ApiOrder {
 	orderId: string;
 	externalOrderId: string;
-	status: string;
+	status: OrderStatus;
 	amount: string;
 	currency: string;
 	paymentAmount?: string;
@@ -47,7 +48,7 @@ export async function getOrder(
 		.first<{
 			id: string;
 			external_order_id: string;
-			status: string;
+			status: OrderStatus;
 			amount_minor: string;
 			currency: string;
 			currency_decimals: number;

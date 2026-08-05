@@ -76,10 +76,11 @@ describe("GMPay and EPay OpenAPI contract", () => {
 		).toEqual(["act", "out_trade_no", "pid", "sign", "sign_type", "trade_no"]);
 	});
 
-	it("uses readable GMPay Edge states and never declares a default chain", async () => {
+	it("documents epusdt boundary compatibility without a default chain", async () => {
 		const document = await openApi();
 		const schemas = document.components.schemas;
 		const orderStatus = requiredSchema(schemas, "OrderStatus");
+		const gmpayStatus = requiredSchema(schemas, "GmpayStatus");
 		const createRequest = requiredSchema(schemas, "GmpayCreateRequest");
 		const createData = requiredSchema(schemas, "GmpayCreateData");
 		const notification = requiredSchema(schemas, "GmpayNotification");
@@ -96,9 +97,18 @@ describe("GMPay and EPay OpenAPI contract", () => {
 		]);
 		expect(createRequest.properties.token?.default).toBeUndefined();
 		expect(createRequest.properties.network?.default).toBeUndefined();
-		expect(createRequest.properties.amount).toMatchObject({
-			type: "string",
+		expect(createRequest.properties.amount?.oneOf).toEqual([
+			expect.objectContaining({ type: "string" }),
+			expect.objectContaining({ type: "number" }),
+		]);
+		expect(gmpayStatus.enum).toEqual([1, 2, 3, 4]);
+		expect(createData.properties.status).toEqual({
+			$ref: "#/components/schemas/GmpayStatus",
 		});
+		expect(createData.properties.status_detail).toEqual({
+			$ref: "#/components/schemas/OrderStatus",
+		});
+		expect(notification.properties.status?.enum).toEqual([1, 2, 3]);
 		expect(createData.properties.amount).toMatchObject({
 			type: "string",
 		});
@@ -214,11 +224,18 @@ async function openApi() {
 			schemas: Record<
 				string,
 				{
-					enum: string[];
+					enum: Array<string | number>;
 					required?: string[];
 					properties: Record<
 						string,
-						{ default?: unknown; type?: string; pattern?: string }
+						{
+							default?: unknown;
+							type?: string;
+							pattern?: string;
+							$ref?: string;
+							enum?: Array<string | number>;
+							oneOf?: Array<{ type?: string; pattern?: string }>;
+						}
 					>;
 				}
 			>;

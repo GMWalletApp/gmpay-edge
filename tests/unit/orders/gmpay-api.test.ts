@@ -65,13 +65,13 @@ describe("GMPay create transaction input", () => {
 		);
 	});
 
-	it("rejects numeric JSON amounts before minor-unit conversion", () => {
-		expect(parseGmpayCreateInput({ ...valid, amount: 1.25 })).toMatchObject({
-			success: false,
-		});
+	it("normalizes numeric JSON amounts before minor-unit conversion", () => {
+		const parsed = parseGmpayCreateInput({ ...valid, amount: 1.25 });
+		expect(parsed).toMatchObject({ success: true });
+		if (parsed.success) expect(parsed.data.amount).toBe("1.25");
 	});
 
-	it("returns the GMPay Edge status vocabulary without EPUSDT numeric states", () => {
+	it("returns an epusdt integer status with the detailed internal status", () => {
 		const response = gmpayCreateResponse(
 			{
 				orderId: "11111111-1111-4111-8111-111111111111",
@@ -87,7 +87,8 @@ describe("GMPay create transaction input", () => {
 		expect(response.data).toMatchObject({
 			trade_id: "11111111-1111-4111-8111-111111111111",
 			order_id: "ORDER-1003",
-			status: "pending",
+			status: 4,
+			status_detail: "pending",
 			token: "",
 			actual_amount: "0",
 		});
@@ -102,6 +103,7 @@ describe("GMPay create transaction input", () => {
 				"token",
 				"network",
 				"status",
+				"status_detail",
 				"expiration_time",
 				"payment_url",
 			].sort(),

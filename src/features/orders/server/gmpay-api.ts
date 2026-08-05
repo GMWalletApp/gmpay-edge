@@ -3,9 +3,11 @@ import {
 	authenticateGmpayParameters,
 	GmpayRateLimitError,
 } from "#/features/api-keys/server/gmpay-signature";
+import { toGmpayStatus } from "#/features/orders/gmpay-status";
 import {
 	type CreateOrderInput,
 	createOrderSchema,
+	orderAmountSchema,
 } from "#/features/orders/schema";
 import {
 	createOrder,
@@ -35,9 +37,10 @@ const gmpayCreateSchema = z.object({
 	currency: z.string().trim().length(3),
 	token: z.string().trim().max(20).optional(),
 	network: z.string().trim().max(32).optional(),
-	// GMPay JSON clients must send decimal strings. Coercing a JSON number here
-	// could silently lose precision before the order's minor-unit conversion.
-	amount: z.string(),
+	amount: z.union([
+		orderAmountSchema,
+		z.number().finite().positive().transform(String).pipe(orderAmountSchema),
+	]),
 	notify_url: z.string().trim().url(),
 	signature: z
 		.string()
@@ -112,7 +115,11 @@ export function gmpayCreateResponse(order: ApiOrder, requestId: string) {
 			receive_address: order.receiveAddress ?? "",
 			token: order.paymentAsset ?? "",
 			network: order.paymentNetwork ?? "",
-			status: order.status,
+			status: toGmpayStatus(
+				order.status,
+				Boolean(order.paymentAsset && order.paymentNetwork),
+			),
+			status_detail: order.status,
 			expiration_time: Math.floor(new Date(order.expiresAt).getTime() / 1000),
 			payment_url: order.checkoutUrl,
 		},

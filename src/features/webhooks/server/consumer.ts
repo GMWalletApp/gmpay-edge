@@ -1,3 +1,4 @@
+import { toGmpayStatus } from "#/features/orders/gmpay-status";
 import type { WebhookDeliveryResult } from "#/features/webhooks/server/delivery";
 import {
 	deliverWebhook,
@@ -265,7 +266,7 @@ async function resolveWebhookDelivery(
 				block_transaction_id: String(
 					transaction.success ? (transaction.data.hash ?? "") : "",
 				),
-				status: row.status,
+				status: toGmpayStatus(row.status),
 			},
 		};
 	return {

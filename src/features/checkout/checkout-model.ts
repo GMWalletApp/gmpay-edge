@@ -21,7 +21,8 @@ export interface CheckoutOrder {
 	expiration_time?: string;
 	redirect_url?: string;
 	created_at?: string;
-	status?: string;
+	status?: GmpayStatus;
+	status_detail?: OrderStatus;
 	received_amount_units?: string;
 	received_amount?: string;
 	confirmations?: number;
@@ -50,3 +51,6 @@ function safeHttpsUrl(value?: string) {
 		return null;
 	}
 }
+
+import type { GmpayStatus } from "#/features/orders/gmpay-status";
+import type { OrderStatus } from "#/features/orders/schema";

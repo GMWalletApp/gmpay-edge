@@ -1,4 +1,6 @@
 import type { CheckoutOrder } from "#/features/checkout/checkout-model";
+import { toGmpayStatus } from "#/features/orders/gmpay-status";
+import type { OrderStatus } from "#/features/orders/schema";
 import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 
@@ -31,7 +33,7 @@ export async function getCheckoutOrderWithDatabase(
 		.first<{
 			id: string;
 			external_order_id: string;
-			status: string;
+			status: OrderStatus;
 			amount_minor: string;
 			currency: string;
 			currency_decimals: number;
@@ -66,7 +68,8 @@ export async function getCheckoutOrderWithDatabase(
 		...(row.address ? { receive_address: row.address } : {}),
 		expiration_time: new Date(row.expires_at).toISOString(),
 		...(row.return_url ? { redirect_url: row.return_url } : {}),
-		status: row.status,
+		status: toGmpayStatus(row.status, Boolean(row.code && row.network)),
+		status_detail: row.status,
 		received_amount_units: row.received_amount_units,
 		received_amount: unitsToDecimal(
 			BigInt(row.received_amount_units),

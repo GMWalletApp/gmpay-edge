@@ -86,7 +86,8 @@ describe("GMPay create transaction HTTP handler", () => {
 			request_id: string;
 			data: {
 				trade_id: string;
-				status: string;
+				status: number;
+				status_detail: string;
 				token: string;
 				network: string;
 			};
@@ -94,7 +95,12 @@ describe("GMPay create transaction HTTP handler", () => {
 		expect(body).toMatchObject({
 			status_code: 200,
 			request_id: `request-${encoding}`,
-			data: { status: "pending", token: "", network: "" },
+			data: {
+				status: 4,
+				status_detail: "pending",
+				token: "",
+				network: "",
+			},
 		});
 		const order = await db
 			.prepare(
@@ -110,6 +116,35 @@ describe("GMPay create transaction HTTP handler", () => {
 			api_key_id: "key",
 			api_protocol: "gmpay",
 			payment_asset_id: null,
+		});
+	});
+
+	it("accepts and authenticates a JSON number amount", async () => {
+		const parameters = {
+			pid,
+			order_id: "ORDER-NUMERIC-AMOUNT",
+			currency: "USD",
+			amount: 12.5,
+			notify_url: "https://merchant.example/notify",
+		};
+		const response = await handleGmpayCreateRequest(
+			new Request(
+				"https://pay.example/payments/gmpay/v1/order/create-transaction",
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						...parameters,
+						signature: signGmpayParameters(parameters, secret),
+					}),
+				},
+			),
+			{ DB: db } as Env,
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			data: { amount: "12.5", status: 4, status_detail: "pending" },
 		});
 	});
 
@@ -163,7 +198,8 @@ describe("GMPay create transaction HTTP handler", () => {
 			data: {
 				trade_id: createdBody.data.trade_id,
 				order_id: "ORDER-QUERY",
-				status: "pending",
+				status: 4,
+				status_detail: "pending",
 			},
 		});
 		expect(

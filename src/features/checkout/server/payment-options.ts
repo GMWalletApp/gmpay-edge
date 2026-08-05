@@ -269,7 +269,7 @@ export async function selectCheckoutPaymentOption(
 	const result = {
 		orderId: order.id,
 		externalOrderId: order.external_order_id,
-		status: "pending",
+		status: "pending" as const,
 		amount: order.amount,
 		currency: order.currency,
 		paymentAmount,

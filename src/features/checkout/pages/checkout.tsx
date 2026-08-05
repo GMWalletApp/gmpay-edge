@@ -56,6 +56,7 @@ export function CheckoutPage({
 	const [selectingOption, setSelectingOption] = useState(false);
 	const [pollFailed, setPollFailed] = useState(false);
 	const now = useNow(initialNow, true);
+	const statusDetail = order?.status_detail;
 	const refreshOrder = useCallback(async () => {
 		try {
 			setOrder(await getCheckoutOrderFn({ data: { orderId } }));
@@ -65,14 +66,14 @@ export function CheckoutPage({
 			throw error;
 		}
 	}, [orderId]);
-	const pollingEnabled = Boolean(order && !isTerminal(order.status));
+	const pollingEnabled = Boolean(order && !isTerminal(statusDetail));
 	const { pollAfterCurrent, pollNow } = useVisiblePolling(
 		refreshOrder,
 		5_000,
 		pollingEnabled,
 	);
 	const shouldLoadPaymentOptions = Boolean(
-		order && !isTerminal(order.status) && (!order.token || optionDialogOpen),
+		order && !isTerminal(statusDetail) && (!order.token || optionDialogOpen),
 	);
 	const paymentOptionsQuery = useQuery({
 		queryKey: ["checkout", "payment-options", orderId],
@@ -105,8 +106,8 @@ export function CheckoutPage({
 	const remaining = Math.max(0, Math.round((expiresAt - now) / 1000));
 	const timerRatio = Math.min(1, remaining / 900);
 	const returnUrl =
-		order?.status === "paid" || order?.status === "overpaid"
-			? safeCheckoutReturnUrl(order.redirect_url)
+		statusDetail === "paid" || statusDetail === "overpaid"
+			? safeCheckoutReturnUrl(order?.redirect_url)
 			: null;
 	const reviewAction = order ? (
 		<PaymentReviewDialog
@@ -147,9 +148,9 @@ export function CheckoutPage({
 		);
 	} else if (!order) {
 		content = <NotFoundPanel onBack={() => navigate({ to: "/" })} />;
-	} else if (order.status === "paid") {
+	} else if (statusDetail === "paid") {
 		content = <SuccessPanel redirecting={Boolean(returnUrl)} />;
-	} else if (order.status === "overpaid") {
+	} else if (statusDetail === "overpaid") {
 		content = returnUrl ? (
 			<SuccessPanel redirecting />
 		) : (
@@ -158,19 +159,19 @@ export function CheckoutPage({
 				received={order.received_amount ?? order.actual_amount ?? order.amount}
 			/>
 		);
-	} else if (order.status === "refunded") {
+	} else if (statusDetail === "refunded") {
 		content = <RefundedPanel onBack={() => navigate({ to: "/" })} />;
-	} else if (order.status === "cancelled") {
+	} else if (statusDetail === "cancelled") {
 		content = <CancelledPanel onBack={() => navigate({ to: "/" })} />;
-	} else if (order.status === "failed") {
+	} else if (statusDetail === "failed") {
 		content = <FailedPanel onBack={() => navigate({ to: "/" })} />;
-	} else if (order.status === "expired" || remaining === 0) {
+	} else if (statusDetail === "expired" || remaining === 0) {
 		content = (
 			<ExpiredPanel onBack={() => navigate({ to: "/" })}>
 				{reviewAction}
 			</ExpiredPanel>
 		);
-	} else if (order.status === "partially_paid") {
+	} else if (statusDetail === "partially_paid") {
 		content = (
 			<PartiallyPaidPanel
 				asset={order.token ?? ""}
@@ -180,7 +181,7 @@ export function CheckoutPage({
 				{reviewAction}
 			</PartiallyPaidPanel>
 		);
-	} else if (order.status === "confirming") {
+	} else if (statusDetail === "confirming") {
 		content = (
 			<ConfirmingPanel
 				confirmations={order.confirmations ?? 0}

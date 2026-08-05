@@ -156,7 +156,7 @@ describe("Webhook queue consumer on D1", () => {
 		expect(details.attempts[2]?.requestSnapshot).toBeNull();
 	});
 
-	it("resolves GMPay order context and delivers a signed readable-status callback", async () => {
+	it("resolves GMPay order context and delivers a signed integer-status callback", async () => {
 		const queued = fakeMessage("delivery-gmpay", 1);
 		const fetcher = vi
 			.fn<typeof fetch>()
@@ -174,7 +174,7 @@ describe("Webhook queue consumer on D1", () => {
 			order_id: "gmpay-order",
 			amount: "12.5",
 			actual_amount: "0",
-			status: "paid",
+			status: 2,
 		});
 		expect(Object.keys(body).sort()).toEqual(
 			[

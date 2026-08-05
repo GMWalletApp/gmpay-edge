@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { GmpayStatus } from "#/features/orders/gmpay-status";
 import type { OrderStatus } from "#/features/orders/schema";
 
 export type WebhookJsonValue =
@@ -85,7 +86,7 @@ interface EpayCallbackData extends Record<string, string> {
 	trade_status: string;
 }
 
-interface GmpayCallbackData extends Record<string, string> {
+interface GmpayCallbackData extends Record<string, string | GmpayStatus> {
 	pid: string;
 	trade_id: string;
 	order_id: string;
@@ -94,7 +95,7 @@ interface GmpayCallbackData extends Record<string, string> {
 	receive_address: string;
 	token: string;
 	block_transaction_id: string;
-	status: OrderStatus;
+	status: Exclude<GmpayStatus, 4>;
 }
 
 export const webhookEventTypes = [

@@ -43,7 +43,11 @@ describe("checkout transaction submission", () => {
 		const loadCounters = createDatastoreCounters();
 		await expect(
 			getCheckoutOrderWithDatabase(instrumentD1(db, loadCounters), orderId),
-		).resolves.toMatchObject({ trade_id: orderId, status: "pending" });
+		).resolves.toMatchObject({
+			trade_id: orderId,
+			status: 1,
+			status_detail: "pending",
+		});
 		expect(loadCounters).toMatchObject({
 			d1Prepare: 1,
 			d1StatementFirst: 1,
