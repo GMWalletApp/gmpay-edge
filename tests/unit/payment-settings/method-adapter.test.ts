@@ -10,6 +10,7 @@ type ConnectionRow = {
 	transport: "http" | "websocket";
 	endpoint: string;
 	api_key: null;
+	credential_config_encrypted: null;
 	asset_code: string;
 	rail_code: string;
 	asset_kind: "native" | "external";
@@ -94,6 +95,31 @@ describe("payment method adapter routing", () => {
 		});
 	});
 
+	it("rejects private chain endpoints and pins credentialed providers to official origins", async () => {
+		const privateChain = chainRow("ethereum", "evm", "ETH");
+		privateChain.endpoint = "https://127.0.0.1/rpc";
+		await expect(
+			createPaymentMethodAdapters(db([privateChain]), "method-ethereum"),
+		).resolves.toEqual([]);
+
+		const provider = providerRow("binance");
+		provider.endpoint = "https://attacker.example/collect";
+		const [candidate] = await createPaymentMethodAdapters(
+			db([provider]),
+			"method-binance",
+			"12345",
+			{
+				apiKey: "read-key",
+				secretKey: "secret",
+				apiUrl: "https://attacker.example/also-collect",
+			},
+		);
+		expect(
+			(candidate?.adapter as unknown as { config: { apiUrl: string } }).config
+				.apiUrl,
+		).toBe("https://api-gcp.binance.com");
+	});
+
 	it("bounds ordered fallback candidates per payment method", async () => {
 		const rows = Array.from(
 			{ length: paymentAdapterCandidateLimit + 3 },
@@ -126,6 +152,7 @@ function chainRow(
 		transport: "http",
 		endpoint: `https://${railCode}.example`,
 		api_key: null,
+		credential_config_encrypted: null,
 		asset_code: assetCode,
 		rail_code: railCode,
 		asset_kind: "native",

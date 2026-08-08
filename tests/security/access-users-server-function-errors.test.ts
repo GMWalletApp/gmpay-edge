@@ -31,6 +31,7 @@ describe("access and user Server Function error presentation", () => {
 		["cannot_disable_self", m.admin_users_error_cannot_disable_self()],
 		["cannot_delete_self", m.admin_users_error_cannot_delete_self()],
 		["last_root_required", m.admin_users_error_last_root_required()],
+		["root_role_required", m.admin_users_error_root_role_required()],
 		["role_unavailable", m.admin_users_error_role_unavailable()],
 		["own_roles_required", m.admin_users_error_own_roles_required()],
 		["user_id_required", m.admin_users_error_invalid_input()],

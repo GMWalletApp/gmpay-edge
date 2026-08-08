@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isSafePublicUrl } from "#/lib/webhook-url";
 
 export const paymentConnectionToggleInput = z
 	.object({
@@ -31,12 +32,8 @@ function transportMatchesEndpoint(value: {
 	endpoint: string;
 }) {
 	if (value.transport === "websocket")
-		return value.endpoint.startsWith("wss://");
-	const endpoint = new URL(value.endpoint);
-	return (
-		endpoint.protocol === "https:" ||
-		(endpoint.protocol === "http:" && endpoint.hostname === "localhost")
-	);
+		return isSafePublicUrl(value.endpoint, ["wss:"]);
+	return isSafePublicUrl(value.endpoint, ["https:"]);
 }
 
 const connectionProtocolIssue = {
@@ -50,7 +47,6 @@ export const createPaymentConnectionInput = connectionFields
 		...evmScanConfigFields,
 		railCode: z.string().trim().min(1).max(50),
 		type: z.literal("rpc"),
-		apiKey: z.string().trim().max(512).optional(),
 	})
 	.strict()
 	.refine(transportMatchesEndpoint, connectionProtocolIssue);
@@ -59,8 +55,6 @@ export const updateChainPaymentConnectionInput = paymentConnectionIdInput
 	.extend({
 		...connectionFields.shape,
 		...evmScanConfigFields,
-		apiKey: z.string().trim().max(512).optional(),
-		clearApiKey: z.boolean().default(false),
 	})
 	.strict()
 	.refine(transportMatchesEndpoint, connectionProtocolIssue);
@@ -72,7 +66,7 @@ export const updateProviderPaymentConnectionInput = paymentConnectionIdInput
 		priority: z.number().int().min(0).max(10_000),
 	})
 	.strict()
-	.refine((value) => value.endpoint.startsWith("https://"), {
+	.refine((value) => isSafePublicUrl(value.endpoint, ["https:"]), {
 		message: "Provider API address must use HTTPS",
 		path: ["endpoint"],
 	});

@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Loader2, LogIn } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -151,6 +151,12 @@ export function UserAuthForm({
 					);
 				}}
 			</form.Field>
+			<Link
+				className="justify-self-end text-muted-foreground text-sm hover:text-foreground"
+				to="/forgot-password"
+			>
+				{m.auth_forgot_password_link()}
+			</Link>
 			<Button className="mt-2" disabled={isLoading}>
 				{isLoading ? <Loader2 className="animate-spin" /> : <LogIn />}
 				{m.auth_submit()}

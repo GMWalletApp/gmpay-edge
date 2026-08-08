@@ -11,6 +11,10 @@ import { sha256Hex } from "#/lib/crypto";
 import { decryptSecret } from "#/lib/secrets";
 import { json, withRequestId } from "#/server/http";
 import { claimFixedWindowRateLimit } from "#/server/rate-limit";
+import {
+	RequestBodyTooLargeError,
+	readLimitedRequestBytes,
+} from "#/server/request-body";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 
 const sourceIdSchema = z.string().uuid();
@@ -66,28 +70,20 @@ export async function handleAlchemyAddressActivity(
 			"unknown",
 			"unsupported_content_encoding",
 		);
-	const contentLength = Number(request.headers.get("content-length") ?? 0);
-	if (Number.isFinite(contentLength) && contentLength > maximumBodyBytes)
-		return finish(
-			errorResponse(request, "payload_too_large", 413),
-			"unknown",
-			"payload_too_large",
-		);
-
 	const source = await loadSource(env.DB, sourceId.data);
 	if (!source)
 		return finish(errorResponse(request, "source_not_found", 404), "unknown");
 	let rawBody: string;
 	try {
-		const bytes = new Uint8Array(await request.arrayBuffer());
-		if (bytes.byteLength > maximumBodyBytes)
+		const bytes = await readLimitedRequestBytes(request, maximumBodyBytes);
+		rawBody = decoder.decode(bytes);
+	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError)
 			return finish(
 				errorResponse(request, "payload_too_large", 413),
 				"unknown",
 				"payload_too_large",
 			);
-		rawBody = decoder.decode(bytes);
-	} catch {
 		return finish(
 			errorResponse(request, "invalid_payload", 400),
 			"unknown",

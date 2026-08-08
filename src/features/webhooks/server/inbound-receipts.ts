@@ -49,8 +49,8 @@ export async function recordInboundWebhookReceipt(
 	);
 	if (!endpoint) return;
 	const now = Date.now();
-	const requestId =
-		input.request.headers.get("x-request-id") ?? crypto.randomUUID();
+	const receiptId = crypto.randomUUID();
+	const externalRequestId = input.request.headers.get("x-request-id");
 	const processingStatus =
 		input.responseStatus >= 500
 			? "failed"
@@ -59,15 +59,16 @@ export async function recordInboundWebhookReceipt(
 				: "succeeded";
 	await db
 		.prepare(
-			`INSERT OR IGNORE INTO inbound_webhook_receipts
-			(id, endpoint_code, request_id, method, request_path, signature_status,
+			`INSERT INTO inbound_webhook_receipts
+			(id, endpoint_code, request_id, external_request_id, method, request_path, signature_status,
 			 processing_status, response_status, duration_ms, error_code, received_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
 		.bind(
-			crypto.randomUUID(),
+			receiptId,
 			endpoint.code,
-			requestId,
+			receiptId,
+			externalRequestId,
 			input.request.method,
 			new URL(input.request.url).pathname,
 			input.signatureStatus,

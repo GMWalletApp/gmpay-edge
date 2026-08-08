@@ -1,3 +1,4 @@
+import { officialProviderApiUrl } from "#/features/payment-settings/catalog";
 import { AptosAdapter } from "#/integrations/chains/aptos";
 import { EvmAdapter } from "#/integrations/chains/evm";
 import { SolanaAdapter } from "#/integrations/chains/solana";
@@ -8,7 +9,9 @@ import { BinancePayAdapter } from "#/integrations/exchanges/binance";
 import { OkxPayAdapter } from "#/integrations/exchanges/okx";
 import { OkPayAdapter } from "#/integrations/wallets/okpay";
 import { decryptSecret } from "#/lib/secrets";
+import { isSafePublicUrl } from "#/lib/webhook-url";
 import { loadRuntimeConfig, type RuntimeConfig } from "#/server/runtime-config";
+import { loadPaymentConnectionApiKey } from "./connection-credentials";
 
 type MethodConnection = {
 	connection_id: string;
@@ -16,6 +19,7 @@ type MethodConnection = {
 	transport: "http" | "websocket";
 	endpoint: string | null;
 	api_key: string | null;
+	credential_config_encrypted: string | null;
 	timeout_ms: number | null;
 	block_lookback: number | null;
 	log_block_range: number | null;
@@ -87,14 +91,16 @@ export async function createPaymentMethodAdapters(
 	const rows = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 credential.config_encrypted AS credential_config_encrypted,
 			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code,
 			 pa.rail_code,
 			 pa.kind AS asset_kind, pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
 			 FROM payment_assets pa
-			 JOIN payment_rails pr ON pr.code = pa.rail_code
-			 JOIN payment_ingresses pc ON pc.rail_code = pr.code
+				 JOIN payment_rails pr ON pr.code = pa.rail_code
+				 JOIN payment_ingresses pc ON pc.rail_code = pr.code
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = pc.id
 			 WHERE pa.id = ?
 			 AND pc.enabled = 1
 			 ORDER BY CASE pc.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,
@@ -110,6 +116,7 @@ export async function createPaymentMethodAdapters(
 	for (const row of rows.results) {
 		try {
 			const adapter = await createAdapter(
+				db,
 				row,
 				targetValue,
 				receivingProviderConfig,
@@ -155,12 +162,14 @@ export async function createPaymentConnectionAdapter(
 	const connection = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 credential.config_encrypted AS credential_config_encrypted,
 			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
-			 FROM payment_ingresses pc
-			 JOIN payment_rails pr ON pr.code = pc.rail_code
+				 FROM payment_ingresses pc
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = pc.id
+				 JOIN payment_rails pr ON pr.code = pc.rail_code
 			 JOIN payment_assets pa ON pa.rail_code = pr.code
 			 WHERE pc.id = ? AND pr.kind = 'chain'
 			 ORDER BY CASE pa.kind WHEN 'native' THEN 0 ELSE 1 END, pa.id
@@ -169,7 +178,7 @@ export async function createPaymentConnectionAdapter(
 		.bind(connectionId)
 		.first<MethodConnection>();
 	if (!connection) return null;
-	return createAdapter(connection);
+	return createAdapter(db, connection);
 }
 
 export async function loadPaymentConnectionHealthTargets(
@@ -181,12 +190,14 @@ export async function loadPaymentConnectionHealthTargets(
 	const connections = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 credential.config_encrypted AS credential_config_encrypted,
 			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
-			 FROM payment_ingresses pc
-			 JOIN payment_rails pr ON pr.code = pc.rail_code
+				 FROM payment_ingresses pc
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = pc.id
+				 JOIN payment_rails pr ON pr.code = pc.rail_code
 			 JOIN payment_assets pa ON pa.id = (
 			  SELECT candidate.id FROM payment_assets candidate
 			  WHERE candidate.rail_code = pr.code
@@ -203,7 +214,7 @@ export async function loadPaymentConnectionHealthTargets(
 	return Promise.all(
 		connections.results.map(async (connection) => ({
 			id: connection.connection_id,
-			adapter: await createAdapter(connection),
+			adapter: await createAdapter(db, connection),
 		})),
 	);
 }
@@ -216,12 +227,14 @@ export async function loadPaymentConnectionHealthTargetsByIds(
 	const connections = await db
 		.prepare(
 			`SELECT pc.id AS connection_id, pr.adapter, pc.transport, pc.endpoint, pc.api_key,
+			 credential.config_encrypted AS credential_config_encrypted,
 			 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 			 pa.code AS asset_code, pa.rail_code, pa.kind AS asset_kind,
 			 pa.contract_address, pa.decimals,
 			 COALESCE(json_extract(pr.metadata, '$.nativeSymbol'), pa.symbol) AS native_symbol
-			 FROM payment_ingresses pc
-			 JOIN payment_rails pr ON pr.code = pc.rail_code
+				 FROM payment_ingresses pc
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = pc.id
+				 JOIN payment_rails pr ON pr.code = pc.rail_code
 			 JOIN payment_assets pa ON pa.id = (
 			  SELECT candidate.id FROM payment_assets candidate
 			  WHERE candidate.rail_code = pr.code
@@ -237,26 +250,43 @@ export async function loadPaymentConnectionHealthTargetsByIds(
 	return Promise.all(
 		connections.results.map(async (connection) => ({
 			id: connection.connection_id,
-			adapter: await createAdapter(connection),
+			adapter: await createAdapter(db, connection),
 		})),
 	);
 }
 
 async function createAdapter(
+	db: D1Database,
 	connection: MethodConnection,
 	targetValue?: string,
 	receivingProviderConfig?: Record<string, unknown>,
 ): Promise<PaymentAdapter<unknown> | null> {
 	const endpoint = connection.endpoint;
 	if (
+		endpoint &&
+		!isSafePublicUrl(endpoint, [
+			connection.transport === "websocket" ? "wss:" : "https:",
+		])
+	)
+		return null;
+	if (
 		connection.transport === "websocket" &&
 		!["evm", "solana"].includes(connection.adapter)
 	)
 		return null;
+	const apiKey =
+		endpoint &&
+		["tron", "evm", "ton", "aptos", "solana"].includes(connection.adapter)
+			? await loadPaymentConnectionApiKey(db, {
+					connectionId: connection.connection_id,
+					configEncrypted: connection.credential_config_encrypted,
+					legacyApiKey: connection.api_key,
+				})
+			: undefined;
 	if (connection.adapter === "tron" && endpoint)
 		return new TronAdapter({
 			apiUrl: endpoint,
-			apiKey: connection.api_key || undefined,
+			apiKey,
 		}) as PaymentAdapter<unknown>;
 	if (
 		connection.adapter === "evm" &&
@@ -265,7 +295,7 @@ async function createAdapter(
 	)
 		return new EvmAdapter({
 			rpcUrl: endpoint,
-			apiKey: connection.api_key || undefined,
+			apiKey,
 			timeoutMs: connection.timeout_ms ?? undefined,
 			blockLookback: connection.block_lookback ?? undefined,
 			logBlockRange: connection.log_block_range ?? undefined,
@@ -277,14 +307,14 @@ async function createAdapter(
 	if (connection.adapter === "ton" && endpoint)
 		return new TonAdapter({
 			apiUrl: endpoint,
-			apiKey: connection.api_key || undefined,
+			apiKey,
 			nativeAsset: nativeAsset(connection),
 			tokens: tokenConfiguration(connection, "master"),
 		}) as PaymentAdapter<unknown>;
 	if (connection.adapter === "aptos" && endpoint)
 		return new AptosAdapter({
 			indexerUrl: endpoint,
-			apiKey: connection.api_key || undefined,
+			apiKey,
 			nativeAsset: nativeAsset(connection),
 			tokens: connection.contract_address
 				? {
@@ -298,7 +328,7 @@ async function createAdapter(
 	if (connection.adapter === "solana" && endpoint)
 		return new SolanaAdapter({
 			rpcUrl: endpoint,
-			apiKey: connection.api_key || undefined,
+			apiKey,
 			nativeAsset: nativeAsset(connection),
 			tokens: connection.contract_address
 				? {
@@ -309,9 +339,10 @@ async function createAdapter(
 					}
 				: {},
 		}) as PaymentAdapter<unknown>;
+	const providerApiUrl = officialProviderApiUrl(connection.rail_code);
 	const providerConfig = {
 		...receivingProviderConfig,
-		...(endpoint ? { apiUrl: endpoint } : {}),
+		...(providerApiUrl ? { apiUrl: providerApiUrl } : {}),
 		...(connection.adapter === "okx" && targetValue
 			? { accountId: targetValue }
 			: {}),

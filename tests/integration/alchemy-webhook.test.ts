@@ -52,6 +52,23 @@ describe("Alchemy address activity ingress", () => {
 
 	afterAll(async () => miniflare.dispose());
 
+	it("rejects an oversized provider payload", async () => {
+		const response = await handleAlchemyAddressActivity(
+			new Request("https://pay.example/api/webhooks/payments/alchemy", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"content-length": String(2 * 1024 * 1024 + 1),
+				},
+				body: "{}",
+			}),
+			sourceId,
+			{ DB: db },
+		);
+
+		expect(response.status).toBe(413);
+	});
+
 	it("durably deduplicates an event before enqueueing its identifier", async () => {
 		const sendBatch = vi.fn().mockResolvedValue(undefined);
 		const first = await handleAlchemyAddressActivity(

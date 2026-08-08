@@ -15,7 +15,12 @@ import { m } from "#/paraglide/messages";
 	globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", () => ({
+	Link: ({ children }: { children: React.ReactNode }) => (
+		<a href="/">{children}</a>
+	),
+	useNavigate: () => vi.fn(),
+}));
 vi.mock("#/features/auth/auth-client", () => ({
 	authClient: { signIn: { email: vi.fn() } },
 }));

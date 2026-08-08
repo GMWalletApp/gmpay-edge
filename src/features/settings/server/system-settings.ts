@@ -50,6 +50,7 @@ const definitions = {
 		)
 		.max(100)
 		.transform((hosts) => [...new Set(hosts)]),
+	"auth.password_reset_from_email": z.union([z.literal(""), z.email()]),
 	"webhooks.max_attempts": z.number().int().min(1).max(20),
 	"webhooks.timeout_ms": z.number().int().min(1_000).max(30_000),
 	"payments.scan_batch_size": z.number().int().min(1).max(100),
@@ -92,6 +93,7 @@ const defaults: Record<SettingKey, SettingValue> = {
 	"payments.late_payment_policy": "review",
 	"payments.checkout_amount_decimals": defaultCheckoutAmountDecimals,
 	"security.allowed_hosts": [],
+	"auth.password_reset_from_email": "",
 	"webhooks.max_attempts": 8,
 	"webhooks.timeout_ms": 10_000,
 	"payments.scan_batch_size": 100,

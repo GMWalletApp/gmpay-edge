@@ -29,6 +29,20 @@
       "when": 1784640000000,
       "tag": "0003_telegram_unified_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786192550774,
+      "tag": "0004_redundant_puck",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786192957133,
+      "tag": "0005_flippant_dexter_bennett",
+      "breakpoints": true
     }
   ]
 }

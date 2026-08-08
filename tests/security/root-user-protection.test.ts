@@ -38,6 +38,54 @@ describe("root user protection", () => {
 		).rejects.toMatchObject({ code: "last_root_required", status: 409 });
 	});
 
+	it("rejects granting root from a non-root administrator", async () => {
+		const now = Date.now();
+		await database.batch([
+			database
+				.prepare(
+					"INSERT INTO users (id, name, email, email_verified, enabled, two_factor_enabled, created_at, updated_at) VALUES ('role-operator', 'Role operator', 'role-operator@example.com', 1, 1, 0, ?, ?), ('root-target', 'Root target', 'root-target@example.com', 1, 1, 0, ?, ?)",
+				)
+				.bind(now, now, now, now),
+		]);
+
+		await expect(
+			replaceUserRolesAtomically(database, {
+				userId: "root-target",
+				roleIds: ["root-role"],
+				desiredHasRoot: true,
+				currentUserId: "role-operator",
+				currentUserIsRoot: false,
+			}),
+		).rejects.toMatchObject({ code: "root_role_required", status: 403 });
+
+		const assignment = await database
+			.prepare(
+				"SELECT COUNT(*) AS count FROM user_roles WHERE user_id = 'root-target' AND role_id = 'root-role'",
+			)
+			.first<{ count: number }>();
+		expect(assignment?.count).toBe(0);
+
+		await expect(
+			replaceUserRolesAtomically(database, {
+				userId: "root-target",
+				roleIds: ["root-role"],
+				desiredHasRoot: true,
+				currentUserId: "root-a",
+				currentUserIsRoot: true,
+			}),
+		).resolves.toEqual({
+			userId: "root-target",
+			roleIds: ["root-role"],
+		});
+
+		await database.batch([
+			database.prepare("DELETE FROM user_roles WHERE user_id = 'root-target'"),
+			database.prepare(
+				"DELETE FROM users WHERE id IN ('role-operator', 'root-target')",
+			),
+		]);
+	});
+
 	it("rejects disabling the current user through the edit form", async () => {
 		await expect(
 			updateUser(drizzle(database, { schema }), {
@@ -74,6 +122,7 @@ describe("root user protection", () => {
 				roleIds: [],
 				desiredHasRoot: false,
 				currentUserId: "operator",
+				currentUserIsRoot: false,
 			}),
 		).rejects.toMatchObject({ code: "user_not_found", status: 404 });
 	});
@@ -232,13 +281,15 @@ describe("root user protection", () => {
 				userId: "root-a",
 				roleIds: [],
 				desiredHasRoot: false,
-				currentUserId: "operator",
+				currentUserId: "root-manager",
+				currentUserIsRoot: true,
 			}),
 			replaceUserRolesAtomically(database, {
 				userId: "root-b",
 				roleIds: [],
 				desiredHasRoot: false,
-				currentUserId: "operator",
+				currentUserId: "root-manager",
+				currentUserIsRoot: true,
 			}),
 		]);
 		expect(

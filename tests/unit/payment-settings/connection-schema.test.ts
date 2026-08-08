@@ -14,7 +14,6 @@ const base = {
 describe("payment connection input", () => {
 	it.each([
 		["http", "https://rpc.example"],
-		["http", "http://localhost:8787"],
 		["websocket", "wss://rpc.example/ws"],
 	] as const)("accepts %s transport at %s", (transport, endpoint) => {
 		expect(
@@ -31,6 +30,10 @@ describe("payment connection input", () => {
 		["http", "wss://rpc.example/ws"],
 		["websocket", "https://rpc.example"],
 		["websocket", "ws://localhost:8787"],
+		["http", "http://localhost:8787"],
+		["http", "https://127.0.0.1/rpc"],
+		["http", "https://169.254.169.254/latest/meta-data"],
+		["http", "https://user:password@rpc.example"],
 	] as const)("rejects %s transport at %s", (transport, endpoint) => {
 		expect(
 			createPaymentConnectionInput.safeParse({
@@ -83,6 +86,19 @@ describe("payment connection input", () => {
 			expect(
 				updateProviderPaymentConnectionInput.safeParse({
 					...provider,
+					...credential,
+				}).success,
+			).toBe(false);
+		}
+	});
+
+	it("rejects credentials in chain connection configuration", () => {
+		for (const credential of [{ apiKey: "key" }, { clearApiKey: true }]) {
+			expect(
+				createPaymentConnectionInput.safeParse({
+					...base,
+					transport: "http",
+					endpoint: "https://rpc.example",
 					...credential,
 				}).success,
 			).toBe(false);

@@ -12,6 +12,7 @@ import {
 	requireTelegramResource,
 	requireTelegramResourceAvailable,
 } from "#/features/telegram/server/resource-errors";
+import { parseTelegramSetting } from "#/features/telegram/server/setting-schema";
 import { parseTelegramTemplateTranslations } from "#/features/telegram/template-translations";
 import { webhookEventTypes } from "#/features/webhooks/types";
 import { type SupportedLocale, supportedLocales } from "#/lib/locales";
@@ -119,8 +120,9 @@ export const listTelegramNotificationsFn = createServerFn({ method: "GET" })
 					"*",
 				]),
 				templateTranslations: parseTelegramTemplateTranslations(
-					parseSetting(
+					parseTelegramSetting(
 						settings.get("telegram.default_template_translations"),
+						z.record(z.string(), z.string()),
 						defaultTelegramNotificationTranslations,
 					),
 				),
@@ -395,17 +397,8 @@ function isWebhookEventType(
 	);
 }
 
-function parseSetting(value: string | undefined, fallback: unknown): unknown {
-	if (!value) return fallback;
-	try {
-		return JSON.parse(value) as unknown;
-	} catch {
-		return fallback;
-	}
-}
-
 function parseEventSetting(value: string | undefined, fallback: string[]) {
-	const parsed = parseSetting(value, fallback);
+	const parsed = parseTelegramSetting(value, z.array(z.string()), fallback);
 	return Array.isArray(parsed)
 		? parsed.filter(
 				(item): item is (typeof webhookEventTypes)[number] =>

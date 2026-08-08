@@ -17,7 +17,10 @@ const workerEnv = vi.hoisted(() => ({
 	bindings: {} as Partial<Env>,
 }));
 
-vi.mock("cloudflare:workers", () => ({ env: workerEnv.bindings }));
+vi.mock("cloudflare:workers", () => ({
+	env: workerEnv.bindings,
+	waitUntil: vi.fn(),
+}));
 
 describe("admin bootstrap request budget", () => {
 	let miniflare: Miniflare;

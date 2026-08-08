@@ -154,6 +154,17 @@ export const paymentIngresses = sqliteTable(
 	],
 );
 
+export const paymentIngressCredentials = sqliteTable(
+	"payment_ingress_credentials",
+	{
+		paymentIngressId: text("payment_ingress_id")
+			.primaryKey()
+			.references(() => paymentIngresses.id, { onDelete: "cascade" }),
+		configEncrypted: text("config_encrypted").notNull(),
+		...timestamps,
+	},
+);
+
 export const receivingMethods = sqliteTable(
 	"receiving_methods",
 	{

@@ -283,6 +283,73 @@ describe("Better Auth account security flow", () => {
 		expect(uninvited).toBeNull();
 	});
 
+	it("sends a one-time reset link, keeps the response generic, and revokes sessions", async () => {
+		const sent: Array<{ to?: unknown; text?: string }> = [];
+		const scheduled: Promise<unknown>[] = [];
+		await database
+			.prepare(
+				`INSERT INTO system_settings
+				 (key, value, is_secret, created_at, updated_at)
+				 VALUES ('auth.password_reset_from_email', '"security@pay.example"', 0, 1, 1)`,
+			)
+			.run();
+		const resetAuth = createAuth(drizzle(database, { schema }), {
+			BETTER_AUTH_SECRET: runtime.betterAuthSecret,
+			BETTER_AUTH_URL: runtime.betterAuthUrl,
+			AUTH_EMAIL: {
+				send: async (message) => {
+					sent.push(message as { to?: unknown; text?: string });
+					return { messageId: "reset-message" };
+				},
+			} as SendEmail,
+			WAIT_UNTIL: (promise) => scheduled.push(promise),
+		});
+		await Promise.all([
+			resetAuth.api.signInEmail({ body: { email, password } }),
+			resetAuth.api.signInEmail({ body: { email, password } }),
+		]);
+		const existingResponse = await resetAuth.api.requestPasswordReset({
+			body: { email, redirectTo: "/reset-password" },
+		});
+		const missingResponse = await resetAuth.api.requestPasswordReset({
+			body: {
+				email: "missing@example.com",
+				redirectTo: "/reset-password",
+			},
+		});
+		expect(missingResponse).toEqual(existingResponse);
+		await Promise.all(scheduled);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.to).toBe(email);
+		const resetUrl = sent[0]?.text?.match(/https:\/\/\S+/)?.[0];
+		const token = resetUrl
+			? new URL(resetUrl).pathname.split("/").at(-1)
+			: undefined;
+		expect(token).toBeTruthy();
+		await resetAuth.api.resetPassword({
+			body: { newPassword: password, token },
+		});
+		const reused = await resetAuth.api.resetPassword({
+			body: { newPassword: password, token },
+			asResponse: true,
+		});
+		expect(reused.status).toBeGreaterThanOrEqual(400);
+		const sessions = await database
+			.prepare(
+				"SELECT COUNT(*) AS count FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)",
+			)
+			.bind(email)
+			.first<{ count: number }>();
+		expect(sessions?.count).toBe(0);
+		const audit = await database
+			.prepare(
+				"SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'auth.password_reset' AND target_id = (SELECT id FROM users WHERE email = ?)",
+			)
+			.bind(email)
+			.first<{ count: number }>();
+		expect(audit?.count).toBe(1);
+	});
+
 	it("does not create a session for a disabled user", async () => {
 		const before = await database
 			.prepare("SELECT COUNT(*) AS count FROM sessions")

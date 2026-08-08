@@ -33,7 +33,7 @@ describe("inbound webhook receipts", () => {
 		);
 	});
 
-	it("records only metadata and deduplicates a request ID", async () => {
+	it("records metadata for every attempt and preserves the external request ID", async () => {
 		const request = new Request(
 			"https://edge.example/api/providers/okpay/notify?secret=not-stored",
 			{
@@ -58,21 +58,26 @@ describe("inbound webhook receipts", () => {
 		});
 		const rows = await db
 			.prepare(
-				`SELECT id, request_id, request_path, signature_status, processing_status,
+				`SELECT id, request_id, external_request_id, request_path, signature_status, processing_status,
 				 response_status, error_code FROM inbound_webhook_receipts`,
 			)
 			.all<Record<string, unknown>>();
-		expect(rows.results).toEqual([
-			{
-				id: expect.any(String),
-				request_id: "request-a",
-				request_path: "/api/providers/okpay/notify",
-				signature_status: "invalid",
-				processing_status: "rejected",
-				response_status: 401,
-				error_code: "invalid_signature",
-			},
-		]);
+		expect(rows.results).toHaveLength(2);
+		expect(rows.results).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: expect.any(String),
+					request_id: expect.any(String),
+					external_request_id: "request-a",
+					request_path: "/api/providers/okpay/notify",
+					signature_status: "invalid",
+					processing_status: "rejected",
+					response_status: 401,
+					error_code: "invalid_signature",
+				}),
+			]),
+		);
+		expect(new Set(rows.results.map((row) => row.request_id)).size).toBe(2);
 		expect(JSON.stringify(rows.results)).not.toContain("not-stored");
 		const receipt = await loadInboundWebhookReceipt(
 			db,
@@ -80,7 +85,8 @@ describe("inbound webhook receipts", () => {
 		);
 		expect(receipt).toMatchObject({
 			endpointCode: "okpay.notify",
-			requestId: "request-a",
+			requestId: rows.results[0]?.request_id,
+			externalRequestId: "request-a",
 			method: "POST",
 			requestPath: "/api/providers/okpay/notify",
 			signatureStatus: "invalid",

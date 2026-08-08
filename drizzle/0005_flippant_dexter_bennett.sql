@@ -1,0 +1,2 @@
+ALTER TABLE `inbound_webhook_receipts` ADD `external_request_id` text;--> statement-breakpoint
+CREATE INDEX `inbound_webhook_receipts_external_request_idx` ON `inbound_webhook_receipts` (`endpoint_code`,`external_request_id`,`received_at`);

@@ -142,6 +142,7 @@ export const setUserRolesFn = createServerFn({ method: "POST" })
 			...data,
 			desiredHasRoot: roles.results.some((role) => role.name === "root"),
 			currentUserId: currentUser.id,
+			currentUserIsRoot: currentUser.root,
 		});
 		await createAuditStatement(db.$client, request, currentUser.id, {
 			action: "user.roles_replaced",

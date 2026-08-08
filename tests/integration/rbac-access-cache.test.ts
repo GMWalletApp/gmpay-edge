@@ -397,6 +397,7 @@ describe("versioned RBAC access cache", () => {
 			roleIds: ["role-2"],
 			desiredHasRoot: false,
 			currentUserId: "actor",
+			currentUserIsRoot: false,
 		});
 
 		const state = await database

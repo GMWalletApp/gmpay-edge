@@ -8,6 +8,7 @@ type CloudflareEnv = {
 	CACHE?: KVNamespace;
 	WEBHOOK_QUEUE?: Queue;
 	PAYMENT_QUEUE?: Queue;
+	AUTH_EMAIL?: SendEmail;
 };
 
 export function getCloudflareEnv(_request?: Request) {

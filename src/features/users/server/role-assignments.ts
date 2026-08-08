@@ -8,6 +8,7 @@ export async function replaceUserRolesAtomically(
 		roleIds: string[];
 		desiredHasRoot: boolean;
 		currentUserId: string;
+		currentUserIsRoot: boolean;
 	},
 ) {
 	if (input.userId === input.currentUserId && input.roleIds.length === 0)
@@ -16,7 +17,16 @@ export async function replaceUserRolesAtomically(
 			409,
 			"You cannot remove all of your own roles",
 		);
-	const guard = `(
+	const rootActorGuard = `(
+		? = 1 OR (
+		 ? = 0 AND NOT EXISTS (
+		  SELECT 1 FROM user_roles actor_target_ur
+		  JOIN roles actor_target_r ON actor_target_r.id = actor_target_ur.role_id
+		  WHERE actor_target_ur.user_id = ? AND actor_target_r.name = 'root'
+		 )
+		)
+	)`;
+	const lastRootGuard = `(
 		NOT EXISTS (
 		 SELECT 1 FROM user_roles target_ur
 		 JOIN roles target_r ON target_r.id = target_ur.role_id
@@ -34,8 +44,14 @@ export async function replaceUserRolesAtomically(
 	const now = Date.now();
 	await db.batch([
 		db
-			.prepare(`DELETE FROM user_roles WHERE user_id = ? AND ${guard}`)
+			.prepare(
+				`DELETE FROM user_roles WHERE user_id = ?
+				 AND ${rootActorGuard} AND ${lastRootGuard}`,
+			)
 			.bind(
+				input.userId,
+				input.currentUserIsRoot ? 1 : 0,
+				input.desiredHasRoot ? 1 : 0,
 				input.userId,
 				input.userId,
 				input.desiredHasRoot ? 1 : 0,
@@ -45,15 +61,18 @@ export async function replaceUserRolesAtomically(
 			db
 				.prepare(
 					`INSERT OR IGNORE INTO user_roles (id, user_id, role_id, created_at)
-					 SELECT ?, ?, ?, ? WHERE EXISTS (
-					  SELECT 1 FROM users WHERE id = ?
-					 ) AND ${guard}`,
+						 SELECT ?, ?, ?, ? WHERE EXISTS (
+						  SELECT 1 FROM users WHERE id = ?
+						 ) AND ${rootActorGuard} AND ${lastRootGuard}`,
 				)
 				.bind(
 					crypto.randomUUID(),
 					input.userId,
 					roleId,
 					now,
+					input.userId,
+					input.currentUserIsRoot ? 1 : 0,
+					input.desiredHasRoot ? 1 : 0,
 					input.userId,
 					input.userId,
 					input.desiredHasRoot ? 1 : 0,
@@ -76,11 +95,18 @@ export async function replaceUserRolesAtomically(
 	const actualIds = actual.results.flatMap((row) =>
 		row.role_id === null ? [] : [row.role_id],
 	);
-	if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds))
+	if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
+		if (!input.currentUserIsRoot)
+			throw new DomainError(
+				"root_role_required",
+				403,
+				"Only a root user can change root membership",
+			);
 		throw new DomainError(
 			"last_root_required",
 			409,
 			"The last enabled root user cannot lose the root role",
 		);
+	}
 	return { userId: input.userId, roleIds: expectedIds };
 }

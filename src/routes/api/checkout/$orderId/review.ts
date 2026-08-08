@@ -8,6 +8,10 @@ import {
 import { isSameOriginRequest } from "#/server/api-boundaries";
 import { getEnv } from "#/server/db.server";
 import { json, withRequestId } from "#/server/http";
+import {
+	RequestBodyTooLargeError,
+	readLimitedRequestBytes,
+} from "#/server/request-body";
 
 const MAX_REQUEST_BYTES = 5 * 1024 * 1024 + 64 * 1024;
 
@@ -19,9 +23,6 @@ export const Route = createFileRoute("/api/checkout/$orderId/review")({
 				if (!isSameOriginRequest(request))
 					return response(request, "origin_forbidden", 403);
 				if (!env.FILES) return response(request, "storage_unavailable", 503);
-				const length = Number(request.headers.get("content-length") ?? "0");
-				if (length > MAX_REQUEST_BYTES)
-					return response(request, "invalid_evidence", 413);
 				try {
 					await enforceReviewRateLimit(env, request, params.orderId);
 				} catch (error) {
@@ -30,8 +31,24 @@ export const Route = createFileRoute("/api/checkout/$orderId/review")({
 				}
 				let form: FormData;
 				try {
-					form = await request.formData();
-				} catch {
+					const bytes = await readLimitedRequestBytes(
+						request,
+						MAX_REQUEST_BYTES,
+					);
+					form = await new Response(bytes.buffer, {
+						headers: {
+							"content-type": request.headers.get("content-type") ?? "",
+						},
+					}).formData();
+					const entries = [...form.entries()];
+					if (
+						entries.length > 8 ||
+						entries.filter(([, value]) => value instanceof File).length > 1
+					)
+						return response(request, "invalid_evidence", 422);
+				} catch (error) {
+					if (error instanceof RequestBodyTooLargeError)
+						return response(request, "invalid_evidence", 413);
 					return response(request, "invalid_request", 400);
 				}
 				try {

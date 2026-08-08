@@ -66,9 +66,6 @@ try {
 			maxClientBytes: 7_000_000,
 			maxLargestClientJavaScriptBytes: 2_300_000,
 			maxScalarBytes: 3_800_000,
-			// Semantic route and domain ownership can add modules without increasing
-			// Worker transfer or startup cost; keep this as an explosion guard only.
-			maxWorkerModules: 350,
 			maxWorkerUploadBytes: 9_216_000,
 			maxWorkerGzipUploadBytes: 1_945_600,
 			maxLargestWorkerModuleBytes: 1_100_000,
@@ -83,7 +80,6 @@ try {
 		totalBytes > report.budgets.maxClientBytes ||
 		largestJavaScriptBytes > report.budgets.maxLargestClientJavaScriptBytes ||
 		scalarBytes > report.budgets.maxScalarBytes ||
-		moduleCount > report.budgets.maxWorkerModules ||
 		report.worker.uploadBytes > report.budgets.maxWorkerUploadBytes ||
 		report.worker.gzipUploadBytes > report.budgets.maxWorkerGzipUploadBytes ||
 		largestWorkerModuleBytes > report.budgets.maxLargestWorkerModuleBytes

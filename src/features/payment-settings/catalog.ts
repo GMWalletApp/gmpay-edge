@@ -75,6 +75,19 @@ export const initialWalletRails = [
 	},
 ] as const;
 
+const officialProviderApiUrls: Readonly<Record<string, string>> = {
+	...Object.fromEntries(
+		initialExchangeRails.map((provider) => [provider.code, provider.apiUrl]),
+	),
+	...Object.fromEntries(
+		initialWalletRails.map((provider) => [provider.code, provider.apiUrl]),
+	),
+};
+
+export function officialProviderApiUrl(railCode: string) {
+	return officialProviderApiUrls[railCode];
+}
+
 export const initialPaymentRails = [
 	...initialChainRails.map((network) => ({
 		code: network.code,

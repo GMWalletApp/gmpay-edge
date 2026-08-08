@@ -16,6 +16,8 @@ export function userOperationErrorMessage(error: unknown) {
 			return m.admin_users_error_cannot_delete_self();
 		case "last_root_required":
 			return m.admin_users_error_last_root_required();
+		case "root_role_required":
+			return m.admin_users_error_root_role_required();
 		case "role_unavailable":
 			return m.admin_users_error_role_unavailable();
 		case "own_roles_required":

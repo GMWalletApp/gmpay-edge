@@ -3,7 +3,13 @@ import { recordInboundWebhookReceipt } from "#/features/webhooks/server/inbound-
 import { OkPayAdapter } from "#/integrations/wallets/okpay";
 import { decryptSecret } from "#/lib/secrets";
 import { json, withRequestId } from "#/server/http";
+import {
+	RequestBodyTooLargeError,
+	readLimitedRequestBytes,
+} from "#/server/request-body";
 import { loadRuntimeConfig } from "#/server/runtime-config";
+
+const maximumBodyBytes = 64 * 1024;
 
 export async function handleOkPayNotification(request: Request, env: Env) {
 	const startedAt = Date.now();
@@ -22,7 +28,18 @@ export async function handleOkPayNotification(request: Request, env: Env) {
 		});
 		return response;
 	};
-	const parsed = await parseNotification(request);
+	let parsed: Awaited<ReturnType<typeof parseNotification>>;
+	try {
+		parsed = await parseNotification(request);
+	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError)
+			return finish(
+				errorResponse(request, "payload_too_large", 413),
+				"unknown",
+				"payload_too_large",
+			);
+		throw error;
+	}
 	if (!parsed)
 		return finish(
 			errorResponse(request, "invalid_notification", 400),
@@ -108,17 +125,24 @@ async function parseNotification(request: Request): Promise<{
 	source: Record<string, unknown>;
 } | null> {
 	try {
+		const bytes = await readLimitedRequestBytes(request, maximumBodyBytes);
+		const contentType = request.headers.get("content-type") ?? "";
 		const input = request.headers
 			.get("content-type")
 			?.includes("application/json")
-			? await request.json()
-			: parseFormData(await request.formData());
+			? JSON.parse(new TextDecoder().decode(bytes))
+			: parseFormData(
+					await new Response(bytes.buffer, {
+						headers: { "content-type": contentType },
+					}).formData(),
+				);
 		if (!isRecord(input)) return null;
 		if (!("data" in input)) return { input, source: input };
 		const nested: unknown =
 			typeof input.data === "string" ? JSON.parse(input.data) : input.data;
 		return isRecord(nested) ? { input, source: nested } : null;
-	} catch {
+	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError) throw error;
 		return null;
 	}
 }

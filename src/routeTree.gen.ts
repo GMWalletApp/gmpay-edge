@@ -32,6 +32,8 @@ import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors401RouteImport } from './routes/(errors)/401'
 import { Route as authTwoFactorRouteImport } from './routes/(auth)/two-factor'
 import { Route as authSignInRouteImport } from './routes/(auth)/sign-in'
+import { Route as authResetPasswordRouteImport } from './routes/(auth)/reset-password'
+import { Route as authForgotPasswordRouteImport } from './routes/(auth)/forgot-password'
 import { Route as AdminWebhooksRouteRouteImport } from './routes/admin/webhooks/route'
 import { Route as AdminTelegramRouteRouteImport } from './routes/admin/telegram/route'
 import { Route as AdminSettingsRouteRouteImport } from './routes/admin/settings/route'
@@ -193,6 +195,16 @@ const authTwoFactorRoute = authTwoFactorRouteImport.update({
 const authSignInRoute = authSignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
+  getParentRoute: () => authRouteRoute,
+} as any)
+const authResetPasswordRoute = authResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => authRouteRoute,
+} as any)
+const authForgotPasswordRoute = authForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
   getParentRoute: () => authRouteRoute,
 } as any)
 const AdminWebhooksRouteRoute = AdminWebhooksRouteRouteImport.update({
@@ -473,6 +485,8 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRouteRouteWithChildren
   '/admin/telegram': typeof AdminTelegramRouteRouteWithChildren
   '/admin/webhooks': typeof AdminWebhooksRouteRouteWithChildren
+  '/forgot-password': typeof authForgotPasswordRoute
+  '/reset-password': typeof authResetPasswordRoute
   '/sign-in': typeof authSignInRoute
   '/two-factor': typeof authTwoFactorRoute
   '/401': typeof errors401Route
@@ -537,6 +551,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/install': typeof InstallRoute
+  '/forgot-password': typeof authForgotPasswordRoute
+  '/reset-password': typeof authResetPasswordRoute
   '/sign-in': typeof authSignInRoute
   '/two-factor': typeof authTwoFactorRoute
   '/401': typeof errors401Route
@@ -611,6 +627,8 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRouteRouteWithChildren
   '/admin/telegram': typeof AdminTelegramRouteRouteWithChildren
   '/admin/webhooks': typeof AdminWebhooksRouteRouteWithChildren
+  '/(auth)/forgot-password': typeof authForgotPasswordRoute
+  '/(auth)/reset-password': typeof authResetPasswordRoute
   '/(auth)/sign-in': typeof authSignInRoute
   '/(auth)/two-factor': typeof authTwoFactorRoute
   '/(errors)/401': typeof errors401Route
@@ -685,6 +703,8 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/telegram'
     | '/admin/webhooks'
+    | '/forgot-password'
+    | '/reset-password'
     | '/sign-in'
     | '/two-factor'
     | '/401'
@@ -749,6 +769,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/install'
+    | '/forgot-password'
+    | '/reset-password'
     | '/sign-in'
     | '/two-factor'
     | '/401'
@@ -822,6 +844,8 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/telegram'
     | '/admin/webhooks'
+    | '/(auth)/forgot-password'
+    | '/(auth)/reset-password'
     | '/(auth)/sign-in'
     | '/(auth)/two-factor'
     | '/(errors)/401'
@@ -1072,6 +1096,20 @@ declare module '@tanstack/react-router' {
       path: '/sign-in'
       fullPath: '/sign-in'
       preLoaderRoute: typeof authSignInRouteImport
+      parentRoute: typeof authRouteRoute
+    }
+    '/(auth)/reset-password': {
+      id: '/(auth)/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof authResetPasswordRouteImport
+      parentRoute: typeof authRouteRoute
+    }
+    '/(auth)/forgot-password': {
+      id: '/(auth)/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof authForgotPasswordRouteImport
       parentRoute: typeof authRouteRoute
     }
     '/admin/webhooks': {
@@ -1421,11 +1459,15 @@ declare module '@tanstack/react-router' {
 }
 
 interface authRouteRouteChildren {
+  authForgotPasswordRoute: typeof authForgotPasswordRoute
+  authResetPasswordRoute: typeof authResetPasswordRoute
   authSignInRoute: typeof authSignInRoute
   authTwoFactorRoute: typeof authTwoFactorRoute
 }
 
 const authRouteRouteChildren: authRouteRouteChildren = {
+  authForgotPasswordRoute: authForgotPasswordRoute,
+  authResetPasswordRoute: authResetPasswordRoute,
   authSignInRoute: authSignInRoute,
   authTwoFactorRoute: authTwoFactorRoute,
 }

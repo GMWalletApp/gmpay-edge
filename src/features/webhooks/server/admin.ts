@@ -69,9 +69,9 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 		const parameters: Array<string | number> = [];
 		if (search) {
 			filters.push(
-				"(endpoint_code LIKE ? OR request_id LIKE ? OR request_path LIKE ?)",
+				"(endpoint_code LIKE ? OR request_id LIKE ? OR external_request_id LIKE ? OR request_path LIKE ?)",
 			);
-			parameters.push(search, search, search);
+			parameters.push(search, search, search, search);
 		}
 		if (data.beforeCreatedAt !== undefined) {
 			filters.push("received_at <= ?");
@@ -85,7 +85,7 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 				)
 				.bind(...parameters),
 			db
-				.prepare(`SELECT id, endpoint_code, request_id, method, request_path,
+				.prepare(`SELECT id, endpoint_code, request_id, external_request_id, method, request_path,
 				 signature_status, processing_status, response_status, duration_ms,
 				 error_code, received_at FROM inbound_webhook_receipts
 				 INDEXED BY inbound_webhook_receipts_retention_idx ${where}
@@ -97,6 +97,7 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 			id: string;
 			endpoint_code: string;
 			request_id: string;
+			external_request_id: string | null;
 			method: string;
 			request_path: string;
 			signature_status: string;
@@ -111,6 +112,7 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 				id: row.id,
 				endpointCode: row.endpoint_code,
 				requestId: row.request_id,
+				externalRequestId: row.external_request_id,
 				method: row.method,
 				requestPath: row.request_path,
 				signatureStatus: row.signature_status,

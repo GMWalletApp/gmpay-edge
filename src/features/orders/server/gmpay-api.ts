@@ -16,6 +16,12 @@ import {
 } from "#/features/orders/server/create";
 import { type ApiOrder, getOrder } from "#/features/orders/server/query";
 import { requestId as getRequestId } from "#/server/http";
+import {
+	RequestBodyTooLargeError,
+	readLimitedRequestText,
+} from "#/server/request-body";
+
+export const merchantRequestBodyLimitBytes = 64 * 1024;
 
 const gmpayQuerySchema = z
 	.object({
@@ -246,7 +252,7 @@ export async function handleGmpayCreateRequest(
 		const parsed = parseGmpayCreateInput(
 			parseGmpayRequestBody(
 				request.headers.get("content-type") ?? "",
-				await request.text(),
+				await readLimitedRequestText(request, merchantRequestBodyLimitBytes),
 			),
 		);
 		if (!parsed.success)
@@ -271,6 +277,11 @@ export async function handleGmpayCreateRequest(
 		);
 		return gatewayResponse(gmpayCreateResponse(order, requestId), 200);
 	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError)
+			return gatewayResponse(
+				gmpayError(requestId, 10009, "payload too large"),
+				413,
+			);
 		if (error instanceof GmpayRateLimitError)
 			return gatewayResponse(
 				gmpayError(requestId, 429, "API rate limit exceeded"),

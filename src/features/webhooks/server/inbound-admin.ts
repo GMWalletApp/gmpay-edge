@@ -2,7 +2,7 @@ import { DomainError } from "#/lib/domain-error";
 
 export async function loadInboundWebhookReceipt(db: D1Database, id: string) {
 	const row = await db
-		.prepare(`SELECT id, endpoint_code, request_id, method, request_path,
+		.prepare(`SELECT id, endpoint_code, request_id, external_request_id, method, request_path,
 			signature_status, processing_status, response_status, duration_ms,
 			error_code, received_at FROM inbound_webhook_receipts
 			WHERE id = ? LIMIT 1`)
@@ -11,6 +11,7 @@ export async function loadInboundWebhookReceipt(db: D1Database, id: string) {
 			id: string;
 			endpoint_code: string;
 			request_id: string;
+			external_request_id: string | null;
 			method: string;
 			request_path: string;
 			signature_status: string;
@@ -30,6 +31,7 @@ export async function loadInboundWebhookReceipt(db: D1Database, id: string) {
 		id: row.id,
 		endpointCode: row.endpoint_code,
 		requestId: row.request_id,
+		externalRequestId: row.external_request_id,
 		method: row.method,
 		requestPath: row.request_path,
 		signatureStatus: row.signature_status,

@@ -1,3 +1,4 @@
+import { waitUntil } from "cloudflare:workers";
 import { createAuth } from "#/features/auth/server/auth-factory";
 import { trustedOriginsFromAllowedHosts } from "#/features/auth/trusted-hosts";
 import { getCloudflareEnv, getDb } from "#/server/db.server";
@@ -25,6 +26,8 @@ export async function getAuth(request: Request) {
 		BETTER_AUTH_SECRET: runtime.betterAuthSecret,
 		BETTER_AUTH_URL: runtime.betterAuthUrl,
 		TRUSTED_ORIGINS: trustedOrigins,
+		AUTH_EMAIL: env.AUTH_EMAIL,
+		WAIT_UNTIL: waitUntil,
 	});
 	authCache.set(d1, { auth, signature });
 	return auth;

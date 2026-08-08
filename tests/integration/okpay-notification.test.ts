@@ -39,6 +39,22 @@ describe("OKPay notification flow", () => {
 
 	afterAll(async () => miniflare.dispose());
 
+	it("rejects an oversized notification body", async () => {
+		const response = await handleOkPayNotification(
+			new Request("https://pay.example/api/webhooks/payments/okpay", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"content-length": String(64 * 1024 + 1),
+				},
+				body: "{}",
+			}),
+			env,
+		);
+
+		expect(response.status).toBe(413);
+	});
+
 	it("verifies, actively queries, settles, and deduplicates a repeated callback", async () => {
 		const fetchMock = vi
 			.fn()
@@ -107,7 +123,8 @@ describe("OKPay notification flow", () => {
 			.prepare(`SELECT o.status,
 			 (SELECT COUNT(*) FROM order_payments WHERE order_id = o.id) AS payments,
 			 (SELECT COUNT(*) FROM blockchain_transactions WHERE network = 'okpay' AND tx_hash = 'ok-order') AS transactions,
-			 (SELECT COUNT(*) FROM inbound_webhook_receipts WHERE endpoint_code = 'okpay.notify') AS receipts,
+			 (SELECT COUNT(*) FROM inbound_webhook_receipts
+			  WHERE endpoint_code = 'okpay.notify' AND external_request_id IN ('request-1', 'request-2')) AS receipts,
 			 (SELECT COUNT(*) FROM webhook_events WHERE order_id = o.id AND type = 'order.paid') AS events,
 			 (SELECT COUNT(*) FROM webhook_deliveries WHERE order_id = o.id AND status = 'queued' AND attempt_count = 0) AS deliveries
 			 FROM orders o WHERE o.id = ?`)
@@ -256,7 +273,7 @@ describe("OKPay notification flow", () => {
 			db
 				.prepare(
 					`SELECT signature_status, processing_status, response_status, error_code
-					 FROM inbound_webhook_receipts WHERE request_id = ?`,
+					 FROM inbound_webhook_receipts WHERE external_request_id = ?`,
 				)
 				.bind(requestId)
 				.first(),
@@ -266,6 +283,30 @@ describe("OKPay notification flow", () => {
 			response_status: 400,
 			error_code: "invalid_notification",
 		});
+	});
+
+	it("records every attempt even when the provider reuses its request ID", async () => {
+		const repeatedExternalId = "provider-reused-request-id";
+		for (let attempt = 0; attempt < 2; attempt++)
+			await handleOkPayNotification(
+				new Request("https://edge.example/api/providers/okpay/notify", {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"x-request-id": repeatedExternalId,
+					},
+					body: "{}",
+				}),
+				env,
+			);
+		const receipts = await db
+			.prepare(
+				`SELECT COUNT(*) AS count, COUNT(DISTINCT request_id) AS request_ids
+				 FROM inbound_webhook_receipts WHERE external_request_id = ?`,
+			)
+			.bind(repeatedExternalId)
+			.first<{ count: number; request_ids: number }>();
+		expect(receipts).toEqual({ count: 2, request_ids: 2 });
 	});
 });
 

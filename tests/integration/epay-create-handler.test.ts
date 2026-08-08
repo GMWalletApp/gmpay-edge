@@ -45,6 +45,25 @@ describe("EPay compatibility HTTP handler", () => {
 
 	afterAll(async () => miniflare.dispose());
 
+	it("rejects an oversized POST body before authentication", async () => {
+		const response = await handleEpayCreateRequest(
+			new Request(
+				"https://pay.example/payments/epay/v1/order/create-transaction/submit.php",
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/x-www-form-urlencoded",
+						"content-length": String(64 * 1024 + 1),
+					},
+					body: "pid=invalid",
+				},
+			),
+			{ DB: db } as Env,
+		);
+
+		expect(response.status).toBe(413);
+	});
+
 	it.each([
 		"GET",
 		"POST",

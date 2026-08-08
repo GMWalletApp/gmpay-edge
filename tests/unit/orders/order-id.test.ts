@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { generateOrderId, isOrderId } from "#/features/orders/order-id";
 
 describe("order IDs", () => {
-	it("generates compact numeric IDs with a readable UTC timestamp", () => {
-		const first = generateOrderId(Date.UTC(2026, 6, 13, 6, 23, 45));
-		expect(first).toMatch(/^\d{20}$/);
-		expect(first.startsWith("260713062345")).toBe(true);
-		expect(isOrderId(first)).toBe(true);
+	it("generates compact numeric IDs using the full random identifier", () => {
+		const generated = Array.from({ length: 64 }, () => generateOrderId());
+		expect(new Set(generated)).toHaveLength(generated.length);
+		for (const orderId of generated) {
+			expect(orderId).toMatch(/^\d{20}$/);
+			expect(isOrderId(orderId)).toBe(true);
+		}
 	});
 
 	it("rejects UUID and malformed public IDs", () => {

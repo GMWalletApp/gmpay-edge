@@ -46,6 +46,25 @@ describe("GMPay create transaction HTTP handler", () => {
 
 	afterAll(async () => miniflare.dispose());
 
+	it("rejects an oversized request body before authentication", async () => {
+		const response = await handleGmpayCreateRequest(
+			new Request(
+				"https://pay.example/payments/gmpay/v1/order/create-transaction",
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"content-length": String(64 * 1024 + 1),
+					},
+					body: "{}",
+				},
+			),
+			{ DB: db } as Env,
+		);
+
+		expect(response.status).toBe(413);
+	});
+
 	it.each([
 		"json",
 		"form",

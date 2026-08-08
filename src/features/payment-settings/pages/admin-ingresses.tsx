@@ -12,7 +12,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { NetworkLabel, ProviderLabel } from "#/components/crypto-icons/labels";
 import { ProButton } from "#/components/pro/base/button";
-import { Input, Password } from "#/components/pro/base/fields/input";
+import { Input } from "#/components/pro/base/fields/input";
 import { Select } from "#/components/pro/base/fields/select";
 import {
 	FormItem,
@@ -32,6 +32,7 @@ import {
 	hasSystemPermission,
 	systemPermission,
 } from "#/features/access/system-rbac";
+import { officialProviderApiUrl } from "#/features/payment-settings/catalog";
 import {
 	paymentConnectionHealthErrorMessage,
 	paymentSettingsOperationErrorMessage,
@@ -380,7 +381,6 @@ export function PaymentIngressesPage() {
 													| "http"
 													| "websocket",
 												endpoint: String(values.endpoint ?? ""),
-												apiKey: String(values.apiKey ?? "") || undefined,
 												priority: Number(values.priority ?? 100),
 												...(isEvmRail(String(values.railCode ?? ""))
 													? evmScanConfigValues(values)
@@ -502,12 +502,6 @@ function NewConnectionTransportFields({
 				<Input id="connection-endpoint" name="endpoint" required type="url" />
 			</FormItem>
 			<FormItem
-				htmlFor="connection-api-key"
-				label={m.infrastructure_provider_api_key()}
-			>
-				<Password id="connection-api-key" name="apiKey" />
-			</FormItem>
-			<FormItem
 				htmlFor="connection-priority"
 				label={m.infrastructure_priority()}
 				required
@@ -565,17 +559,6 @@ function ChainConnectionForm({
 					required: true,
 				},
 				{
-					name: "apiKey",
-					label: m.infrastructure_provider_api_key(),
-					valueType: "password",
-					description: m.infrastructure_rpc_edit_key_description(),
-				},
-				{
-					name: "clearApiKey",
-					label: m.infrastructure_rpc_clear_key(),
-					valueType: "checkbox",
-				},
-				{
 					name: "priority",
 					label: m.infrastructure_priority(),
 					valueType: "text",
@@ -589,7 +572,6 @@ function ChainConnectionForm({
 				transport: connection.transport,
 				endpoint: connection.endpoint ?? "",
 				priority: connection.priority,
-				clearApiKey: false,
 				...(isEvmRail(connection.rail_code)
 					? {
 							timeoutMs: connection.timeout_ms ?? 30_000,
@@ -608,8 +590,6 @@ function ChainConnectionForm({
 							| "http"
 							| "websocket",
 						endpoint: String(values.endpoint ?? ""),
-						apiKey: String(values.apiKey ?? "") || undefined,
-						clearApiKey: String(values.clearApiKey ?? "false") === "true",
 						priority: Number(values.priority ?? 100),
 						...(isEvmRail(connection.rail_code)
 							? evmScanConfigValues(values)
@@ -707,11 +687,6 @@ function ProviderConfigurationForm({
 			schema={[
 				{ name: "name", label: m.common_name(), required: true },
 				{
-					name: "apiUrl",
-					label: m.infrastructure_provider_api_url(),
-					required: true,
-				},
-				{
 					name: "priority",
 					label: m.infrastructure_priority(),
 					valueType: "text",
@@ -721,7 +696,6 @@ function ProviderConfigurationForm({
 			]}
 			initialValues={{
 				name: connection.name,
-				apiUrl: connection.endpoint ?? providerDefaultUrl(connection.rail_code),
 				priority: connection.priority,
 			}}
 			onFinish={async (values) => {
@@ -730,7 +704,7 @@ function ProviderConfigurationForm({
 						id: connection.id,
 						kind: connection.kind as "exchange" | "wallet",
 						name: String(values.name ?? ""),
-						endpoint: String(values.apiUrl ?? ""),
+						endpoint: officialProviderApiUrl(connection.rail_code) ?? "",
 						priority: Number(values.priority ?? 100),
 					},
 				});
@@ -740,12 +714,6 @@ function ProviderConfigurationForm({
 			onFinishFailed={showError}
 		/>
 	);
-}
-
-function providerDefaultUrl(railCode: string) {
-	if (railCode === "binance") return "https://api-gcp.binance.com";
-	if (railCode === "okx") return "https://www.okx.com";
-	return "https://api.okaypay.me/shop";
 }
 
 function kindLabel(kind: IngressRow["kind"]) {

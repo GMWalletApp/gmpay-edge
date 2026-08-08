@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { paymentSettingsPermission } from "#/features/access/system-rbac";
+import { officialProviderApiUrl } from "#/features/payment-settings/catalog";
 import { paymentSettingsError } from "#/features/payment-settings/errors";
 import {
 	createPaymentConnectionInput,
@@ -9,6 +10,7 @@ import {
 	updateProviderPaymentConnectionInput,
 } from "#/features/payment-settings/schema";
 import { adminContext } from "#/features/payment-settings/server/admin-context";
+import { loadPaymentConnectionApiKey } from "#/features/payment-settings/server/connection-credentials";
 import { testPaymentConnection } from "#/features/payment-settings/server/connection-health";
 
 const railKindSchema = z.enum(["chain", "exchange", "wallet"]);
@@ -58,8 +60,10 @@ export const getPaymentIngressesPageFn = createServerFn({
 				 pc.last_latency_ms, pc.last_checked_at, pc.last_error_code,
 				 pc.timeout_ms, pc.block_lookback, pc.log_block_range, pc.max_scan_transactions,
 				 pc.external_source_id, pc.mode,
-				 CASE WHEN pc.api_key IS NOT NULL AND pc.api_key != '' THEN 1 ELSE 0 END AS has_api_key
+				 CASE WHEN credential.payment_ingress_id IS NOT NULL
+				   OR (pc.api_key IS NOT NULL AND pc.api_key != '') THEN 1 ELSE 0 END AS has_api_key
 				 FROM payment_ingresses pc
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = pc.id
 				 JOIN payment_rails pr ON pr.code = COALESCE(pc.rail_code, pc.network)
 				 ORDER BY pr.kind, pc.rail_code, pc.priority, pc.name`,
 		),
@@ -101,7 +105,9 @@ export const updateProviderConnectionFn = createServerFn({ method: "POST" })
 			}>();
 		if (!connection || connection.kind !== data.kind)
 			throw paymentSettingsError("payment_connection_not_found");
-		const connectivityChanged = connection.endpoint !== data.endpoint;
+		const endpoint = officialProviderApiUrl(connection.rail_code);
+		if (!endpoint) throw paymentSettingsError("payment_connection_not_found");
+		const connectivityChanged = connection.endpoint !== endpoint;
 		const now = Date.now();
 		await context.db.batch([
 			context.db
@@ -114,7 +120,7 @@ export const updateProviderConnectionFn = createServerFn({ method: "POST" })
 				)
 				.bind(
 					data.name,
-					data.endpoint,
+					endpoint,
 					data.priority,
 					true,
 					"unknown",
@@ -141,7 +147,7 @@ export const updateProviderConnectionFn = createServerFn({ method: "POST" })
 					JSON.stringify({
 						railCode: connection.rail_code,
 						name: data.name,
-						endpoint: data.endpoint,
+						endpoint,
 						priority: data.priority,
 						connectivityChanged,
 					}),
@@ -160,13 +166,16 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 		const current = await context.db
 			.prepare(
 				`SELECT connection.name, connection.rail_code, connection.transport,
-				 connection.endpoint, connection.api_key, connection.priority,
+				 connection.endpoint, connection.api_key,
+				 credential.config_encrypted AS credential_config_encrypted,
+				 connection.priority,
 				 connection.enabled, connection.health_status,
 				 connection.last_checked_at, connection.last_latency_ms,
 				 connection.last_error_code, connection.timeout_ms,
 				 connection.block_lookback, connection.log_block_range,
 				 connection.max_scan_transactions, rail.kind
 				 FROM payment_ingresses connection
+				 LEFT JOIN payment_ingress_credentials credential ON credential.payment_ingress_id = connection.id
 				 JOIN payment_rails rail ON rail.code = connection.rail_code
 				 WHERE connection.id = ? AND connection.type = 'rpc' LIMIT 1`,
 			)
@@ -177,6 +186,7 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 				transport: "http" | "websocket";
 				endpoint: string | null;
 				api_key: string | null;
+				credential_config_encrypted: string | null;
 				priority: number;
 				enabled: number;
 				health_status: "unknown" | "healthy" | "degraded" | "unhealthy";
@@ -198,15 +208,18 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 			)
 		)
 			throw paymentSettingsError("payment_connection_transport_unsupported");
-		const replacementApiKey = data.apiKey?.trim() || null;
-		const credentialChanged = data.clearApiKey || replacementApiKey !== null;
+		const currentApiKey = await loadPaymentConnectionApiKey(
+			context.db,
+			{
+				connectionId: data.id,
+				configEncrypted: current.credential_config_encrypted,
+				legacyApiKey: current.api_key,
+			},
+			context.runtime,
+		);
 		const connectivityChanged =
 			current.transport !== data.transport ||
-			current.endpoint !== data.endpoint ||
-			credentialChanged;
-		const nextApiKey = data.clearApiKey
-			? null
-			: (replacementApiKey ?? current.api_key);
+			current.endpoint !== data.endpoint;
 		const scanConfig = evmRailCodes.has(current.rail_code)
 			? data
 			: {
@@ -220,7 +233,7 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 			context.db
 				.prepare(
 					`UPDATE payment_ingresses SET
-					 name = ?, transport = ?, endpoint = ?, api_key = ?, priority = ?,
+					 name = ?, transport = ?, endpoint = ?, api_key = NULL, priority = ?,
 					 timeout_ms = ?, block_lookback = ?, log_block_range = ?,
 					 max_scan_transactions = ?,
 					 enabled = ?, health_status = ?, last_checked_at = ?,
@@ -231,7 +244,6 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 					data.name,
 					data.transport,
 					data.endpoint,
-					nextApiKey,
 					data.priority,
 					scanConfig.timeoutMs ?? null,
 					scanConfig.blockLookback ?? null,
@@ -268,7 +280,7 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 						blockLookback: current.block_lookback,
 						logBlockRange: current.log_block_range,
 						maxScanTransactions: current.max_scan_transactions,
-						hasApiKey: Boolean(current.api_key),
+						hasApiKey: Boolean(currentApiKey),
 					}),
 					JSON.stringify({
 						name: data.name,
@@ -279,7 +291,7 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 						blockLookback: scanConfig.blockLookback ?? null,
 						logBlockRange: scanConfig.logBlockRange ?? null,
 						maxScanTransactions: scanConfig.maxScanTransactions ?? null,
-						hasApiKey: Boolean(nextApiKey),
+						hasApiKey: Boolean(currentApiKey),
 						connectivityChanged,
 					}),
 					now,
@@ -322,7 +334,7 @@ export const createPaymentConnectionFn = createServerFn({ method: "POST" })
 				(id, rail_code, name, type, transport, endpoint, api_key, priority,
 				 timeout_ms, block_lookback, log_block_range, max_scan_transactions,
 				 enabled, health_status, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'unknown', ?, ?)`,
+				VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, 'unknown', ?, ?)`,
 			)
 			.bind(
 				id,
@@ -331,7 +343,6 @@ export const createPaymentConnectionFn = createServerFn({ method: "POST" })
 				data.type,
 				data.transport,
 				data.endpoint,
-				data.apiKey ?? null,
 				data.priority,
 				scanConfig.timeoutMs ?? null,
 				scanConfig.blockLookback ?? null,

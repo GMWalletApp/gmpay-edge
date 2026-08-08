@@ -11,7 +11,12 @@ import {
 import { unitsToDecimal } from "#/lib/money";
 import { decryptSecret } from "#/lib/secrets";
 import { minorToDecimal } from "#/lib/units";
-import { isSafeWebhookUrl } from "#/lib/webhook-url";
+import {
+	assertSafeResolvedWebhookUrl,
+	isSafeWebhookUrl,
+	resolveWebhookHostname,
+	type WebhookHostnameResolver,
+} from "#/lib/webhook-url";
 import { redactAuditValue } from "#/server/audit-redaction";
 import { loadOperationalSettings } from "#/server/operational-settings";
 import { loadRuntimeConfig, type RuntimeConfig } from "#/server/runtime-config";
@@ -32,6 +37,7 @@ export async function processWebhookMessage(
 	context: {
 		settings?: Awaited<ReturnType<typeof loadOperationalSettings>>;
 		runtime?: RuntimeConfig;
+		resolveHostname?: WebhookHostnameResolver;
 	} = {},
 ) {
 	const settings = context.settings ?? (await loadOperationalSettings(db));
@@ -92,6 +98,14 @@ export async function processWebhookMessage(
 			message.body,
 			context.runtime,
 		);
+		const resolveHostname =
+			context.resolveHostname ??
+			(fetcher === fetch ? resolveWebhookHostname : undefined);
+		if (
+			resolveHostname &&
+			!(await assertSafeResolvedWebhookUrl(delivery.url, resolveHostname))
+		)
+			throw new Error("Webhook delivery hostname did not resolve publicly");
 		result = await deliverWebhook(delivery, fetcher, settings.webhookTimeoutMs);
 	} catch {
 		result = {

@@ -30,7 +30,7 @@ GMPay Edge 是面向 Cloudflare Workers 的自托管单租户加密货币支付�
 - 在 API 边界兼容 EPay，不维护第二套订单模型。
 - 保留不可变支付快照，集中且幂等地处理订单状态流转与支付入账。
 - 通过 Queue 支持的可靠 Outbox 投递商户回调，并保留重试历史、人工重试和审计记录。
-- 使用 Better Auth、TOTP 和动态多角色 RBAC 保护后台，包括受保护的内置 `root` 角色。
+- 使用 Better Auth、可选 TOTP 和动态多角色 RBAC 保护后台，包括受保护的内置 `root` 角色。
 - 通过 Cloudflare Queues 与 Cron Triggers 执行支付扫描、过期处理、清理、连接健康检查和汇率同步。
 - 使用 grammY 管理 Telegram Bot，支持 Inline 下单、公共指令，以及统一的私聊、群组和频道通知订阅。
 - 提供 React 19 响应式后台、收银台、公共状态页、OpenAPI 文档和六语言界面。
@@ -161,6 +161,10 @@ bun run dev
 
 首次运行访问 <http://localhost:3000/install>。安装会创建首位用户、受保护的 `root` 角色、运行密钥、支付默认数据、4 条包含六语言消息内容的公共 Telegram 指令和 Telegram 默认设置，并将当前 Origin 写入应用地址和 Allowed Hosts。完成后会自动登录并进入后台；安装不会创建 Telegram Bot，也不会请求 Telegram API。
 
+登录页提供密码找回入口。要发送邮件，请为 Worker 添加名为 `AUTH_EMAIL` 的
+Cloudflare Email Service `send_email` 绑定，并在“后台 → 系统设置 → 认证配置”保存
+已启用的发件地址。
+
 安装完成后：
 
 1. 在 `/admin` 检查自动生成的系统设置。
@@ -258,7 +262,7 @@ bun run build
 - GMPay Edge 不保存提现权限、钱包私钥或助记词。交易所和数字钱包接入必须仅授予支付检测所需的最小只读权限。
 - API 凭证 Secret、收款方式凭证和 Telegram Bot Token 会使用各自配置的应用层加密密钥加密后存储，仅在创建或轮换时显示，并在服务端需要时解析。
 - 运行设置保存在 D1。运行时密钥原值只返回给拥有 `settings:read` 权限的管理员，以密码字段显示；更新时提交空值会保留当前内容。
-- Better Auth 负责密码、Session 与 TOTP。生产使用前必须配置 Allowed Hosts、HTTPS、Origin 与 CSRF 校验、限流、管理员恢复流程和恢复码确认。
+- Better Auth 负责密码、Session 与可选 TOTP。生产使用前必须配置 Allowed Hosts、HTTPS、Origin 与 CSRF 校验、限流和邮件密码恢复；启用 TOTP 时还需确认并保留恢复码。
 - 升级前备份 D1 与运行配置；替换 `runtime.better_auth_secret` 会使现有认证材料失效。
 - 回调目标、Provider 响应、上传文件、Queue 消息和 KV 值都是不可信边界。生产验收必须覆盖 SSRF、签名、权限路径、重试、重复事件和恢复行为。
 

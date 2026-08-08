@@ -42,7 +42,7 @@ the protected `/admin` application.
   payment accounting centrally and idempotently.
 - Deliver merchant callbacks through a durable Queue-backed outbox with retry
   history, manual retry, and audit records.
-- Protect administration with Better Auth, TOTP, and dynamic multi-role RBAC,
+- Protect administration with Better Auth, optional TOTP, and dynamic multi-role RBAC,
   including a protected built-in `root` role.
 - Run payment scanning, expiry, cleanup, connection health, and rate sync through
   Cloudflare Queues and Cron Triggers.
@@ -206,6 +206,10 @@ The current Origin is stored as the application URL and
 an Allowed Host, then the new root user is signed in automatically. Installation
 does not create a Telegram Bot or call Telegram.
 
+Password recovery is available from the sign-in page. For delivery, add a
+Cloudflare Email Service `send_email` binding named `AUTH_EMAIL`, then save its
+onboarded sender address under **Admin → System settings → Authentication**.
+
 After installation:
 
 1. Review the generated system settings in `/admin`.
@@ -332,9 +336,10 @@ deployer-owned infrastructure during production acceptance.
 - Runtime settings are stored in D1. Runtime secret values are returned only to
   administrators with `settings:read`, rendered in password fields, and
   preserved when an update submits an empty value.
-- Better Auth owns passwords, sessions, and TOTP. Configure Allowed Hosts, HTTPS,
-  Origin and CSRF validation, rate limits, administrator recovery procedures,
-  and recovery-code acknowledgement before production use.
+- Better Auth owns passwords, sessions, and optional TOTP. Configure Allowed
+  Hosts, HTTPS, Origin and CSRF validation, rate limits, and email password
+  recovery before production use. When TOTP is enabled, acknowledge and retain
+  its recovery codes.
 - Back up D1 and the runtime configuration before upgrades. Replacing
   `runtime.better_auth_secret` invalidates existing authentication material.
 - Callback destinations, provider responses, uploads, Queue messages, and KV

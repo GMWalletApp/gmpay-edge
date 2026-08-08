@@ -139,6 +139,12 @@ const fields: Record<
 	],
 	runtime: [
 		{
+			key: "auth.password_reset_from_email",
+			label: m.settings_password_reset_from_email(),
+			description: m.settings_password_reset_from_email_description(),
+			type: "text",
+		},
+		{
 			key: "runtime.better_auth_url",
 			label: m.settings_application_url(),
 			description: m.settings_application_url_description(),
@@ -281,6 +287,7 @@ function groupForSetting(key: SettingKey): SettingsGroup {
 		return "payment";
 	if (key === "security.allowed_hosts") return "access";
 	if (key.startsWith("webhooks.")) return "webhook";
+	if (key.startsWith("auth.")) return "auth";
 	if (key === "runtime.better_auth_secret" || key === "runtime.better_auth_url")
 		return "auth";
 	if (key.startsWith("runtime.")) return "secrets";

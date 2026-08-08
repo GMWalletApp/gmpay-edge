@@ -5,11 +5,14 @@ import { twoFactor } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import * as schema from "#/db/schema";
 import type { AppDb } from "#/server/db.server";
+import { schedulePasswordResetEmail } from "./password-reset-email";
 
 export type AuthEnv = {
 	BETTER_AUTH_SECRET: string;
 	BETTER_AUTH_URL: string;
 	TRUSTED_ORIGINS?: string[];
+	AUTH_EMAIL?: SendEmail;
+	WAIT_UNTIL?: (promise: Promise<unknown>) => void;
 };
 
 export function createAuth(db: AppDb, env: AuthEnv) {
@@ -45,12 +48,47 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 			enabled: true,
 			disableSignUp: true,
 			minPasswordLength: 12,
+			resetPasswordTokenExpiresIn: 15 * 60,
+			revokeSessionsOnPasswordReset: true,
+			sendResetPassword: async ({ user, url }) => {
+				schedulePasswordResetEmail(
+					db.$client,
+					env.AUTH_EMAIL,
+					{
+						recipient: user.email,
+						resetUrl: url,
+					},
+					env.WAIT_UNTIL,
+				);
+			},
+			onPasswordReset: async ({ user }, request) => {
+				await db.$client
+					.prepare(
+						`INSERT INTO audit_logs
+						 (id, actor_user_id, action, target_type, target_id, request_id,
+						  ip_address, created_at)
+						 VALUES (?, ?, 'auth.password_reset', 'user', ?, ?, ?, ?)`,
+					)
+					.bind(
+						crypto.randomUUID(),
+						user.id,
+						user.id,
+						request?.headers.get("x-request-id") ?? null,
+						request?.headers.get("cf-connecting-ip") ?? null,
+						Date.now(),
+					)
+					.run();
+			},
 		},
 		rateLimit: {
 			enabled: true,
 			window: 60,
 			max: 20,
-			customRules: { "/sign-in/email": { window: 60, max: 5 } },
+			customRules: {
+				"/sign-in/email": { window: 60, max: 5 },
+				"/request-password-reset": { window: 60, max: 3 },
+				"/reset-password": { window: 60, max: 5 },
+			},
 		},
 		hooks: {
 			after: createAuthMiddleware(async (ctx) => {

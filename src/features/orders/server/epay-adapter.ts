@@ -18,9 +18,14 @@ import {
 	gmpayOrderError,
 	gmpayOrderMessage,
 	logMerchantApiFailure,
+	merchantRequestBodyLimitBytes,
 } from "#/features/orders/server/gmpay-api";
 import { type ApiOrder, getOrder } from "#/features/orders/server/query";
 import { requestId as getRequestId } from "#/server/http";
+import {
+	RequestBodyTooLargeError,
+	readLimitedRequestText,
+} from "#/server/request-body";
 
 const epayAssetNetworkType = /^([a-z0-9_-]{2,20})\.([a-z0-9-]{2,32})$/;
 
@@ -76,7 +81,9 @@ export async function readEpayParameters(request: Request) {
 			request.headers.get("content-type")?.toLowerCase() ?? "";
 		if (!contentType.includes("application/x-www-form-urlencoded"))
 			return undefined;
-		for (const [key, value] of new URLSearchParams(await request.text()))
+		for (const [key, value] of new URLSearchParams(
+			await readLimitedRequestText(request, merchantRequestBodyLimitBytes),
+		))
 			parameters[key] = value;
 	}
 	return parameters;
@@ -166,6 +173,12 @@ export async function handleEpayCreateRequest(
 		);
 		return epayCreateResponse(order, parsed.data, requestId, responseMode);
 	} catch (error) {
+		if (error instanceof RequestBodyTooLargeError)
+			return epayErrorResponse(
+				gmpayError(requestId, 10009, "payload too large"),
+				413,
+				responseMode,
+			);
 		if (error instanceof GmpayRateLimitError)
 			return epayErrorResponse(
 				gmpayError(requestId, 429, "API rate limit exceeded"),

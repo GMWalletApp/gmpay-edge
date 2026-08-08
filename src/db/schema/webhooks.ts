@@ -17,6 +17,7 @@ export const inboundWebhookReceipts = sqliteTable(
 		id: text("id").primaryKey(),
 		endpointCode: text("endpoint_code").notNull(),
 		requestId: text("request_id").notNull(),
+		externalRequestId: text("external_request_id"),
 		method: text("method").notNull(),
 		requestPath: text("request_path").notNull(),
 		signatureStatus: text("signature_status", {
@@ -39,6 +40,11 @@ export const inboundWebhookReceipts = sqliteTable(
 			table.endpointCode,
 			table.receivedAt,
 			table.id,
+		),
+		index("inbound_webhook_receipts_external_request_idx").on(
+			table.endpointCode,
+			table.externalRequestId,
+			table.receivedAt,
 		),
 		index("inbound_webhook_receipts_retention_idx").on(
 			table.receivedAt,
