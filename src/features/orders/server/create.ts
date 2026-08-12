@@ -116,16 +116,20 @@ async function createOrderRecord(
 		)
 		.bind(input.paymentAsset, input.paymentNetwork)
 		.all<{ id: string }>();
+	const readyMethodIds: string[] = [];
 	for (const method of methods.results) {
 		const readiness = await checkReceivingMethodReadiness(db, method.id);
-		if (readiness.ready)
-			return createOrderFromReceivingMethod(
-				db,
-				{ ...input, receivingMethodId: method.id },
-				requestUrl,
-				context,
-			);
+		if (readiness.ready) readyMethodIds.push(method.id);
 	}
+	const [firstMethodId, ...fallbackMethodIds] = readyMethodIds;
+	if (firstMethodId)
+		return createOrderFromReceivingMethod(
+			db,
+			{ ...input, receivingMethodId: firstMethodId },
+			requestUrl,
+			context,
+			fallbackMethodIds,
+		);
 	if (methods.results.length === 0)
 		throw new OrderServiceError(
 			"receiving_method_not_found",
@@ -144,6 +148,7 @@ async function createOrderFromReceivingMethod(
 	input: CreateOrderInput,
 	requestUrl: string,
 	context: OrderCreationContext = {},
+	fallbackMethodIds: string[] = [],
 ): Promise<ApiOrder> {
 	const methodId = input.receivingMethodId;
 	if (!methodId) throw new Error("Receiving method is required");
@@ -200,6 +205,30 @@ async function createOrderFromReceivingMethod(
 		paymentAsset: method.code,
 		paymentNetwork: method.rail_code,
 	};
+	const fallbackRows =
+		fallbackMethodIds.length === 0
+			? []
+			: (
+					await db
+						.prepare(
+							`SELECT rm.id, rm.target_value, rm.min_amount_minor, rm.max_amount_minor,
+							 pa.id AS payment_method_id
+							 FROM receiving_methods rm
+							 JOIN receiving_method_assets link ON link.receiving_method_id = rm.id
+							 JOIN payment_assets pa ON pa.id = link.payment_asset_id
+							 WHERE rm.id IN (${fallbackMethodIds.map(() => "?").join(", ")})
+							 AND pa.code = ? AND pa.rail_code = ?
+							 ORDER BY rm.sort_order, rm.created_at, rm.id`,
+						)
+						.bind(...fallbackMethodIds, method.code, method.rail_code)
+						.all<{
+							id: string;
+							target_value: string;
+							min_amount_minor: string | null;
+							max_amount_minor: string | null;
+							payment_method_id: string;
+						}>()
+				).results;
 	const exchangeRateQuote = await quoteWithExchangeRate(db, {
 		amount: input.amount,
 		currency: input.currency,
@@ -214,13 +243,16 @@ async function createOrderFromReceivingMethod(
 		method.decimals,
 		"up",
 	).toString();
-	const orderAmountUsdMinor =
-		method.min_amount_minor !== null || method.max_amount_minor !== null
-			? await quoteUsdAmountMinor(db, {
-					amount: input.amount,
-					currency: input.currency,
-				})
-			: null;
+	const orderAmountUsdMinor = [method, ...fallbackRows].some(
+		(candidate) =>
+			candidate.min_amount_minor !== null ||
+			candidate.max_amount_minor !== null,
+	)
+		? await quoteUsdAmountMinor(db, {
+				amount: input.amount,
+				currency: input.currency,
+			})
+		: null;
 	const settings = await loadOperationalSettings(db);
 	const expiresInMs = resolveOrderExpiryMs(input.expiresInMs, settings);
 	const now = Date.now();
@@ -228,6 +260,8 @@ async function createOrderFromReceivingMethod(
 	const fiatDecimals = currencyDecimals(input.currency);
 	const amountMinor = decimalToMinor(input.amount, fiatDecimals).toString();
 	const orderId = generateOrderId();
+	let allocatedMethodId = methodId;
+	let allocatedTarget = method.target_value;
 	try {
 		const allocation = await allocateUniqueReceivingMethodAndSnapshot(db, {
 			orderId,
@@ -235,6 +269,14 @@ async function createOrderFromReceivingMethod(
 			paymentMethodId: method.payment_method_id,
 			expectedAmountUnits,
 			...(orderAmountUsdMinor ? { orderAmountUsdMinor } : {}),
+			...(fallbackRows.length
+				? {
+						fallbackMethods: fallbackRows.map((row) => ({
+							receivingMethodId: row.id,
+							paymentMethodId: row.payment_method_id,
+						})),
+					}
+				: {}),
 			decimals: method.decimals,
 			expiresAt,
 			reusableAt: settings.immediateReleaseMode
@@ -267,6 +309,13 @@ async function createOrderFromReceivingMethod(
 			},
 		});
 		paymentAmount = allocation.paymentAmount;
+		const fallback = fallbackRows.find(
+			(row) => row.id === allocation.receivingMethodId,
+		);
+		if (fallback) {
+			allocatedMethodId = fallback.id;
+			allocatedTarget = fallback.target_value;
+		}
 	} catch (error) {
 		if (error instanceof PaymentOrderConflictError)
 			throw new OrderServiceError(
@@ -291,8 +340,8 @@ async function createOrderFromReceivingMethod(
 		paymentAmount,
 		paymentAsset: method.code,
 		paymentNetwork: method.rail_code,
-		receivingMethodId: methodId,
-		receiveAddress: method.target_value,
+		receivingMethodId: allocatedMethodId,
+		receiveAddress: allocatedTarget,
 		checkoutUrl: `${new URL(requestUrl).origin}/checkout/${orderId}`,
 		expiresAt: new Date(expiresAt).toISOString(),
 		...(input.notifyUrl ? { notifyUrl: input.notifyUrl } : {}),

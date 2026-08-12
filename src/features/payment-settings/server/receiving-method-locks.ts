@@ -57,6 +57,10 @@ export async function allocateUniqueReceivingMethodAndSnapshot(
 	input: PaymentAllocationInput & {
 		decimals: number;
 		maximumAttempts?: number;
+		fallbackMethods?: Array<{
+			receivingMethodId: string;
+			paymentMethodId: string;
+		}>;
 	},
 ) {
 	const configuredDecimals = await loadCheckoutAmountDecimals(db);
@@ -72,28 +76,43 @@ export async function allocateUniqueReceivingMethodAndSnapshot(
 	const {
 		decimals,
 		maximumAttempts: _maximumAttempts,
+		fallbackMethods,
 		...allocationInput
 	} = input;
+	// Every candidate is tried at the requested amount before the amount is
+	// stepped up, so concurrent equal-amount orders spread across methods first.
+	const candidates = [
+		{
+			receivingMethodId: input.receivingMethodId,
+			paymentMethodId: input.paymentMethodId,
+		},
+		...(fallbackMethods ?? []),
+	];
 	for (let offset = 0; offset < maximumAttempts; offset++) {
 		const amountUnits =
 			quantized.amountUnits + BigInt(offset) * quantized.stepUnits;
 		const expectedAmountUnits = amountUnits.toString();
 		const paymentAmount = unitsToDecimal(amountUnits, decimals);
-		try {
-			const allocated = await allocateReceivingMethodAndSnapshot(db, {
-				...allocationInput,
-				expectedAmountUnits,
-				...(input.order ? { order: input.order } : {}),
-				...(input.existingOrder ? { existingOrder: input.existingOrder } : {}),
-			});
-			return { ...allocated, expectedAmountUnits, paymentAmount };
-		} catch (error) {
-			if (
-				!(error instanceof ReceivingMethodUnavailableError) ||
-				error.reason !== "collision" ||
-				offset === maximumAttempts - 1
-			)
-				throw error;
+		for (const candidate of [...candidates]) {
+			try {
+				const allocated = await allocateReceivingMethodAndSnapshot(db, {
+					...allocationInput,
+					receivingMethodId: candidate.receivingMethodId,
+					paymentMethodId: candidate.paymentMethodId,
+					expectedAmountUnits,
+					...(input.order ? { order: input.order } : {}),
+					...(input.existingOrder
+						? { existingOrder: input.existingOrder }
+						: {}),
+				});
+				return { ...allocated, expectedAmountUnits, paymentAmount };
+			} catch (error) {
+				if (!(error instanceof ReceivingMethodUnavailableError)) throw error;
+				if (error.reason !== "collision") {
+					candidates.splice(candidates.indexOf(candidate), 1);
+					if (candidates.length === 0) throw error;
+				}
+			}
 		}
 	}
 	throw new ReceivingMethodUnavailableError();
