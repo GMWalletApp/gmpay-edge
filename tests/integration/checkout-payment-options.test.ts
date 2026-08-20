@@ -42,6 +42,7 @@ describe("checkout receiving method selection", () => {
 			options: expect.arrayContaining([
 				{
 					receivingMethodId: methodId,
+					receivingMethodName: "Primary USDT",
 					paymentMethodId: "asset-usdt-tron",
 					asset: "USDT",
 					network: "tron",
@@ -52,6 +53,7 @@ describe("checkout receiving method selection", () => {
 				},
 				{
 					receivingMethodId: methodId,
+					receivingMethodName: "Primary USDT",
 					paymentMethodId: "asset-usdc-tron",
 					asset: "USDC",
 					network: "tron",
@@ -188,7 +190,13 @@ describe("checkout receiving method selection", () => {
 			listCheckoutPaymentOptions(db, orderId),
 		).resolves.toMatchObject({
 			selectable: false,
-			options: [{ receivingMethodId: methodId, current: true }],
+			options: [
+				{
+					receivingMethodId: methodId,
+					receivingMethodName: "Primary USDT",
+					current: true,
+				},
+			],
 		});
 		await expect(
 			selectCheckoutPaymentOption(env.DB, {

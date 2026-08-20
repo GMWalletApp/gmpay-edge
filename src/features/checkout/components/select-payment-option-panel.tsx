@@ -33,29 +33,37 @@ export function SelectPaymentOptionPanel({
 		[options],
 	);
 	const [kind, setKind] = useState<RailKind | "">("");
-	const [network, setNetwork] = useState("");
+	const [receivingMethodId, setReceivingMethodId] = useState("");
 	const [paymentMethodId, setPaymentMethodId] = useState("");
 	useEffect(() => {
 		if (!kind && kinds[0]) setKind(kinds[0]);
 	}, [kind, kinds]);
 	const kindOptions = options.filter((option) => option.railKind === kind);
-	const networks = Array.from(
+	const receivingMethods = Array.from(
 		new Map(
 			kindOptions.map((option) => [
-				option.network,
-				{ code: option.network, name: option.networkName },
+				option.receivingMethodId,
+				{
+					id: option.receivingMethodId,
+					name: option.receivingMethodName,
+					network: option.network,
+					networkName: option.networkName,
+				},
 			]),
 		).values(),
 	);
 	useEffect(() => {
-		if (!network && networks[0]) setNetwork(networks[0].code);
-	}, [network, networks]);
-	const assets = kindOptions.filter((option) => option.network === network);
+		if (!receivingMethods.some((method) => method.id === receivingMethodId))
+			setReceivingMethodId(receivingMethods[0]?.id ?? "");
+	}, [receivingMethodId, receivingMethods]);
+	const assets = kindOptions.filter(
+		(option) => option.receivingMethodId === receivingMethodId,
+	);
 	useEffect(() => {
-		if (!paymentMethodId && assets[0])
-			setPaymentMethodId(assets[0].paymentMethodId);
+		if (!assets.some((asset) => asset.paymentMethodId === paymentMethodId))
+			setPaymentMethodId(assets[0]?.paymentMethodId ?? "");
 	}, [assets, paymentMethodId]);
-	const selected = options.find(
+	const selected = assets.find(
 		(option) => option.paymentMethodId === paymentMethodId,
 	);
 
@@ -85,7 +93,7 @@ export function SelectPaymentOptionPanel({
 							key={value}
 							onClick={() => {
 								setKind(value);
-								setNetwork("");
+								setReceivingMethodId("");
 								setPaymentMethodId("");
 							}}
 							variant={kind === value ? "default" : "outline"}
@@ -102,20 +110,23 @@ export function SelectPaymentOptionPanel({
 						{kindLabel(kind)}
 					</p>
 					<Select
-						disabled={!networks.length}
+						disabled={!receivingMethods.length}
 						onValueChange={(value) => {
-							setNetwork(value);
+							setReceivingMethodId(value);
 							setPaymentMethodId("");
 						}}
-						value={network}
+						value={receivingMethodId}
 					>
 						<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent position="popper">
-							{networks.map((item) => (
-								<SelectItem key={item.code} value={item.code}>
-									<NetworkLabel displayName={item.name} network={item.code} />
+							{receivingMethods.map((method) => (
+								<SelectItem key={method.id} value={method.id}>
+									<NetworkLabel
+										displayName={method.name.trim() || method.networkName}
+										network={method.network}
+									/>
 								</SelectItem>
 							))}
 						</SelectContent>
