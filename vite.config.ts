@@ -18,7 +18,10 @@ const config = defineConfig({
 			strategy: ["cookie", "custom-system-default", "baseLocale"],
 		}),
 		tailwindcss(),
-		tanstackStart({ start: { entry: "./src/server-entry.ts" } }),
+		tanstackStart({
+			start: { entry: "start.ts" },
+			server: { entry: "server-entry.ts" },
+		}),
 		viteReact(),
 		babel({ presets: [reactCompilerPreset()] }),
 	],

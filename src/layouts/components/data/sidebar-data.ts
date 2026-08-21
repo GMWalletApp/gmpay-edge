@@ -6,6 +6,7 @@ import {
 	Clock3,
 	KeyRound,
 	LayoutDashboard,
+	Mail,
 	RadioTower,
 	ReceiptText,
 	ScrollText,
@@ -34,6 +35,7 @@ export type NavigationModuleId =
 	| "api-keys"
 	| "webhooks"
 	| "telegram"
+	| "email"
 	| "payment-settings"
 	| "access"
 	| "operations"
@@ -234,6 +236,20 @@ export const navigationGroups: readonly NavigationGroup[] = [
 		id: "system",
 		title: () => m.nav_group_system_management(),
 		modules: [
+			{
+				id: "email",
+				title: () => m.settings_group_email(),
+				icon: Mail,
+				entries: [
+					entry(
+						"email",
+						() => m.settings_group_email(),
+						"/admin/email",
+						Mail,
+						systemPermission("settings", "read"),
+					),
+				],
+			},
 			{
 				id: "payment-settings",
 				title: () => m.nav_payment_settings(),

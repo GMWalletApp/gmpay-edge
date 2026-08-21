@@ -7,7 +7,7 @@
 
 ## 1. 产品边界
 
-- 产品、package、Worker 和 D1 统一为 `GMPay Edge` / `gmpay-edge`。
+- 产品、package、Worker、Node 服务和数据库统一为 `GMPay Edge` / `gmpay-edge`。
 - GMPay Edge 是单部署、单租户支付网关。商户只表示外部 API 接入方；内部授权基于
   用户和角色。
 - 内部运营统一使用 `/admin`。GMPay 是主商户协议；EPay 只在边界适配到同一订单服务。
@@ -16,7 +16,8 @@
 
 - 使用 Bun、严格 TypeScript、React 19、TanStack Start/Router/Query/Table/Form、
   Tailwind CSS 4、shadcn/Radix、Zod、Better Auth、Drizzle、Cloudflare Workers
-  （D1、KV、R2、Queues、Cron）、grammY、Paraglide、Vitest、Biome 和 Wrangler。
+  （D1、KV、R2、Queues、Cron）、Node.js + Nitro + SQLite、grammY、Paraglide、
+  Vitest、Biome 和 Wrangler；Docker 是受支持的 Node 分发方式。
 - 禁止引入第二套路由、认证、ORM/数据库层、表单、客户端/服务端缓存、格式化、
   lint 或国际化运行时。
 - 领域与运行时归属以 `routes`、`features`、`integrations`、`components`、
@@ -84,11 +85,11 @@
 - 每个服务端入口校验 Better Auth Session、用户启用状态和结构化
   `{ module, permissionMask }`。未知路由/权限失败关闭，客户端隐藏不能替代服务端。
 - 侧栏、命令菜单、模块导航和默认入口共享同一份权限过滤权威数据。
-- RBAC 派生结果只有在当前 Better Auth 用户读取返回的权威修订号保护下才可缓存到
-  KV。角色/权限 mutation 必须在同一 D1 batch 推进受影响用户修订号。KV 最终一致，
+- RBAC 派生结果只有在当前 Better Auth 用户读取返回的权威修订号保护下才可缓存。
+  角色/权限 mutation 必须在同一数据库事务或 batch 推进受影响用户修订号；缓存
   delete 或 TTL 不能单独决定授权或撤权。
-- KV 缺失、损坏或版本不符时回源 D1；D1 或解析失败必须拒绝访问。解密凭证和
-  Session token 不得进入 RBAC 缓存 key/value。
+- 缓存缺失、损坏或版本不符时回源权威数据库；数据库或解析失败必须拒绝访问。
+  解密凭证和 Session token 不得进入 RBAC 缓存 key/value。
 
 ## 5. 支付模型、单位与状态
 
@@ -112,9 +113,8 @@
 
 - GMPay 与 EPay 共用订单服务、幂等模型、状态机、收银台、查询、回调和手动重试。
 - 签名、scope、解析、归属和限流在边界校验。会改变状态或产生外部副作用的操作必须
-  防重放；只读 GMPay/EPay 状态查询保持协议兼容并限流，不凭空增加 nonce 字段。D1
-  继续作为强一致原子限流器，
-  除非以后明确设计强一致替代；KV 不决定安全限额。
+  防重放；只读 GMPay/EPay 状态查询保持协议兼容并限流，不凭空增加 nonce 字段。
+  当前运行时的权威数据库继续承担原子限流；最终一致缓存不决定安全限额。
 - Webhook 端点使用实例内相对路径；部署 host 属于 Allowed Hosts/安全设置。回调
   地址来自商户订单输入，并通过 SSRF 与重试策略校验。
 - Webhook event、delivery、attempt、Queue message、锁和手动重试保持幂等可审计；
@@ -153,10 +153,14 @@
 - 两种主题都必须支持键盘、accessible name、焦点恢复、reduced motion、移动端和
   父子路由正确选中。
 
-## 9. Cloudflare、性能与安全
+## 9. 运行时、性能与安全
 
-- Workers 承载全栈；D1 是权威数据；KV 用于高读缓存和辅助限流遥测；R2 保存私有
-  上传/导出；Queues 处理扫描/Webhook；Cron 处理过期、清理、健康和汇率。
+- Workers 与 Node/Nitro 服务通过明确的运行时适配器承载同一全栈。Workers 使用
+  D1、KV、R2、Queues 和 Cron；Node 使用 SQLite 权威数据、本地缓存/对象存储、
+  SQLite 可靠队列和进程内调度器，全部位于一个 `GMPAY_DATA_DIR` 下。
+- 现有 Workers 命令和 Cloudflare Vite 适配器保持不变：`bun run build`、
+  `bun run predeploy`、`bun run deploy` 仅用于 Workers。Node 使用独立的
+  `bun run build:node`，并通过 GitHub Container Registry 分发单容器多架构镜像。
 - KV 按最终一致设计：不可变版本 key、有限 TTL、防击穿、payload 校验和 D1 回退。
   解密 secret 不得进入 KV，也不得用 KV 决定原子授权或金额状态。
 - D1 使用 batch 与有证据的索引，遵守单 invocation 并发限制；用
@@ -172,6 +176,12 @@
   能力；启用 TOTP 时必须提供恢复码确认/复制/下载。
 - 运行时 secret 按当前产品设置契约在安装时初始化。禁止提交真实 secret、
   `.dev.vars`、Bot token、私钥、助记词、交易所 secret 或 Cloudflare token。
+- Node/Docker 对外环境变量契约只有 `GMPAY_DATA_DIR`。Origin、Allowed Hosts、邮件
+  通道等产品设置在 `/install` 确认或由认证后的后台维护。邮件通道按顺序故障切换；
+  Node 与 Workers 显示同一组服务商类型；Cloudflare Email 仅在 `EMAIL` binding
+  可用时投递。SMTP 拒绝 25 端口及非公网主机，并启用 TLS 证书校验。
+- Node 备份、恢复和 Cloudflare 到 Node 的导入必须使用仓库维护的 package scripts，
+  校验清单/校验和，并拒绝破坏性覆盖。
 
 ## 10. 证据与交付
 
@@ -190,7 +200,14 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
+bun run build:node
 ```
 
 - 完成还要求当前浏览器/运行时、迁移、权限路径和文档证据。局部测试、历史结果或
   被跳过的真实平台套件都不能证明整个项目完成。
+- 发布由 semantic-release 驱动。`alpha` 从 `1.0.0-alpha.1` 开始，只更新完整版本和
+  `alpha` 容器标签；验证完成后合并到 `main`，再发布稳定 `1.0.0` 以及 major、minor、
+  `latest` 标签。发布会更新 `package.json` 和 `bun.lock`、创建带自动生成说明的 GitHub
+  Release 与 tag，再调用 Docker 工作流发布 `linux/amd64`、`linux/arm64` 镜像。稳定
+  镜像与 provenance 发布后会删除匹配的 alpha Release、Git tag 和 GHCR 镜像版本。首次发布
+  后由仓库所有者一次性设为 Public，工作流不修改 package 可见性。

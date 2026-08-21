@@ -8,7 +8,8 @@ checklist scope; old or unrelated checklist items never become active implicitly
 
 ## 1. Product boundary
 
-- The product, package, Worker, and D1 database are `GMPay Edge` / `gmpay-edge`.
+- The product, package, Worker, Node service, and database are `GMPay Edge` /
+  `gmpay-edge`.
 - GMPay Edge is a single-deployment, single-tenant payment gateway. A merchant is
   an external API client; internal authorization is user-and-role based.
 - Internal operations use `/admin`. GMPay is the primary merchant protocol, and
@@ -18,7 +19,8 @@ checklist scope; old or unrelated checklist items never become active implicitly
 
 - Use Bun, strict TypeScript, React 19, TanStack Start/Router/Query/Table/Form,
   Tailwind CSS 4, shadcn/Radix, Zod, Better Auth, Drizzle, Cloudflare Workers
-  (D1, KV, R2, Queues, Cron), grammY, Paraglide, Vitest, Biome, and Wrangler.
+  (D1, KV, R2, Queues, Cron), Node.js with Nitro and SQLite, grammY, Paraglide,
+  Vitest, Biome, and Wrangler. Docker is the supported Node distribution.
 - Do not introduce a second router, auth system, ORM/database layer, form system,
   client/server cache, formatter, linter, or i18n runtime.
 - Domain and runtime ownership remains centered on `routes`, `features`,
@@ -114,13 +116,13 @@ checklist scope; old or unrelated checklist items never become active implicitly
   permissions fail closed. Client hiding never replaces server authorization.
 - Sidebar, command menu, module navigation, and default routing share one
   permission-filtered authority source.
-- Derived RBAC access may be cached in KV only behind an authoritative revision
+- Derived RBAC access may be cached only behind an authoritative revision
   returned by the current Better Auth user read. Role/permission mutations bump
-  affected user revisions in the same D1 batch. KV is eventually consistent, so
+  affected user revisions in the same database transaction or batch. Cache
   deletion or TTL alone must never grant or revoke access.
-- Corrupt/missing/version-mismatched cache values rebuild from D1; D1 or parsing
-  failure denies access. Decrypted credentials and session tokens never enter
-  RBAC cache keys or values.
+- Corrupt/missing/version-mismatched cache values rebuild from the authoritative
+  database; database or parsing failure denies access. Decrypted credentials and
+  session tokens never enter RBAC cache keys or values.
 
 ## 5. Payment model, units, and state
 
@@ -154,9 +156,9 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - Signatures, credential scopes, request parsing, ownership, and rate limits are
   verified at the boundary. Replay protection is required for state-changing or
   external-side-effect operations; protocol-compatible read-only GMPay/EPay
-  status queries remain rate-limited without inventing nonce fields. D1 remains the authoritative
-  atomic rate limiter unless replaced by a deliberately strongly consistent
-  design; KV does not decide security limits.
+  status queries remain rate-limited without inventing nonce fields. The runtime's
+  authoritative database remains the atomic rate limiter; eventually consistent
+  caches do not decide security limits.
 - Webhook endpoint paths are instance-relative. Deployment hosts belong to
   Allowed Hosts/security settings. Callback destinations originate from merchant
   order input and are validated against SSRF and retry policy.
@@ -206,11 +208,16 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - Keyboard access, accessible names, focus restoration, reduced motion, mobile
   behavior, and parent/child route selection are required in both themes.
 
-## 9. Cloudflare, performance, and security
+## 9. Runtimes, performance, and security
 
-- Workers run the full stack; D1 is authoritative data; KV is read-heavy cache
-  and ancillary limit telemetry; R2 stores private uploads/exports; Queues handle
-  scans/Webhooks; Cron handles expiry, cleanup, health, and rate sync.
+- Workers and the Node/Nitro service run the same full stack behind explicit
+  runtime adapters. Workers use D1, KV, R2, Queues, and Cron. Node uses SQLite as
+  authoritative data plus local cache/object storage, durable SQLite queues, and
+  an in-process scheduler under one `GMPAY_DATA_DIR`.
+- Existing Workers commands and the Cloudflare Vite adapter remain unchanged:
+  `bun run build`, `bun run predeploy`, and `bun run deploy` are Workers-only.
+  Node uses the separate `bun run build:node` build and is distributed as one
+  multi-architecture Docker image through GitHub Container Registry.
 - Treat KV as eventually consistent. Use immutable versioned keys, bounded TTL,
   cache-stampede control, validated payloads, and D1 fallback. Do not store
   decrypted secrets or use KV for atomic authorization or money state.
@@ -232,6 +239,14 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - Runtime secrets are initialized during installation and stored according to
   the current product settings contract. Never commit real secrets, `.dev.vars`,
   Bot tokens, private keys, seed phrases, exchange secrets, or Cloudflare tokens.
+- The public Node/Docker environment contract contains only `GMPAY_DATA_DIR`.
+  Origin, Allowed Hosts, email channels, and other product settings are confirmed
+  during `/install` or maintained in authenticated administration. Ordered email
+  channels support provider fallback. Node and Workers expose the same provider
+  types; Cloudflare Email delivers only when the `EMAIL` binding is available.
+  SMTP rejects port 25 and non-public hosts and validates TLS certificates.
+- Node backups, restores, and Cloudflare-to-Node imports must use the maintained
+  package scripts, validate manifests/checksums, and refuse destructive overwrite.
 
 ## 10. Evidence and delivery
 
@@ -254,8 +269,18 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
+bun run build:node
 ```
 
 - Completion additionally requires current browser/runtime evidence, migration
   evidence, permission-path coverage, and documentation. A partial gate, old
   result, or skipped live platform suite is not completion evidence.
+- Releases use semantic-release. `alpha` starts with `1.0.0-alpha.1` and only
+  updates full-version and `alpha` container tags; verified changes merge to
+  `main` for stable `1.0.0` and major, minor, and `latest` tags. A release updates
+  `package.json` and `bun.lock`, creates the GitHub Release with generated notes
+  and a tag, then calls the Docker workflow for `linux/amd64` and `linux/arm64`.
+  After a stable image and provenance publish, matching alpha releases, Git
+  tags, and GHCR image versions are removed.
+  Package visibility is set to public once by a repository owner after the first
+  publish, not mutated by workflow.

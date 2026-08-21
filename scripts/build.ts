@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 type WranglerConfig = {
+	name?: string;
 	d1_databases?: Array<{ binding?: string; database_name?: string }>;
 	kv_namespaces?: Array<{ binding?: string }>;
 	r2_buckets?: Array<{ bucket_name?: string }>;
@@ -14,6 +15,9 @@ type WranglerConfig = {
 
 const wranglerConfigPath = fileURLToPath(
 	new URL("../wrangler.jsonc", import.meta.url),
+);
+const generatedWranglerConfigPath = fileURLToPath(
+	new URL("../dist/server/wrangler.json", import.meta.url),
 );
 
 function run(command: string, arguments_: string[]): Promise<void> {
@@ -28,6 +32,38 @@ function run(command: string, arguments_: string[]): Promise<void> {
 			reject(new Error(`${command} exited with code ${code ?? 1}.`));
 		});
 	});
+}
+
+function capture(command: string, arguments_: string[]): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, arguments_, {
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		let output = "";
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			output += chunk;
+		});
+		child.once("error", reject);
+		child.once("close", (code) => {
+			if (code === 0) {
+				resolve(output);
+				return;
+			}
+			reject(new Error(`${command} exited with code ${code ?? 1}.`));
+		});
+	});
+}
+
+async function captureIfExists(
+	command: string,
+	arguments_: string[],
+): Promise<string | undefined> {
+	try {
+		return await capture(command, arguments_);
+	} catch {
+		return undefined;
+	}
 }
 
 async function resourceExists(arguments_: string[]): Promise<boolean> {
@@ -51,6 +87,123 @@ async function ensureNamedResource(
 	}
 }
 
+function parseD1DatabaseId(source: string): string {
+	const value: unknown = JSON.parse(source);
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		!("uuid" in value) ||
+		typeof value.uuid !== "string"
+	) {
+		throw new Error("Wrangler returned an invalid D1 database response.");
+	}
+	return value.uuid;
+}
+
+async function ensureD1Database(name: string): Promise<string> {
+	const infoArguments = ["d1", "info", name, "--json"];
+	const existingDatabase = await captureIfExists("wrangler", infoArguments);
+	if (existingDatabase !== undefined)
+		return parseD1DatabaseId(existingDatabase);
+
+	try {
+		await run("wrangler", ["d1", "create", name]);
+	} catch (error) {
+		try {
+			return parseD1DatabaseId(await capture("wrangler", infoArguments));
+		} catch {
+			throw error;
+		}
+	}
+	return parseD1DatabaseId(await capture("wrangler", infoArguments));
+}
+
+function parseKvNamespaceId(source: string, title: string): string | undefined {
+	const value: unknown = JSON.parse(source);
+	if (!Array.isArray(value)) {
+		throw new Error("Wrangler returned an invalid KV namespace response.");
+	}
+	for (const namespace of value) {
+		if (
+			typeof namespace === "object" &&
+			namespace !== null &&
+			"title" in namespace &&
+			namespace.title === title &&
+			"id" in namespace &&
+			typeof namespace.id === "string"
+		) {
+			return namespace.id;
+		}
+	}
+	return undefined;
+}
+
+async function findKvNamespaceId(title: string): Promise<string | undefined> {
+	return parseKvNamespaceId(
+		await capture("wrangler", ["kv", "namespace", "list"]),
+		title,
+	);
+}
+
+async function ensureKvNamespace(title: string): Promise<string> {
+	const existingId = await findKvNamespaceId(title);
+	if (existingId) return existingId;
+	try {
+		await run("wrangler", ["kv", "namespace", "create", title]);
+	} catch (error) {
+		const concurrentlyCreatedId = await findKvNamespaceId(title);
+		if (concurrentlyCreatedId) return concurrentlyCreatedId;
+		throw error;
+	}
+	const createdId = await findKvNamespaceId(title);
+	if (!createdId) {
+		throw new Error(`KV namespace ${title} was not found after creation.`);
+	}
+	return createdId;
+}
+
+async function bindGeneratedStorage(
+	databaseId: string,
+	cacheId: string,
+): Promise<void> {
+	const config: unknown = JSON.parse(
+		await readFile(generatedWranglerConfigPath, "utf8"),
+	);
+	if (typeof config !== "object" || config === null) {
+		throw new Error("Vite returned an invalid Wrangler deployment config.");
+	}
+	const databases = "d1_databases" in config ? config.d1_databases : undefined;
+	const namespaces =
+		"kv_namespaces" in config ? config.kv_namespaces : undefined;
+	if (!Array.isArray(databases) || !Array.isArray(namespaces)) {
+		throw new Error(
+			"Generated Wrangler config is missing DB or CACHE bindings.",
+		);
+	}
+	const database = databases.find(
+		(value) =>
+			typeof value === "object" &&
+			value !== null &&
+			"binding" in value &&
+			value.binding === "DB",
+	);
+	const cache = namespaces.find(
+		(value) =>
+			typeof value === "object" &&
+			value !== null &&
+			"binding" in value &&
+			value.binding === "CACHE",
+	);
+	if (!database || !cache) {
+		throw new Error(
+			"Generated Wrangler config is missing DB or CACHE bindings.",
+		);
+	}
+	database.database_id = databaseId;
+	cache.id = cacheId;
+	await writeFile(generatedWranglerConfigPath, JSON.stringify(config));
+}
+
 async function buildForWorkers(): Promise<void> {
 	const config = JSON.parse(
 		await readFile(wranglerConfigPath, "utf8"),
@@ -61,11 +214,18 @@ async function buildForWorkers(): Promise<void> {
 	const cache = config.kv_namespaces?.find(
 		(binding) => binding.binding === "CACHE",
 	);
-	if (!database || !cache || typeof database.database_name !== "string") {
+	if (
+		!database ||
+		!cache ||
+		typeof config.name !== "string" ||
+		typeof cache.binding !== "string" ||
+		typeof database.database_name !== "string"
+	) {
 		throw new Error("Missing DB or CACHE binding in wrangler.jsonc.");
 	}
 
 	const databaseName = database.database_name;
+	const cacheName = `${config.name}-${cache.binding.toLowerCase()}`;
 	const bucketNames = (config.r2_buckets ?? []).flatMap((bucket) =>
 		bucket.bucket_name ? [bucket.bucket_name] : [],
 	);
@@ -79,11 +239,9 @@ async function buildForWorkers(): Promise<void> {
 		]),
 	];
 
-	await Promise.all([
-		ensureNamedResource(
-			["d1", "info", databaseName, "--json"],
-			["d1", "create", databaseName],
-		),
+	const [databaseId, cacheId] = await Promise.all([
+		ensureD1Database(databaseName),
+		ensureKvNamespace(cacheName),
 		...bucketNames.map((name) =>
 			ensureNamedResource(
 				["r2", "bucket", "info", name, "--json"],
@@ -94,8 +252,15 @@ async function buildForWorkers(): Promise<void> {
 			ensureNamedResource(["queues", "info", name], ["queues", "create", name]),
 		),
 	]);
-	await run("wrangler", ["d1", "migrations", "apply", "DB", "--remote"]);
+	await run("wrangler", [
+		"d1",
+		"migrations",
+		"apply",
+		databaseName,
+		"--remote",
+	]);
 	await run("vite", ["build"]);
+	await bindGeneratedStorage(databaseId, cacheId);
 }
 
 if (process.argv.includes("--remote") || process.env.WORKERS_CI === "1") {

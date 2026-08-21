@@ -18,6 +18,7 @@
 	"kv_namespaces": [
 		{ "binding": "CACHE" }
 	],
+	"send_email": [{ "name": "EMAIL" }],
 	"queues": {
 		"producers": [
 			{ "binding": "WEBHOOK_QUEUE", "queue": "gmpay-edge-webhooks" },

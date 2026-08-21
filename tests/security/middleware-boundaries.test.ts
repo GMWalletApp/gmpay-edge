@@ -47,6 +47,7 @@ describe("server middleware boundaries", () => {
 
 	it("orders liveness, authority, app handling, and response security once", () => {
 		const entry = read("src/server-entry.ts");
+		const start = read("src/start.ts");
 		const positions = [
 			"handleLivenessRequest(request)",
 			"validateRequestAuthority(request, env.DB)",
@@ -58,7 +59,7 @@ describe("server middleware boundaries", () => {
 		expect(positions[0]).toBeLessThan(positions[1] ?? -1);
 		expect(positions[1]).toBeLessThan(positions[2] ?? -1);
 		expect(positions[2]).toBeLessThan(positions[3] ?? -1);
-		expect(entry).toContain(
+		expect(start).toContain(
 			"functionMiddleware: [serverFunctionErrorMiddleware]",
 		);
 	});

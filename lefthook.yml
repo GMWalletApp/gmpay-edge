@@ -1,0 +1,4 @@
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: bun run commitlint --edit {1}

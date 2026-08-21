@@ -1,11 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { requireAdmin } from "#/features/access/server/require-admin";
-import {
-	type SystemPermission,
-	systemPermission,
-} from "#/features/access/system-rbac";
+import { systemPermission } from "#/features/access/system-rbac";
+import { settingsAdminContext } from "#/features/settings/server/admin-context";
 import {
 	removeSiteAsset,
 	uploadSiteAsset,
@@ -16,18 +12,24 @@ import {
 } from "#/features/settings/server/system-settings";
 import { siteAssetContentTypes } from "#/features/settings/site-assets";
 import { DomainError } from "#/lib/domain-error";
-import { getCloudflareEnv } from "#/server/db.server";
 
 export const listSystemSettingsFn = createServerFn({ method: "GET" }).handler(
 	async () => {
-		const { db } = await adminContext(systemPermission("settings", "read"));
+		const { db } = await settingsAdminContext(
+			systemPermission("settings", "read"),
+		);
 		return listSystemSettings(db);
 	},
 );
 
 const updateInput = z.object({
 	items: z
-		.array(z.object({ key: z.string(), value: z.json() }))
+		.array(
+			z.object({
+				key: z.string(),
+				value: z.json(),
+			}),
+		)
 		.min(1)
 		.max(20),
 });
@@ -35,7 +37,9 @@ const updateInput = z.object({
 export const updateSystemSettingsFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof updateInput>) => updateInput.parse(input))
 	.handler(async ({ data }) => {
-		const context = await adminContext(systemPermission("settings", "update"));
+		const context = await settingsAdminContext(
+			systemPermission("settings", "update"),
+		);
 		return saveSystemSettings(data.items, {
 			db: context.db,
 			cache: context.env.CACHE,
@@ -55,13 +59,17 @@ export const uploadSiteLogoFn = createServerFn({ method: "POST" })
 		siteLogoInput.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const context = await adminContext(systemPermission("settings", "update"));
+		const context = await settingsAdminContext(
+			systemPermission("settings", "update"),
+		);
 		return uploadSiteAsset("logo", data, siteAssetDependencies(context));
 	});
 
 export const removeSiteLogoFn = createServerFn({ method: "POST" }).handler(
 	async () => {
-		const context = await adminContext(systemPermission("settings", "update"));
+		const context = await settingsAdminContext(
+			systemPermission("settings", "update"),
+		);
 		return removeSiteAsset("logo", siteAssetDependencies(context));
 	},
 );
@@ -76,19 +84,23 @@ export const uploadSiteBackgroundFn = createServerFn({ method: "POST" })
 		siteBackgroundInput.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const context = await adminContext(systemPermission("settings", "update"));
+		const context = await settingsAdminContext(
+			systemPermission("settings", "update"),
+		);
 		return uploadSiteAsset("background", data, siteAssetDependencies(context));
 	});
 
 export const removeSiteBackgroundFn = createServerFn({
 	method: "POST",
 }).handler(async () => {
-	const context = await adminContext(systemPermission("settings", "update"));
+	const context = await settingsAdminContext(
+		systemPermission("settings", "update"),
+	);
 	return removeSiteAsset("background", siteAssetDependencies(context));
 });
 
 function siteAssetDependencies(
-	context: Awaited<ReturnType<typeof adminContext>>,
+	context: Awaited<ReturnType<typeof settingsAdminContext>>,
 ) {
 	if (!context.env.FILES)
 		throw new DomainError(
@@ -104,13 +116,4 @@ function siteAssetDependencies(
 		requestId: context.request.headers.get("x-request-id"),
 		ipAddress: context.request.headers.get("cf-connecting-ip"),
 	};
-}
-
-async function adminContext(permission: SystemPermission) {
-	const request = getRequest();
-	const user = await requireAdmin(request, permission);
-	const env = getCloudflareEnv(request);
-	const db = env.DB;
-	if (!db) throw new Error("D1 binding DB is unavailable");
-	return { db, env, request, user };
 }

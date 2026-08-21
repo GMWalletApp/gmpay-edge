@@ -6,7 +6,7 @@ import {
 } from "#/features/settings/secrecy";
 
 describe("runtime setting secrecy", () => {
-	it("returns configured runtime secrets to authorized settings pages", () => {
+	it("returns configured secrets to authorized settings pages", () => {
 		const secret = "a-real-runtime-secret-that-must-not-leave-d1";
 		expect(presentSettingValue("runtime.better_auth_secret", secret)).toEqual({
 			value: secret,

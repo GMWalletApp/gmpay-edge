@@ -56,14 +56,30 @@ describe("Cloudflare deployment contract", () => {
 			await readFile(new URL("../../wrangler.jsonc", import.meta.url), "utf8"),
 		);
 		const fakeCommand = `#!/usr/bin/env bun
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 const tool = basename(process.argv[1] ?? "");
 const args = process.argv.slice(2);
 appendFileSync(process.env.COMMAND_LOG, JSON.stringify({ tool, args }) + "\\n");
 const databaseMarker = join(process.cwd(), ".database-exists");
-if (tool === "wrangler" && args[0] === "d1" && args[1] === "info" && process.env.MISSING_D1 === "1" && !existsSync(databaseMarker)) process.exit(1);
+const bucketMarker = join(process.cwd(), ".bucket-exists");
+const cacheMarker = join(process.cwd(), ".cache-exists");
+if (tool === "wrangler" && args[0] === "d1" && args[1] === "info") {
+	if (process.env.MISSING_D1 === "1" && !existsSync(databaseMarker)) process.exit(1);
+	console.log(JSON.stringify({ uuid: "database-id" }));
+}
 if (tool === "wrangler" && args[0] === "d1" && args[1] === "create") writeFileSync(databaseMarker, "");
+if (tool === "wrangler" && args[0] === "r2" && args[1] === "bucket" && args[2] === "info" && process.env.MISSING_R2 === "1" && !existsSync(bucketMarker)) process.exit(1);
+if (tool === "wrangler" && args[0] === "r2" && args[1] === "bucket" && args[2] === "create") writeFileSync(bucketMarker, "");
+if (tool === "wrangler" && args[0] === "kv" && args[1] === "namespace" && args[2] === "list") {
+	const exists = process.env.MISSING_KV !== "1" || existsSync(cacheMarker);
+	console.log(JSON.stringify(exists ? [{ id: "cache-id", title: "gmpay-edge-cache" }] : []));
+}
+if (tool === "wrangler" && args[0] === "kv" && args[1] === "namespace" && args[2] === "create") writeFileSync(cacheMarker, "");
+if (tool === "vite" && process.env.WORKERS_CI === "1") {
+	mkdirSync(join(process.cwd(), "dist/server"), { recursive: true });
+	writeFileSync(join(process.cwd(), "dist/server/wrangler.json"), JSON.stringify({ d1_databases: [{ binding: "DB" }], kv_namespaces: [{ binding: "CACHE" }] }));
+}
 `;
 		for (const command of ["vite", "wrangler"]) {
 			const path = join(fixtureDirectory, "bin", command);
@@ -132,13 +148,15 @@ if (tool === "wrangler" && args[0] === "d1" && args[1] === "create") writeFileSy
 		);
 	});
 
-	it("creates a missing D1 database before migration and build", async () => {
+	it("creates missing named storage before migration and build", async () => {
 		const originalConfig = await readFile(
 			join(fixtureDirectory, "wrangler.jsonc"),
 			"utf8",
 		);
 		const result = await runFixture(fixtureDirectory, {
 			MISSING_D1: "1",
+			MISSING_KV: "1",
+			MISSING_R2: "1",
 			WORKERS_CI: "1",
 		});
 		expect(result).toBe(0);
@@ -150,25 +168,47 @@ if (tool === "wrangler" && args[0] === "d1" && args[1] === "create") writeFileSy
 		const migrationIndex = commands.findIndex(
 			({ tool, args }) =>
 				tool === "wrangler" &&
-				args.join(" ") === "d1 migrations apply DB --remote",
+				args.join(" ") === "d1 migrations apply gmpay-edge --remote",
 		);
 		const buildIndex = commands.findIndex(
 			({ tool, args }) => tool === "vite" && args.join(" ") === "build",
 		);
 		expect(createIndex).toBeGreaterThanOrEqual(0);
+		expect(
+			commands.some(
+				({ args }) => args.join(" ") === "kv namespace create gmpay-edge-cache",
+			),
+		).toBe(true);
+		expect(
+			commands.some(
+				({ args }) => args.join(" ") === "r2 bucket create gmpay-edge-files",
+			),
+		).toBe(true);
 		expect(migrationIndex).toBeGreaterThan(createIndex);
 		expect(buildIndex).toBeGreaterThan(migrationIndex);
 		expect(
 			await readFile(join(fixtureDirectory, "wrangler.jsonc"), "utf8"),
 		).toBe(originalConfig);
+		expect(
+			JSON.parse(
+				await readFile(
+					join(fixtureDirectory, "dist/server/wrangler.json"),
+					"utf8",
+				),
+			),
+		).toMatchObject({
+			d1_databases: [{ binding: "DB", database_id: "database-id" }],
+			kv_namespaces: [{ binding: "CACHE", id: "cache-id" }],
+		});
 	});
 
-	it("reuses an existing D1 database", async () => {
+	it("reuses existing D1, KV, and R2 storage", async () => {
 		expect(await runFixture(fixtureDirectory, { WORKERS_CI: "1" })).toBe(0);
 		const commands = await readCommands(fixtureDirectory);
+		expect(commands.some(({ args }) => args.includes("create"))).toBe(false);
 		expect(
-			commands.some(({ args }) => args[0] === "d1" && args[1] === "create"),
-		).toBe(false);
+			commands.some(({ args }) => args.join(" ") === "kv namespace list"),
+		).toBe(true);
 	});
 
 	it("keeps an ordinary build local", async () => {

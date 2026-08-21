@@ -1,4 +1,5 @@
 import { loadRequestSettings } from "#/server/request-settings";
+import type { RuntimeDatabase } from "#/server/runtime/types";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -10,7 +11,7 @@ const requestSettings = new WeakMap<Request, Promise<AuthoritySettings>>();
 
 export async function validateRequestAuthority(
 	request: Request,
-	db: D1Database | undefined,
+	db: RuntimeDatabase | undefined,
 ): Promise<Response | null> {
 	if (!db) return authorityUnavailable();
 	let settings: AuthoritySettings;
@@ -46,7 +47,7 @@ function authorityUnavailable() {
 
 export async function loadRequestAllowedHosts(
 	request: Request,
-	db: D1Database,
+	db: RuntimeDatabase,
 ) {
 	return (await loadAuthoritySettings(request, db)).allowedHosts;
 }
@@ -62,7 +63,7 @@ function parseOriginHost(origin: string): string | null {
 
 async function loadAuthoritySettings(
 	request: Request,
-	db: D1Database,
+	db: RuntimeDatabase,
 ): Promise<AuthoritySettings> {
 	const cached = requestSettings.get(request);
 	if (cached) return cached;

@@ -2,12 +2,13 @@ import { z } from "zod";
 import { mergeRolePermissions } from "#/features/access/permissions";
 import { systemRbacModuleIds } from "#/features/access/system-rbac";
 import { recordKvCacheMetric } from "#/server/cache-observability";
+import type { RuntimeCache, RuntimeDatabase } from "#/server/runtime/types";
 
 const accessCacheVersion = 1;
 const accessCacheTtlSeconds = 300;
 const accessCachePrefix = `rbac-access:v${accessCacheVersion}`;
 const pendingLoads = new WeakMap<
-	D1Database,
+	RuntimeDatabase,
 	Map<string, Promise<EffectiveUserAccess>>
 >();
 
@@ -52,8 +53,8 @@ const cachedAccessSchema = z
 type CachedUserAccess = z.infer<typeof cachedAccessSchema>;
 
 export async function loadEffectiveUserAccess(
-	db: D1Database,
-	kv: KVNamespace | undefined,
+	db: RuntimeDatabase,
+	kv: RuntimeCache | undefined,
 	user: AccessSessionUser,
 ): Promise<EffectiveUserAccess> {
 	if (user.enabled !== true) throw new AccessDeniedError(403);
@@ -77,7 +78,7 @@ export async function loadEffectiveUserAccess(
 	}
 }
 
-function bindingPendingLoads(db: D1Database) {
+function bindingPendingLoads(db: RuntimeDatabase) {
 	const existing = pendingLoads.get(db);
 	if (existing) return existing;
 	const loads = new Map<string, Promise<EffectiveUserAccess>>();
@@ -86,8 +87,8 @@ function bindingPendingLoads(db: D1Database) {
 }
 
 async function loadAuthoritativeAccess(
-	db: D1Database,
-	kv: KVNamespace | undefined,
+	db: RuntimeDatabase,
+	kv: RuntimeCache | undefined,
 	key: string,
 	user: AccessSessionUser,
 	revision: number,
@@ -152,7 +153,7 @@ function accessRevision(value: Date | string) {
 }
 
 async function readCachedAccess(
-	kv: KVNamespace | undefined,
+	kv: RuntimeCache | undefined,
 	key: string,
 	userId: string,
 	revision: number,
@@ -188,7 +189,7 @@ async function readCachedAccess(
 }
 
 async function writeCachedAccess(
-	kv: KVNamespace | undefined,
+	kv: RuntimeCache | undefined,
 	key: string,
 	value: CachedUserAccess,
 ) {

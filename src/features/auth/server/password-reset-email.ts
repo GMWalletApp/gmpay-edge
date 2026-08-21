@@ -1,10 +1,11 @@
-import { z } from "zod";
-
-const senderSchema = z.email();
+import type {
+	RuntimeDatabase,
+	RuntimeMailSender,
+} from "#/server/runtime/types";
 
 export function schedulePasswordResetEmail(
-	db: D1Database,
-	email: SendEmail | undefined,
+	db: RuntimeDatabase,
+	email: RuntimeMailSender | undefined,
 	input: { recipient: string; resetUrl: string },
 	schedule?: (promise: Promise<unknown>) => void,
 ) {
@@ -22,24 +23,18 @@ export function schedulePasswordResetEmail(
 }
 
 async function sendPasswordResetEmail(
-	db: D1Database,
-	email: SendEmail,
+	db: RuntimeDatabase,
+	email: RuntimeMailSender,
 	input: { recipient: string; resetUrl: string },
 ) {
 	const rows = await db
-		.prepare(
-			"SELECT key, value FROM system_settings WHERE key IN ('auth.password_reset_from_email', 'site.name')",
-		)
+		.prepare("SELECT key, value FROM system_settings WHERE key = 'site.name'")
 		.all<{ key: string; value: string }>();
 	const settings = new Map(
 		rows.results.map((row) => [row.key, parseString(row.value)]),
 	);
-	const sender = senderSchema.parse(
-		settings.get("auth.password_reset_from_email"),
-	);
 	const siteName = settings.get("site.name") || "GMPay Edge";
 	await email.send({
-		from: { email: sender, name: siteName },
 		to: input.recipient,
 		subject: `${siteName} password reset`,
 		text: `Use this one-time link to reset your password. It expires in 15 minutes:\n\n${input.resetUrl}`,

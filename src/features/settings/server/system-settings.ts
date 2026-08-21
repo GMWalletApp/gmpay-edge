@@ -8,6 +8,7 @@ import {
 import { invalidateSiteBrandCache } from "#/features/settings/server/site-brand";
 import { DomainError } from "#/lib/domain-error";
 import { supportedLocales } from "#/lib/locales";
+import type { RuntimeCache, RuntimeDatabase } from "#/server/runtime/types";
 
 export type SettingValue = string | number | boolean | string[];
 
@@ -50,7 +51,6 @@ const definitions = {
 		)
 		.max(100)
 		.transform((hosts) => [...new Set(hosts)]),
-	"auth.password_reset_from_email": z.union([z.literal(""), z.email()]),
 	"webhooks.max_attempts": z.number().int().min(1).max(20),
 	"webhooks.timeout_ms": z.number().int().min(1_000).max(30_000),
 	"payments.scan_batch_size": z.number().int().min(1).max(100),
@@ -93,7 +93,6 @@ const defaults: Record<SettingKey, SettingValue> = {
 	"payments.late_payment_policy": "review",
 	"payments.checkout_amount_decimals": defaultCheckoutAmountDecimals,
 	"security.allowed_hosts": [],
-	"auth.password_reset_from_email": "",
 	"webhooks.max_attempts": 8,
 	"webhooks.timeout_ms": 10_000,
 	"payments.scan_batch_size": 100,
@@ -108,7 +107,7 @@ const defaults: Record<SettingKey, SettingValue> = {
 	"runtime.integration_config_secret": "",
 };
 
-export async function listSystemSettings(db: D1Database) {
+export async function listSystemSettings(db: RuntimeDatabase) {
 	const rows = await db
 		.prepare("SELECT key, value, updated_at FROM system_settings ORDER BY key")
 		.all<{ key: string; value: string; updated_at: number }>();
@@ -128,8 +127,8 @@ export async function listSystemSettings(db: D1Database) {
 export async function saveSystemSettings(
 	items: Array<{ key: string; value: unknown }>,
 	dependencies: {
-		db: D1Database;
-		cache?: KVNamespace;
+		db: RuntimeDatabase;
+		cache?: RuntimeCache;
 		userId: string;
 		requestId?: string | null;
 		ipAddress?: string | null;
@@ -189,7 +188,7 @@ export async function saveSystemSettings(
 
 async function validateOrderSettings(
 	parsed: Array<{ key: SettingKey; value: SettingValue }>,
-	db: D1Database,
+	db: RuntimeDatabase,
 ) {
 	if (!parsed.some(({ key }) => key.startsWith("orders."))) return undefined;
 	const rows = await db
@@ -228,7 +227,7 @@ async function validateOrderSettings(
 	};
 }
 
-export async function loadCheckoutAmountDecimals(db: D1Database) {
+export async function loadCheckoutAmountDecimals(db: RuntimeDatabase) {
 	const row = await db
 		.prepare("SELECT value FROM system_settings WHERE key = ? LIMIT 1")
 		.bind("payments.checkout_amount_decimals")

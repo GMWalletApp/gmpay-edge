@@ -5,13 +5,14 @@ import { twoFactor } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import * as schema from "#/db/schema";
 import type { AppDb } from "#/server/db.server";
+import type { RuntimeMailSender } from "#/server/runtime/types";
 import { schedulePasswordResetEmail } from "./password-reset-email";
 
 export type AuthEnv = {
 	BETTER_AUTH_SECRET: string;
 	BETTER_AUTH_URL: string;
 	TRUSTED_ORIGINS?: string[];
-	AUTH_EMAIL?: SendEmail;
+	MAIL?: RuntimeMailSender;
 	WAIT_UNTIL?: (promise: Promise<unknown>) => void;
 };
 
@@ -53,7 +54,7 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 			sendResetPassword: async ({ user, url }) => {
 				schedulePasswordResetEmail(
 					db.$client,
-					env.AUTH_EMAIL,
+					env.MAIL,
 					{
 						recipient: user.email,
 						resetUrl: url,

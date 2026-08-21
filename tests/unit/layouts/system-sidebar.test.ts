@@ -40,7 +40,7 @@ describe("admin navigation", () => {
 			["dashboard"],
 			["orders", "payments", "reviews", "receiving-methods"],
 			["api-keys", "webhooks", "telegram"],
-			["payment-settings", "access", "operations", "settings"],
+			["email", "payment-settings", "access", "operations", "settings"],
 		]);
 	});
 

@@ -5,12 +5,13 @@ import {
 } from "#/features/settings/site-brand";
 import { supportedLocales } from "#/lib/locales";
 import { recordKvCacheMetric } from "#/server/cache-observability";
+import type { RuntimeCache, RuntimeDatabase } from "#/server/runtime/types";
 
 const cacheVersion = 1;
 const cacheKey = `site-brand:v${cacheVersion}`;
 const cacheTtlSeconds = 300;
-const pendingLoads = new WeakMap<KVNamespace, Promise<SiteBrand>>();
-const cacheGenerations = new WeakMap<KVNamespace, number>();
+const pendingLoads = new WeakMap<RuntimeCache, Promise<SiteBrand>>();
+const cacheGenerations = new WeakMap<RuntimeCache, number>();
 const brandSchema = z
 	.object({
 		name: z.string().min(1).max(80),
@@ -31,8 +32,8 @@ const cacheSchema = z.object({
 });
 
 export async function loadSiteBrandOrDefault(
-	db?: D1Database,
-	cache?: KVNamespace,
+	db?: RuntimeDatabase,
+	cache?: RuntimeCache,
 ) {
 	if (!db) return defaultSiteBrand;
 	try {
@@ -44,8 +45,8 @@ export async function loadSiteBrandOrDefault(
 }
 
 export async function loadSiteBrand(
-	db: D1Database,
-	cache?: KVNamespace,
+	db: RuntimeDatabase,
+	cache?: RuntimeCache,
 ): Promise<SiteBrand> {
 	if (!cache) return querySiteBrand(db);
 	const pending = pendingLoads.get(cache);
@@ -67,7 +68,7 @@ export async function loadSiteBrand(
 	}
 }
 
-export async function invalidateSiteBrandCache(cache?: KVNamespace) {
+export async function invalidateSiteBrandCache(cache?: RuntimeCache) {
 	if (!cache) return;
 	cacheGenerations.set(cache, (cacheGenerations.get(cache) ?? 0) + 1);
 	pendingLoads.delete(cache);
@@ -87,7 +88,7 @@ export async function invalidateSiteBrandCache(cache?: KVNamespace) {
 	}
 }
 
-async function querySiteBrand(db: D1Database): Promise<SiteBrand> {
+async function querySiteBrand(db: RuntimeDatabase): Promise<SiteBrand> {
 	const rows = await db
 		.prepare(
 			"SELECT key, value FROM system_settings WHERE key IN ('site.name', 'site.logo_url', 'site.support_url', 'site.background_color', 'site.background_image_url', 'site.default_locale')",
@@ -112,7 +113,7 @@ async function querySiteBrand(db: D1Database): Promise<SiteBrand> {
 	return brand.success ? brand.data : defaultSiteBrand;
 }
 
-async function readCache(cache: KVNamespace) {
+async function readCache(cache: RuntimeCache) {
 	const startedAt = performance.now();
 	try {
 		const value = await cache.get(cacheKey);
@@ -151,7 +152,7 @@ function parseCache(value: string): SiteBrand | null {
 	}
 }
 
-async function writeCache(cache: KVNamespace, brand: SiteBrand) {
+async function writeCache(cache: RuntimeCache, brand: SiteBrand) {
 	const startedAt = performance.now();
 	try {
 		await cache.put(

@@ -1,3 +1,5 @@
+import type { RuntimeDatabase } from "#/server/runtime/types";
+
 const requestSettingsKeys = [
 	"runtime.better_auth_secret",
 	"runtime.better_auth_url",
@@ -16,7 +18,7 @@ const pendingSettings = new WeakMap<Request, Promise<RequestSettings>>();
  */
 export function loadRequestSettings(
 	request: Request,
-	db: D1Database,
+	db: RuntimeDatabase,
 ): Promise<RequestSettings> {
 	const cached = pendingSettings.get(request);
 	if (cached) return cached;

@@ -5,6 +5,8 @@ import * as schema from "#/db/schema";
 import { loadAdminBootstrap } from "#/features/auth/server/admin-bootstrap";
 import { createAuth } from "#/features/auth/server/auth-factory";
 import { installSystem } from "#/features/installation/server/install";
+import { adaptCloudflareEnv } from "#/server/runtime/cloudflare";
+import { runWithRuntimeEnv } from "#/server/runtime/context";
 import { createInitialRuntimeConfig } from "#/server/runtime-config";
 import {
 	createDatastoreCounters,
@@ -69,7 +71,7 @@ describe("admin bootstrap request budget", () => {
 		workerEnv.bindings.DB = instrumentD1(db, counters);
 		workerEnv.bindings.CACHE = instrumentKv(cache, counters);
 
-		await expect(loadAdminBootstrap(request("cold"))).resolves.toMatchObject({
+		await expect(loadBootstrap(request("cold"))).resolves.toMatchObject({
 			installed: true,
 			access: { email: "root@example.com", root: true },
 		});
@@ -89,7 +91,7 @@ describe("admin bootstrap request budget", () => {
 		workerEnv.bindings.DB = instrumentD1(db, counters);
 		workerEnv.bindings.CACHE = instrumentKv(cache, counters);
 
-		await expect(loadAdminBootstrap(request("warm"))).resolves.toMatchObject({
+		await expect(loadBootstrap(request("warm"))).resolves.toMatchObject({
 			installed: true,
 			access: { email: "root@example.com", root: true },
 		});
@@ -108,5 +110,11 @@ describe("admin bootstrap request budget", () => {
 		return new Request("https://pay.example/admin", {
 			headers: { cookie, "x-request-id": `bootstrap-${id}` },
 		});
+	}
+
+	function loadBootstrap(request: Request) {
+		return runWithRuntimeEnv(adaptCloudflareEnv(workerEnv.bindings), () =>
+			loadAdminBootstrap(request),
+		);
 	}
 });

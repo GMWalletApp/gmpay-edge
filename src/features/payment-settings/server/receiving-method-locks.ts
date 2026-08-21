@@ -1,5 +1,6 @@
 import { loadCheckoutAmountDecimals } from "#/features/settings/server/system-settings";
 import { quantizeUnitsUp, unitsToDecimal } from "#/lib/money";
+import type { RuntimeDatabase } from "#/server/runtime/types";
 
 export type PaymentAllocationInput = {
 	orderId: string;
@@ -391,7 +392,7 @@ export async function clearReusableReceivingMethodLockKeys(
 }
 
 export function receivingMethodLockModeSwitchStatements(
-	db: D1Database,
+	db: RuntimeDatabase,
 	immediateReleaseMode: boolean,
 	now: number,
 ) {

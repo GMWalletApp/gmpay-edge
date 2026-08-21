@@ -25,6 +25,7 @@ describe("UI surface routing contracts", () => {
 			"src/routes/admin/payment-settings/rates/index.tsx",
 			"src/routes/admin/payment-settings/rates/fiat.tsx",
 			"src/routes/admin/api-keys.tsx",
+			"src/routes/admin/email.tsx",
 			"src/routes/admin/webhooks/index.tsx",
 			"src/routes/admin/webhooks/inbound-records.tsx",
 			"src/routes/admin/webhooks/records.tsx",

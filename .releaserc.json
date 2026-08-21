@@ -1,0 +1,44 @@
+{
+	"branches": ["main", { "name": "alpha", "prerelease": "alpha" }],
+	"tagFormat": "v${version}",
+	"plugins": [
+		[
+			"@semantic-release/commit-analyzer",
+			{
+				"releaseRules": [
+					{ "type": "docs", "release": false },
+					{ "type": "test", "release": false },
+					{ "type": "style", "release": false },
+					{ "type": "chore", "release": false },
+					{ "type": "ci", "release": false },
+					{ "type": "build", "release": false },
+					{ "type": "refactor", "release": false }
+				]
+			}
+		],
+		"@semantic-release/release-notes-generator",
+		[
+			"@semantic-release/npm",
+			{ "npmPublish": false }
+		],
+		[
+			"@semantic-release/exec",
+			{ "prepareCmd": "bun install --lockfile-only --ignore-scripts" }
+		],
+		[
+			"@semantic-release/github",
+			{
+				"successComment": false,
+				"failComment": false,
+				"labels": false
+			}
+		],
+		[
+			"@semantic-release/git",
+			{
+				"assets": ["package.json", "bun.lock"],
+				"message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+			}
+		]
+	]
+}

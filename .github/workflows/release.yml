@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - alpha
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.release-tag.outputs.value }}
+    steps:
+      - name: Check out repository and tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Restore Bun and build caches
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-1.3.14-
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run quality gate
+        run: |
+          bun run build
+          bun run typecheck
+          bun run test
+          bun run check
+          bun run build:node
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: bun run release
+
+      - name: Resolve released tag
+        id: release-tag
+        shell: bash
+        run: |
+          git fetch --force origin "${GITHUB_REF_NAME}" --tags
+          release_tag="$(git tag --points-at "${GITHUB_SHA}" --list 'v*' | sort -V | tail -n 1)"
+          if [[ -z "${release_tag}" ]]; then
+            for candidate in $(git rev-list --reverse --first-parent "${GITHUB_SHA}..origin/${GITHUB_REF_NAME}"); do
+              release_tag="$(git tag --points-at "${candidate}" --list 'v*' | sort -V | tail -n 1)"
+              if [[ -n "${release_tag}" ]]; then
+                break
+              fi
+            done
+          fi
+          echo "value=${release_tag}" >>"${GITHUB_OUTPUT}"
+
+  docker:
+    name: Publish Docker image
+    needs: release
+    if: needs.release.outputs.release-tag != ''
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag: ${{ needs.release.outputs.release-tag }}

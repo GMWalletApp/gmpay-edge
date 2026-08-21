@@ -1,0 +1,189 @@
+name: Docker
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing semantic-release tag to publish
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing semantic-release tag to republish (for example v1.0.0-alpha.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+concurrency:
+  group: docker-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish container
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.[1-9][0-9]*)?$ ]]; then
+            echo "Invalid release tag: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build release-candidate container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: gmpay-edge:release-candidate
+          cache-from: type=gha,scope=gmpay-edge
+          cache-to: type=gha,mode=max,scope=gmpay-edge
+
+      - name: Smoke-test release-candidate container
+        shell: bash
+        run: |
+          docker run --detach --name gmpay-edge-release \
+            --publish 127.0.0.1:3000:3000 \
+            --volume gmpay-edge-release-data:/var/lib/gmpay \
+            --env GMPAY_DATA_DIR=/var/lib/gmpay \
+            gmpay-edge:release-candidate
+
+          healthy=false
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/healthz >/dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [[ "${healthy}" != true ]]; then
+            docker logs gmpay-edge-release
+            exit 1
+          fi
+
+          docker exec gmpay-edge-release bun run data -- --help
+
+      - name: Stop release-candidate container
+        if: always()
+        run: |
+          docker rm --force gmpay-edge-release >/dev/null 2>&1 || true
+          docker volume rm gmpay-edge-release-data >/dev/null 2>&1 || true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Prepare image metadata
+        id: image
+        shell: bash
+        run: |
+          version="${RELEASE_TAG#v}"
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          revision="$(git rev-parse HEAD)"
+          created="$(git show --no-patch --format='%cI' HEAD)"
+          {
+            echo "name=${image}"
+            echo 'tags<<EOF'
+            echo "${image}:${version}"
+            if [[ "${version}" == *-alpha.* ]]; then
+              echo "${image}:alpha"
+            else
+              echo "${image}:${major}.${minor}"
+              echo "${image}:${major}"
+              echo "${image}:latest"
+            fi
+            echo 'EOF'
+            echo 'labels<<EOF'
+            echo "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${revision}"
+            echo "org.opencontainers.image.version=${version}"
+            echo "org.opencontainers.image.created=${created}"
+            echo 'org.opencontainers.image.description=Single-tenant payment gateway for Cloudflare Workers and Node.js'
+            echo 'org.opencontainers.image.licenses=GPL-3.0-or-later'
+            echo 'EOF'
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Build and publish multi-platform image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: ${{ steps.image.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=gmpay-edge
+          cache-to: type=gha,mode=max,scope=gmpay-edge
+
+      - name: Attest published image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Remove superseded alpha artifacts
+        if: ${{ !contains(env.RELEASE_TAG, '-') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          package_name="$(printf '%s' "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          if gh api "/orgs/${owner}" >/dev/null 2>&1; then
+            package_versions_endpoint="/orgs/${owner}/packages/container/${package_name}/versions"
+          else
+            package_versions_endpoint="/users/${owner}/packages/container/${package_name}/versions"
+          fi
+
+          image_alpha_prefix="${RELEASE_TAG#v}-alpha."
+          gh api --paginate "${package_versions_endpoint}?per_page=100" |
+          jq -r --arg prefix "${image_alpha_prefix}" '
+            .[] |
+            select(any(.metadata.container.tags[]?;
+              startswith($prefix) and (ltrimstr($prefix) | test("^[1-9][0-9]*$")))) |
+            .id
+          ' |
+          while read -r package_version_id; do
+            gh api --method DELETE "${package_versions_endpoint}/${package_version_id}"
+          done
+
+          release_alpha_prefix="${RELEASE_TAG}-alpha."
+          gh release list --limit 1000 --json isPrerelease,tagName \
+            --jq '.[] | select(.isPrerelease) | .tagName' |
+          while read -r prerelease_tag; do
+            suffix="${prerelease_tag#"${release_alpha_prefix}"}"
+            if [[ "${prerelease_tag}" == "${release_alpha_prefix}"* && "${suffix}" =~ ^[1-9][0-9]*$ ]]; then
+              gh release delete "${prerelease_tag}" --cleanup-tag --yes
+            fi
+          done

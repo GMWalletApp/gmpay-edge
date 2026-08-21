@@ -1,7 +1,6 @@
-import { waitUntil } from "cloudflare:workers";
 import { createAuth } from "#/features/auth/server/auth-factory";
 import { trustedOriginsFromAllowedHosts } from "#/features/auth/trusted-hosts";
-import { getCloudflareEnv, getDb } from "#/server/db.server";
+import { getCloudflareEnv, getDb, getRuntimeEnv } from "#/server/db.server";
 import { loadRequestAllowedHosts } from "#/server/middleware/authority";
 import { loadRequestRuntimeConfig } from "#/server/runtime-config";
 
@@ -11,6 +10,7 @@ const authCache = new WeakMap<
 >();
 export async function getAuth(request: Request) {
 	const env = getCloudflareEnv(request);
+	const runtimeEnv = getRuntimeEnv(request);
 	const d1 = env?.DB;
 	if (!d1) throw new Error("D1 binding DB is unavailable");
 	const [runtime, trustedOrigins] = await Promise.all([
@@ -26,8 +26,8 @@ export async function getAuth(request: Request) {
 		BETTER_AUTH_SECRET: runtime.betterAuthSecret,
 		BETTER_AUTH_URL: runtime.betterAuthUrl,
 		TRUSTED_ORIGINS: trustedOrigins,
-		AUTH_EMAIL: env.AUTH_EMAIL,
-		WAIT_UNTIL: waitUntil,
+		MAIL: runtimeEnv.MAIL,
+		WAIT_UNTIL: runtimeEnv.waitUntil,
 	});
 	authCache.set(d1, { auth, signature });
 	return auth;

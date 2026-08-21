@@ -1,11 +1,12 @@
 import { loadSiteBrandOrDefault } from "#/features/settings/server/site-brand";
 import { localeFromCookie, setSystemDefaultLocale } from "#/lib/i18n-runtime";
 import { paraglideMiddleware } from "#/paraglide/server";
+import type { RuntimeCache, RuntimeDatabase } from "#/server/runtime/types";
 
 export async function handleI18nRequest(
 	request: Request,
-	db: D1Database | undefined,
-	cache: KVNamespace | undefined,
+	db: RuntimeDatabase | undefined,
+	cache: RuntimeCache | undefined,
 	resolve: (request: Request) => Response | Promise<Response>,
 ) {
 	if (!localeFromCookie(request.headers.get("cookie"))) {

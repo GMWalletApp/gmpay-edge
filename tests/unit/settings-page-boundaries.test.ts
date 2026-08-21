@@ -64,6 +64,19 @@ describe("settings page ownership", () => {
 			);
 		}
 	});
+
+	it("mounts email delivery as an independent top-level admin page", () => {
+		const route = read("src/routes/admin/email.tsx");
+		const sidebar = read("src/layouts/components/data/sidebar-data.ts");
+		expect(route).toContain('from "#/features/settings/pages/email"');
+		expect(route).toContain('createFileRoute("/admin/email")');
+		expect(route).toContain("validateSearch: validateProTableSearch");
+		expect(sidebar).toContain('id: "email"');
+		expect(sidebar).toContain('"/admin/email"');
+		expect(sidebar.indexOf('id: "email"')).toBeLessThan(
+			sidebar.indexOf('id: "payment-settings"'),
+		);
+	});
 });
 
 function read(path: string) {

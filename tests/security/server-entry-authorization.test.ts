@@ -18,6 +18,7 @@ const adminServerModules = [
 	"src/features/payment-settings/server/rate-functions.ts",
 	"src/features/payments/server/admin.ts",
 	"src/features/settings/server/admin.ts",
+	"src/features/settings/server/email.ts",
 	"src/features/telegram/server/bots-admin.ts",
 	"src/features/telegram/server/notifications-admin.ts",
 	"src/features/telegram/server/commands-admin.ts",
@@ -53,6 +54,7 @@ const adminOwnerFunctions = new Set([
 	"requireAdmin",
 	"sourceAdminContext",
 	"sourceAdminMutationContext",
+	"settingsAdminContext",
 	"telegramAdminContext",
 ]);
 
@@ -142,10 +144,14 @@ const permissionContracts = [
 	["audit:create", ["exportAuditLogsFn"]],
 	["operations:read", ["getOperationsOverviewFn", "getQueueOverviewFn"]],
 	["operations:update", ["runOperationsTaskFn", "retryQueueFn"]],
-	["settings:read", ["listSystemSettingsFn"]],
+	["settings:read", ["listEmailChannelsFn", "listSystemSettingsFn"]],
 	[
 		"settings:update",
 		[
+			"reorderEmailChannelsFn",
+			"saveEmailChannelFn",
+			"sendTestEmailFn",
+			"setEmailChannelEnabledFn",
 			"updateSystemSettingsFn",
 			"uploadSiteLogoFn",
 			"removeSiteLogoFn",
@@ -236,7 +242,7 @@ describe("server entry authorization coverage", () => {
 		for (const file of adminServerModules) {
 			const source = read(file);
 			expect(source, file).toMatch(
-				/requireAdmin|adminContext|getAdminServerContext|telegramAdminContext/,
+				/requireAdmin|adminContext|getAdminServerContext|settingsAdminContext|telegramAdminContext/,
 			);
 			expect(source, file).toMatch(
 				/systemPermission|paymentSettingsPermission/,
@@ -336,7 +342,7 @@ describe("server entry authorization coverage", () => {
 	});
 
 	it("installs one global Server Function error boundary", () => {
-		const entry = read("src/server-entry.ts");
+		const entry = read("src/start.ts");
 		expect(entry).toContain(
 			"functionMiddleware: [serverFunctionErrorMiddleware]",
 		);

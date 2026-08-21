@@ -21,6 +21,7 @@ import { Route as ApiSiteBackgroundRouteImport } from './routes/api/site-backgro
 import { Route as AdminPaymentsRouteImport } from './routes/admin/payments'
 import { Route as AdminPaymentReviewsRouteImport } from './routes/admin/payment-reviews'
 import { Route as AdminOrdersRouteImport } from './routes/admin/orders'
+import { Route as AdminEmailRouteImport } from './routes/admin/email'
 import { Route as AdminApiKeysRouteImport } from './routes/admin/api-keys'
 import { Route as publicStatusRouteImport } from './routes/(public)/status'
 import { Route as publicDocsRouteImport } from './routes/(public)/docs'
@@ -140,6 +141,11 @@ const AdminPaymentReviewsRoute = AdminPaymentReviewsRouteImport.update({
 const AdminOrdersRoute = AdminOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminEmailRoute = AdminEmailRouteImport.update({
+  id: '/email',
+  path: '/email',
   getParentRoute: () => AdminRouteRoute,
 } as any)
 const AdminApiKeysRoute = AdminApiKeysRouteImport.update({
@@ -498,6 +504,7 @@ export interface FileRoutesByFullPath {
   '/docs': typeof publicDocsRoute
   '/status': typeof publicStatusRoute
   '/admin/api-keys': typeof AdminApiKeysRoute
+  '/admin/email': typeof AdminEmailRoute
   '/admin/orders': typeof AdminOrdersRoute
   '/admin/payment-reviews': typeof AdminPaymentReviewsRoute
   '/admin/payments': typeof AdminPaymentsRoute
@@ -564,6 +571,7 @@ export interface FileRoutesByTo {
   '/docs': typeof publicDocsRoute
   '/status': typeof publicStatusRoute
   '/admin/api-keys': typeof AdminApiKeysRoute
+  '/admin/email': typeof AdminEmailRoute
   '/admin/orders': typeof AdminOrdersRoute
   '/admin/payment-reviews': typeof AdminPaymentReviewsRoute
   '/admin/payments': typeof AdminPaymentsRoute
@@ -640,6 +648,7 @@ export interface FileRoutesById {
   '/(public)/docs': typeof publicDocsRoute
   '/(public)/status': typeof publicStatusRoute
   '/admin/api-keys': typeof AdminApiKeysRoute
+  '/admin/email': typeof AdminEmailRoute
   '/admin/orders': typeof AdminOrdersRoute
   '/admin/payment-reviews': typeof AdminPaymentReviewsRoute
   '/admin/payments': typeof AdminPaymentsRoute
@@ -716,6 +725,7 @@ export interface FileRouteTypes {
     | '/docs'
     | '/status'
     | '/admin/api-keys'
+    | '/admin/email'
     | '/admin/orders'
     | '/admin/payment-reviews'
     | '/admin/payments'
@@ -782,6 +792,7 @@ export interface FileRouteTypes {
     | '/docs'
     | '/status'
     | '/admin/api-keys'
+    | '/admin/email'
     | '/admin/orders'
     | '/admin/payment-reviews'
     | '/admin/payments'
@@ -857,6 +868,7 @@ export interface FileRouteTypes {
     | '/(public)/docs'
     | '/(public)/status'
     | '/admin/api-keys'
+    | '/admin/email'
     | '/admin/orders'
     | '/admin/payment-reviews'
     | '/admin/payments'
@@ -1019,6 +1031,13 @@ declare module '@tanstack/react-router' {
       path: '/orders'
       fullPath: '/admin/orders'
       preLoaderRoute: typeof AdminOrdersRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/email': {
+      id: '/admin/email'
+      path: '/email'
+      fullPath: '/admin/email'
+      preLoaderRoute: typeof AdminEmailRouteImport
       parentRoute: typeof AdminRouteRoute
     }
     '/admin/api-keys': {
@@ -1646,6 +1665,7 @@ interface AdminRouteRouteChildren {
   AdminTelegramRouteRoute: typeof AdminTelegramRouteRouteWithChildren
   AdminWebhooksRouteRoute: typeof AdminWebhooksRouteRouteWithChildren
   AdminApiKeysRoute: typeof AdminApiKeysRoute
+  AdminEmailRoute: typeof AdminEmailRoute
   AdminOrdersRoute: typeof AdminOrdersRoute
   AdminPaymentReviewsRoute: typeof AdminPaymentReviewsRoute
   AdminPaymentsRoute: typeof AdminPaymentsRoute
@@ -1661,6 +1681,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminTelegramRouteRoute: AdminTelegramRouteRouteWithChildren,
   AdminWebhooksRouteRoute: AdminWebhooksRouteRouteWithChildren,
   AdminApiKeysRoute: AdminApiKeysRoute,
+  AdminEmailRoute: AdminEmailRoute,
   AdminOrdersRoute: AdminOrdersRoute,
   AdminPaymentReviewsRoute: AdminPaymentReviewsRoute,
   AdminPaymentsRoute: AdminPaymentsRoute,
@@ -1706,10 +1727,11 @@ export const routeTree = rootRouteImport
   ._addFileTypes<FileRouteTypes>()
 
 import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
+import type { startInstance } from './start.ts'
 declare module '@tanstack/react-start' {
   interface Register {
     ssr: true
     router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }

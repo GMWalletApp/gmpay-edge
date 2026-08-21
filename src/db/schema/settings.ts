@@ -1,5 +1,11 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+	index,
+	integer,
+	sqliteTable,
+	text,
+	uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { users } from "./auth";
 import { timestamps } from "./common";
 
@@ -12,6 +18,45 @@ export const systemSettings = sqliteTable("system_settings", {
 	}),
 	...timestamps,
 });
+
+export const emailChannelConfigs = sqliteTable(
+	"email_channel_configs",
+	{
+		id: text("id").primaryKey(),
+		name: text("name").notNull(),
+		provider: text("provider", {
+			enum: [
+				"resend",
+				"postmark",
+				"sendgrid",
+				"mailgun",
+				"smtp",
+				"cloudflare_email",
+			],
+		}).notNull(),
+		credentialEncrypted: text("credential_encrypted"),
+		domain: text("domain"),
+		region: text("region", { enum: ["us", "eu"] })
+			.notNull()
+			.default("us"),
+		smtpHost: text("smtp_host"),
+		smtpPort: integer("smtp_port"),
+		smtpUser: text("smtp_user"),
+		fromAddress: text("from_address").notNull(),
+		replyTo: text("reply_to"),
+		sortOrder: integer("sort_order").notNull().default(100),
+		enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("email_channel_configs_name_uidx").on(table.name),
+		index("email_channel_configs_delivery_idx").on(
+			table.enabled,
+			table.sortOrder,
+			table.id,
+		),
+	],
+);
 
 export const auditLogs = sqliteTable(
 	"audit_logs",

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "#/db/schema";
 import { createAuth } from "#/features/auth/server/auth-factory";
 import { installSystem } from "#/features/installation/server/install";
+import type { RuntimeMailSender } from "#/server/runtime/types";
 import { createInitialRuntimeConfig } from "#/server/runtime-config";
 import {
 	createDatastoreCounters,
@@ -286,22 +287,15 @@ describe("Better Auth account security flow", () => {
 	it("sends a one-time reset link, keeps the response generic, and revokes sessions", async () => {
 		const sent: Array<{ to?: unknown; text?: string }> = [];
 		const scheduled: Promise<unknown>[] = [];
-		await database
-			.prepare(
-				`INSERT INTO system_settings
-				 (key, value, is_secret, created_at, updated_at)
-				 VALUES ('auth.password_reset_from_email', '"security@pay.example"', 0, 1, 1)`,
-			)
-			.run();
 		const resetAuth = createAuth(drizzle(database, { schema }), {
 			BETTER_AUTH_SECRET: runtime.betterAuthSecret,
 			BETTER_AUTH_URL: runtime.betterAuthUrl,
-			AUTH_EMAIL: {
+			MAIL: {
 				send: async (message) => {
 					sent.push(message as { to?: unknown; text?: string });
 					return { messageId: "reset-message" };
 				},
-			} as SendEmail,
+			} as RuntimeMailSender,
 			WAIT_UNTIL: (promise) => scheduled.push(promise),
 		});
 		await Promise.all([
