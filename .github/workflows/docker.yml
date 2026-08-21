@@ -25,11 +25,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish container
-    runs-on: ubuntu-latest
+  prepare:
+    name: Prepare image metadata
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ inputs.tag }}
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      labels: ${{ steps.image.outputs.labels }}
+      tags: ${{ steps.image.outputs.tags }}
     steps:
       - name: Validate release tag
         shell: bash
@@ -42,11 +46,61 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Prepare image metadata
+        id: image
+        shell: bash
+        run: |
+          version="${RELEASE_TAG#v}"
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
+          repository="$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${repository}"
+          revision="$(git rev-parse HEAD)"
+          created="$(git show --no-patch --format='%cI' HEAD)"
+          {
+            echo "name=${image}"
+            echo 'tags<<EOF'
+            echo "${image}:${version}"
+            if [[ "${version}" == *-alpha.* ]]; then
+              echo "${image}:alpha"
+            else
+              echo "${image}:${major}.${minor}"
+              echo "${image}:${major}"
+              echo "${image}:latest"
+            fi
+            echo 'EOF'
+            echo 'labels<<EOF'
+            echo "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${revision}"
+            echo "org.opencontainers.image.version=${version}"
+            echo "org.opencontainers.image.created=${created}"
+            echo 'org.opencontainers.image.description=Single-tenant payment gateway for Cloudflare Workers and Node.js'
+            echo 'org.opencontainers.image.licenses=GPL-3.0-or-later'
+            echo 'EOF'
+          } >>"${GITHUB_OUTPUT}"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -55,10 +109,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           load: true
           tags: gmpay-edge:release-candidate
-          cache-from: type=gha,scope=gmpay-edge
-          cache-to: type=gha,mode=max,scope=gmpay-edge
+          cache-from: type=gha,scope=gmpay-edge-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=gmpay-edge-${{ matrix.arch }}
 
       - name: Smoke-test release-candidate container
         shell: bash
@@ -98,65 +153,119 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Prepare image metadata
-        id: image
-        shell: bash
-        run: |
-          version="${RELEASE_TAG#v}"
-          major="${version%%.*}"
-          remainder="${version#*.}"
-          minor="${remainder%%.*}"
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          revision="$(git rev-parse HEAD)"
-          created="$(git show --no-patch --format='%cI' HEAD)"
-          {
-            echo "name=${image}"
-            echo 'tags<<EOF'
-            echo "${image}:${version}"
-            if [[ "${version}" == *-alpha.* ]]; then
-              echo "${image}:alpha"
-            else
-              echo "${image}:${major}.${minor}"
-              echo "${image}:${major}"
-              echo "${image}:latest"
-            fi
-            echo 'EOF'
-            echo 'labels<<EOF'
-            echo "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
-            echo "org.opencontainers.image.revision=${revision}"
-            echo "org.opencontainers.image.version=${version}"
-            echo "org.opencontainers.image.created=${created}"
-            echo 'org.opencontainers.image.description=Single-tenant payment gateway for Cloudflare Workers and Node.js'
-            echo 'org.opencontainers.image.licenses=GPL-3.0-or-later'
-            echo 'EOF'
-          } >>"${GITHUB_OUTPUT}"
-
-      - name: Build and publish multi-platform image
+      - name: Build and push platform image
         id: push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.image.outputs.tags }}
-          labels: ${{ steps.image.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ needs.prepare.outputs.labels }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=gmpay-edge
-          cache-to: type=gha,mode=max,scope=gmpay-edge
+          cache-from: type=gha,scope=gmpay-edge-${{ matrix.arch }}
+
+      - name: Export image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          if [[ ! "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid platform digest: ${IMAGE_DIGEST}" >&2
+            exit 1
+          fi
+          digest="${IMAGE_DIGEST#sha256:}"
+          mkdir --parents "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${digest}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish multi-platform image
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Create multi-platform manifest
+        id: manifest
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ needs.prepare.outputs.image }}
+          IMAGE_TAGS: ${{ needs.prepare.outputs.tags }}
+        run: |
+          mapfile -t digests < <(
+            find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f -exec basename {} \; |
+              sort
+          )
+          if [[ "${#digests[@]}" -ne 2 ]]; then
+            echo "Expected two platform digests, found ${#digests[@]}." >&2
+            exit 1
+          fi
+
+          tag_arguments=()
+          first_tag=""
+          while IFS= read -r tag; do
+            if [[ -n "${tag}" ]]; then
+              tag_arguments+=(--tag "${tag}")
+              if [[ -z "${first_tag}" ]]; then
+                first_tag="${tag}"
+              fi
+            fi
+          done <<<"${IMAGE_TAGS}"
+
+          sources=()
+          for digest in "${digests[@]}"; do
+            if [[ ! "${digest}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid platform digest artifact: ${digest}" >&2
+              exit 1
+            fi
+            sources+=("${IMAGE_NAME}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create "${tag_arguments[@]}" "${sources[@]}"
+          manifest_digest="$(
+            docker buildx imagetools inspect --raw "${first_tag}" |
+              sha256sum |
+              awk '{ print "sha256:" $1 }'
+          )"
+          echo "digest=${manifest_digest}" >>"${GITHUB_OUTPUT}"
 
       - name: Attest published image
         uses: actions/attest-build-provenance@v4
         with:
-          subject-name: ${{ steps.image.outputs.name }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-name: ${{ needs.prepare.outputs.image }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
       - name: Remove superseded alpha artifacts
-        if: ${{ !contains(env.RELEASE_TAG, '-') }}
+        if: ${{ !contains(inputs.tag, '-') }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           owner="${GITHUB_REPOSITORY_OWNER}"
           package_name="$(printf '%s' "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
@@ -179,11 +288,13 @@ jobs:
           done
 
           release_alpha_prefix="${RELEASE_TAG}-alpha."
-          gh release list --limit 1000 --json isPrerelease,tagName \
+          gh release list --repo "${GITHUB_REPOSITORY}" --limit 1000 \
+            --json isPrerelease,tagName \
             --jq '.[] | select(.isPrerelease) | .tagName' |
           while read -r prerelease_tag; do
             suffix="${prerelease_tag#"${release_alpha_prefix}"}"
             if [[ "${prerelease_tag}" == "${release_alpha_prefix}"* && "${suffix}" =~ ^[1-9][0-9]*$ ]]; then
-              gh release delete "${prerelease_tag}" --cleanup-tag --yes
+              gh release delete "${prerelease_tag}" --repo "${GITHUB_REPOSITORY}" \
+                --cleanup-tag --yes
             fi
           done

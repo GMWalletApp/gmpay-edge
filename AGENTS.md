@@ -280,7 +280,9 @@ bun run build:node
   `main` for stable `1.0.0` and major, minor, and `latest` tags. A release updates
   `package.json` and `bun.lock`, creates the GitHub Release with generated notes
   and a tag, then calls the Docker workflow for `linux/amd64` and `linux/arm64`.
-  After a stable image and provenance publish, matching alpha releases, Git
-  tags, and GHCR image versions are removed.
+  Native x64 and Arm64 runners build and smoke-test their platform images in
+  parallel before the workflow publishes the combined manifest and provenance.
+  After a stable publish, the workflow removes matching alpha prereleases, Git
+  tags, and GHCR versions.
   Package visibility is set to public once by a repository owner after the first
   publish, not mutated by workflow.

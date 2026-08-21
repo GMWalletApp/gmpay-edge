@@ -168,8 +168,8 @@ Postmark、SendGrid、Mailgun、SMTP 和 Cloudflare Email。Cloudflare Email 仅
 `alpha` 标签。验证完成并合并到 `main` 后再发布稳定 `1.0.0`，稳定镜像同时写入
 major、minor 与 `latest` 标签。每次发布都会更新 `package.json` 和 `bun.lock`、创建
 带自动生成说明的 GitHub Release 与 tag，再调用独立的 Docker smoke 与多架构 GHCR
-工作流。稳定镜像和 provenance 发布成功后，匹配的 `vX.Y.Z-alpha.N` GitHub 预发布
-记录、Git tag 与 `X.Y.Z-alpha.N` GHCR 镜像版本会自动删除。
+工作流。原生 x64 与 Arm64 runner 会并行构建并 smoke，再发布组合 manifest。稳定版
+发布后，匹配的 alpha GitHub 预发布、Git tag 与 GHCR 镜像版本会自动删除。
 
 首次镜像发布后，仓库所有者必须在 GitHub Package settings 中将 `gmpay-edge`
 可见性一次性设为 **Public**；工作流不会自动修改 package 可见性。

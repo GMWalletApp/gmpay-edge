@@ -112,9 +112,11 @@ starts at `1.0.0-alpha.1` and publishes only full-version and moving `alpha`
 container tags. Once verified and merged, `main` publishes stable `1.0.0` plus
 major, minor, and `latest` tags. It updates `package.json` and `bun.lock`, creates
 the GitHub Release with generated notes and a tag, then calls the independent
-Docker smoke and multi-architecture publish workflow. After a stable image and
-its provenance are published, matching `vX.Y.Z-alpha.N` GitHub prereleases,
-remote Git tags, and `X.Y.Z-alpha.N` GHCR image versions are deleted.
+Docker smoke and multi-architecture publish workflow. Native x64 and Arm64
+runners build and smoke-test their platform images in parallel before the
+workflow assembles the published manifest. After a stable image and its
+provenance are published, matching alpha GitHub prereleases, remote Git tags,
+and GHCR image versions are deleted automatically.
 
 After the first image publish, a repository owner must open GitHub Package
 settings for `gmpay-edge` and set its visibility to **Public** once. The workflow

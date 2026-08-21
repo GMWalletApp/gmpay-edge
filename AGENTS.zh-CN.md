@@ -208,6 +208,7 @@ bun run build:node
 - 发布由 semantic-release 驱动。`alpha` 从 `1.0.0-alpha.1` 开始，只更新完整版本和
   `alpha` 容器标签；验证完成后合并到 `main`，再发布稳定 `1.0.0` 以及 major、minor、
   `latest` 标签。发布会更新 `package.json` 和 `bun.lock`、创建带自动生成说明的 GitHub
-  Release 与 tag，再调用 Docker 工作流发布 `linux/amd64`、`linux/arm64` 镜像。稳定
-  镜像与 provenance 发布后会删除匹配的 alpha Release、Git tag 和 GHCR 镜像版本。首次发布
+  Release 与 tag，再调用 Docker 工作流；原生 x64 与 Arm64 runner 会并行构建并 smoke
+  各自平台镜像，然后发布组合 manifest 与 provenance。稳定版发布后，工作流会删除匹配
+  的 alpha 预发布、Git tag 和 GHCR 版本。首次发布
   后由仓库所有者一次性设为 Public，工作流不修改 package 可见性。

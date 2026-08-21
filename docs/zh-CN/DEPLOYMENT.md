@@ -95,9 +95,9 @@ semantic-release 会在两个发布通道的质量门通过后运行。`alpha` �
 `1.0.0-alpha.1` 开始，只发布完整版本和滚动 `alpha` 容器标签；验证后合并到
 `main`，再发布稳定 `1.0.0` 以及 major、minor、`latest` 标签。它会更新
 `package.json` 和 `bun.lock`、创建带自动生成说明的 GitHub Release 与 tag，再调用
-独立的 Docker smoke 与多架构发布工作流。稳定镜像及其 provenance 发布成功后，
-匹配的 `vX.Y.Z-alpha.N` GitHub 预发布记录、远程 Git tag 与 `X.Y.Z-alpha.N` GHCR
-镜像版本会被自动删除。
+独立的 Docker smoke 与多架构发布工作流。原生 x64 与 Arm64 runner 会并行构建并
+smoke 各自平台镜像，再组装发布 manifest。稳定镜像及其 provenance 发布成功后，
+匹配的 alpha GitHub 预发布记录、远程 Git tag 与 GHCR 镜像版本会自动删除。
 
 首次镜像发布后，仓库所有者必须在 GitHub Package settings 中将 `gmpay-edge`
 可见性一次性设为 **Public**。工作流不会也不应自动修改 package 可见性。

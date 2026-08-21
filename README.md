@@ -208,9 +208,10 @@ exact version and moving `alpha` tags only. After testing, merge into `main` to
 publish stable `1.0.0`; stable containers also receive major, minor, and
 `latest` tags. Each release updates `package.json` and `bun.lock`, creates a
 GitHub Release with generated notes and a tag, then calls the independent Docker
-smoke and multi-architecture GHCR workflow. After the stable image and
-provenance are published, matching `vX.Y.Z-alpha.N` GitHub prereleases, Git
-tags, and `X.Y.Z-alpha.N` GHCR image versions are removed automatically.
+smoke and multi-architecture GHCR workflow. Native x64 and Arm64 runners build
+and smoke-test in parallel before publishing the combined manifest. After a
+stable publish, matching alpha GitHub prereleases, Git tags, and GHCR image
+versions are removed automatically.
 
 After the first image is published, a repository owner must set the
 `gmpay-edge` package visibility to **Public** once in GitHub Package settings;
