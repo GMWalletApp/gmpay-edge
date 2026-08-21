@@ -258,7 +258,7 @@ jobs:
         with:
           subject-name: ${{ needs.prepare.outputs.image }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
 
       - name: Remove superseded alpha artifacts
         if: ${{ !contains(inputs.tag, '-') }}
