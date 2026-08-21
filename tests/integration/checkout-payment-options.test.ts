@@ -12,6 +12,7 @@ import {
 import { applyMigrations } from "./migrations";
 
 const orderId = "26071306234512345678";
+const cnyOrderId = "26071306234512345679";
 const methodId = "4dc360b6-1d7a-4a69-a103-5cafce84e531";
 
 describe("checkout receiving method selection", () => {
@@ -168,6 +169,23 @@ describe("checkout receiving method selection", () => {
 		});
 	});
 
+	it("keeps payment options available with the latest expired exchange rate", async () => {
+		await expect(
+			listCheckoutPaymentOptions(db, cnyOrderId),
+		).resolves.toMatchObject({
+			selectable: true,
+			options: expect.arrayContaining([
+				expect.objectContaining({
+					paymentMethodId: "asset-usdt-tron",
+					asset: "USDT",
+					network: "tron",
+					amount: "0.147488",
+				}),
+			]),
+			unavailableReason: null,
+		});
+	});
+
 	it("stops checkout option loading after one order miss", async () => {
 		const counters = createDatastoreCounters();
 		await expect(
@@ -271,5 +289,13 @@ async function seed(db: D1Database) {
 				"INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, payment_asset_id, received_amount_units, expires_at, version, created_at, updated_at) VALUES (?, 'option-order', 'pending', '1250', 'USD', 2, NULL, '0', ?, 0, ?, ?)",
 			)
 			.bind(orderId, now + 900_000, now, now),
+		db
+			.prepare(
+				"INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, payment_asset_id, received_amount_units, expires_at, version, created_at, updated_at) VALUES (?, 'cny-option-order', 'pending', '100', 'CNY', 2, NULL, '0', ?, 0, ?, ?)",
+			)
+			.bind(cnyOrderId, now + 900_000, now, now),
+		db.prepare(
+			"INSERT INTO exchange_rates (id, category, base, quote, raw_rate, rate, source, adjustment_bps, observed_at, expires_at, created_at, updated_at) VALUES ('rate-usd-cny', 'fiat', 'USD', 'CNY', '6.78025', '6.78025', 'test', 0, 1, 1, 1, 1)",
+		),
 	]);
 }

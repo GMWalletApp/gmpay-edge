@@ -19,14 +19,18 @@ type RailKind = Option["railKind"];
 
 export function SelectPaymentOptionPanel({
 	busy,
+	loading,
 	onBack,
 	onConfirm,
 	options,
+	unavailableReason,
 }: {
 	busy: boolean;
+	loading?: boolean;
 	onBack?: () => void;
 	onConfirm: (option: Option) => void;
 	options: Option[];
+	unavailableReason?: "rate_unavailable" | "payment_method_unavailable" | null;
 }) {
 	const kinds = useMemo(
 		() => [...new Set(options.map((option) => option.railKind))],
@@ -82,92 +86,109 @@ export function SelectPaymentOptionPanel({
 					</Button>
 				) : null}
 				<p className="font-semibold text-base">
-					{m.checkout_select_receiving_method()}
+					{m.checkout_select_payment_method()}
 				</p>
 			</div>
-			{kinds.length > 1 ? (
-				<div className="mb-4 grid grid-cols-3 gap-2">
-					{kinds.map((value) => (
-						<Button
-							className="h-auto min-h-16 flex-col gap-1 rounded-xl px-2 py-2"
-							key={value}
-							onClick={() => {
-								setKind(value);
-								setReceivingMethodId("");
-								setPaymentMethodId("");
-							}}
-							variant={kind === value ? "default" : "outline"}
-						>
-							{kindIcon(value)}
-							<span className="text-xs">{kindLabel(value)}</span>
-						</Button>
-					))}
-				</div>
-			) : null}
-			<div className="mb-4 grid grid-cols-2 gap-2">
-				<div className="min-w-0">
-					<p className="mb-1.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">
-						{kindLabel(kind)}
+			{loading ? (
+				<p className="py-8 text-center text-muted-foreground text-sm">
+					{m.common_loading()}
+				</p>
+			) : options.length === 0 ? (
+				<div className="rounded-xl border bg-muted/30 px-4 py-5 text-center">
+					<p className="font-medium">{m.checkout_no_payment_options()}</p>
+					<p className="mt-1 text-muted-foreground text-sm">
+						{unavailableReason === "rate_unavailable"
+							? m.checkout_payment_rate_unavailable_hint()
+							: m.checkout_no_payment_options_hint()}
 					</p>
-					<Select
-						disabled={!receivingMethods.length}
-						onValueChange={(value) => {
-							setReceivingMethodId(value);
-							setPaymentMethodId("");
-						}}
-						value={receivingMethodId}
-					>
-						<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent position="popper">
-							{receivingMethods.map((method) => (
-								<SelectItem key={method.id} value={method.id}>
-									<NetworkLabel
-										displayName={method.name.trim() || method.networkName}
-										network={method.network}
-									/>
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
 				</div>
-				<div className="min-w-0">
-					<p className="mb-1.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">
-						{m.common_currency()}
-					</p>
-					<Select
-						disabled={!assets.length}
-						onValueChange={setPaymentMethodId}
-						value={paymentMethodId}
-					>
-						<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent position="popper">
-							{assets.map((option) => (
-								<SelectItem
-									key={option.paymentMethodId}
-									value={option.paymentMethodId}
+			) : (
+				<>
+					{kinds.length > 1 ? (
+						<div className="mb-4 grid grid-cols-3 gap-2">
+							{kinds.map((value) => (
+								<Button
+									className="h-auto min-h-16 flex-col gap-1 rounded-xl px-2 py-2"
+									key={value}
+									onClick={() => {
+										setKind(value);
+										setReceivingMethodId("");
+										setPaymentMethodId("");
+									}}
+									variant={kind === value ? "default" : "outline"}
 								>
-									<AssetLabel
-										label={option.asset}
-										network={option.network}
-										symbol={option.asset}
-									/>
-								</SelectItem>
+									{kindIcon(value)}
+									<span className="text-xs">{kindLabel(value)}</span>
+								</Button>
 							))}
-						</SelectContent>
-					</Select>
-				</div>
-			</div>
-			<Button
-				className="h-12 w-full rounded-xl text-base"
-				disabled={busy || !selected}
-				onClick={() => selected && onConfirm(selected)}
-			>
-				{m.common_confirm()}
-			</Button>
+						</div>
+					) : null}
+					<div className="mb-4 grid grid-cols-2 gap-2">
+						<div className="min-w-0">
+							<p className="mb-1.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">
+								{kindLabel(kind)}
+							</p>
+							<Select
+								disabled={!receivingMethods.length}
+								onValueChange={(value) => {
+									setReceivingMethodId(value);
+									setPaymentMethodId("");
+								}}
+								value={receivingMethodId}
+							>
+								<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent position="popper">
+									{receivingMethods.map((method) => (
+										<SelectItem key={method.id} value={method.id}>
+											<NetworkLabel
+												displayName={method.name.trim() || method.networkName}
+												network={method.network}
+											/>
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="min-w-0">
+							<p className="mb-1.5 font-semibold text-muted-foreground text-xs uppercase tracking-wider">
+								{m.common_currency()}
+							</p>
+							<Select
+								disabled={!assets.length}
+								onValueChange={setPaymentMethodId}
+								value={paymentMethodId}
+							>
+								<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent position="popper">
+									{assets.map((option) => (
+										<SelectItem
+											key={option.paymentMethodId}
+											value={option.paymentMethodId}
+										>
+											<AssetLabel
+												label={option.asset}
+												network={option.network}
+												symbol={option.asset}
+											/>
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					</div>
+					<Button
+						className="h-12 w-full rounded-xl text-base"
+						disabled={busy || !selected}
+						onClick={() => selected && onConfirm(selected)}
+					>
+						{m.common_confirm()}
+					</Button>
+				</>
+			)}
 		</section>
 	);
 }

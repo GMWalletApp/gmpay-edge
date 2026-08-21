@@ -96,16 +96,18 @@ export async function listCheckoutPaymentOptions(
 			min_amount_minor: string | null;
 			max_amount_minor: string | null;
 		}>();
-	const orderAmountUsdMinor = rows.results.some(
+	const limitsRequireRate = rows.results.some(
 		(method) =>
 			method.min_amount_minor !== null || method.max_amount_minor !== null,
-	)
+	);
+	const orderAmountUsdMinor = limitsRequireRate
 		? await quoteUsdAmountMinor(db, {
 				amount: order.amount,
 				currency: order.currency,
 			})
 		: null;
 	const options = [];
+	let quoteUnavailable = false;
 	for (const asset of rows.results) {
 		if (
 			!isWithinReceivingLimits(
@@ -122,7 +124,10 @@ export async function listCheckoutPaymentOptions(
 				paymentAsset: asset.code,
 				assetDecimals: asset.decimals,
 			});
-			if (!quote) continue;
+			if (!quote) {
+				quoteUnavailable = true;
+				continue;
+			}
 			options.push({
 				receivingMethodId: asset.receiving_method_id,
 				receivingMethodName: asset.receiving_method_name,
@@ -135,6 +140,7 @@ export async function listCheckoutPaymentOptions(
 				current: false,
 			});
 		} catch {
+			quoteUnavailable = true;
 			// A malformed or unavailable quote excludes only this receiving method.
 		}
 	}
@@ -147,6 +153,13 @@ export async function listCheckoutPaymentOptions(
 			order.payment_count === 0 &&
 			order.pending_review_count === 0,
 		options,
+		unavailableReason:
+			options.length > 0
+				? null
+				: quoteUnavailable ||
+						(limitsRequireRate && orderAmountUsdMinor === null)
+					? ("rate_unavailable" as const)
+					: ("payment_method_unavailable" as const),
 	};
 }
 

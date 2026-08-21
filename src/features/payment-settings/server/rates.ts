@@ -51,7 +51,7 @@ export async function quoteWithExchangeRate(
 		.prepare(
 			`SELECT base, quote, raw_rate, rate, source, adjustment_bps, observed_at
 			 FROM exchange_rates
-			 WHERE expires_at > ? AND raw_rate IS NOT NULL AND rate IS NOT NULL AND (
+			 WHERE raw_rate IS NOT NULL AND rate IS NOT NULL AND (
 			  (base = ? AND quote = ?) OR (base = ? AND quote = ?)
 			  OR (? IN ('USD', 'USDT', 'USDC') AND
 			   ((base IN ('USD', 'USDT', 'USDC') AND quote = ?)
@@ -61,7 +61,6 @@ export async function quoteWithExchangeRate(
 			 observed_at DESC LIMIT 1`,
 		)
 		.bind(
-			now,
 			input.paymentAsset,
 			input.currency,
 			input.currency,

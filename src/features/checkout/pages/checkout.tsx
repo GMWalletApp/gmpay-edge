@@ -202,8 +202,10 @@ export function CheckoutPage({
 				/>
 				<SelectPaymentOptionPanel
 					busy={selectingOption}
+					loading={paymentOptionsQuery.isLoading}
 					onConfirm={(option) => selectPaymentOption(option)}
 					options={paymentOptions?.options ?? []}
+					unavailableReason={paymentOptions?.unavailableReason}
 				/>
 			</>
 		);
@@ -212,9 +214,11 @@ export function CheckoutPage({
 		content = optionDialogOpen ? (
 			<SelectPaymentOptionPanel
 				busy={selectingOption}
+				loading={paymentOptionsQuery.isLoading}
 				onBack={() => setOptionDialogOpen(false)}
 				onConfirm={(option) => selectPaymentOption(option)}
 				options={paymentOptions?.options ?? []}
+				unavailableReason={paymentOptions?.unavailableReason}
 			/>
 		) : (
 			<>

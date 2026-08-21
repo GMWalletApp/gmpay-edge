@@ -23,6 +23,8 @@ describe("checkout payment option panel", () => {
 	it("renders the operator-defined receiving method name", async () => {
 		await renderPanel("BEP20(BNB Chain)");
 
+		expect(container?.textContent).toContain("Select a payment method");
+		expect(container?.textContent).not.toContain("Select a receiving method");
 		expect(container?.textContent).toContain("BEP20(BNB Chain)");
 		expect(container?.textContent).not.toContain("BNB Smart Chain");
 	});
