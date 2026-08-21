@@ -1,6 +1,6 @@
 {
   "name": "gmpay-edge",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module",
