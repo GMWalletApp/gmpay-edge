@@ -40,32 +40,86 @@ portable source configuration.
 
 ### Node and Docker
 
-After completing the one-time visibility step below, pull the public GHCR image
-and use the included Compose definition:
+The public [GHCR package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
+supports `linux/amd64` and `linux/arm64`. No registry login is required.
+
+| Tag | Recommended use |
+| --- | --- |
+| `latest` | Latest stable release |
+| `alpha` | Latest prerelease for testing |
+| `1.0.0` | Fixed release for reproducible deployment |
+
+#### Docker Compose
+
+Save the following as `compose.yml`:
+
+```yaml
+services:
+  gmpay-edge:
+    image: ghcr.io/gmwalletapp/gmpay-edge:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GMPAY_DATA_DIR: /var/lib/gmpay
+    volumes:
+      - gmpay-data:/var/lib/gmpay
+
+volumes:
+  gmpay-data:
+```
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-The image supports `linux/amd64` and `linux/arm64`. Its only user-facing
-environment variable is `GMPAY_DATA_DIR`; the supplied Compose file sets it to
-`/var/lib/gmpay` and persists that directory in a named volume. Do not pass
-Origin, Allowed Hosts, email credentials, or application secrets as container
-environment variables.
+To test a prerelease, change `latest` to `alpha` before starting the service.
 
-After `GET /healthz` succeeds, open `/install` on the externally reachable URL.
-Confirm the detected Origin and Allowed Hosts before creating the root user.
-Maintain ordered providers under the top-level **Admin → Email delivery** page.
-Node and Workers show the same provider types. Cloudflare Email delivers only
-when the `EMAIL` binding is available. SMTP port 465 uses implicit TLS, port 587
-uses STARTTLS, and port 25 or a non-public hostname is rejected.
+#### Docker command
+
+If Compose is not available, run the container directly:
+
+```bash
+docker volume create gmpay-data
+docker run --detach --name gmpay-edge --restart unless-stopped \
+  --publish 3000:3000 \
+  --env GMPAY_DATA_DIR=/var/lib/gmpay \
+  --volume gmpay-data:/var/lib/gmpay \
+  ghcr.io/gmwalletapp/gmpay-edge:latest
+```
+
+#### First-time setup
+
+Wait for `GET /healthz` to succeed, then open `/install` on the public URL.
+Confirm the detected address and Allowed Hosts before creating the first root
+user. Configure application, security, and email settings in the admin
+interface; do not add them as container environment variables.
+
+`GMPAY_DATA_DIR` points to the persistent directory. It contains SQLite,
+uploaded files, private objects, queue state, and all other runtime data. Back
+up and preserve the named volume whenever the container is updated or recreated.
+
+#### Common commands
+
+Verify and operate a Compose deployment with:
+
+```bash
+curl --fail http://127.0.0.1:3000/healthz
+docker compose ps
+docker compose logs --follow gmpay-edge
+docker compose pull
+docker compose up -d
+```
+
+The final two commands update the selected tag and recreate the container while
+keeping the named volume.
 
 To build the Node artifact from source, run `bun run build:node`. The Workers
 commands remain exactly as above and continue to use the Cloudflare Vite adapter.
 For backups, restores, and D1/R2 migration, follow
-[Node data operations](NODE_DATA_OPERATIONS.md) and use the maintained
-the `data` package script with its `backup`, `restore`, and `import-cloudflare` subcommands.
+[Node data operations](NODE_DATA_OPERATIONS.md) and use the maintained `data`
+package script with its `backup`, `restore`, and `import-cloudflare` subcommands.
 
 ## Cloudflare resources
 
@@ -118,9 +172,8 @@ workflow assembles the published manifest. After a stable image and its
 provenance are published, matching alpha GitHub prereleases, remote Git tags,
 and GHCR image versions are deleted automatically.
 
-After the first image publish, a repository owner must open GitHub Package
-settings for `gmpay-edge` and set its visibility to **Public** once. The workflow
-does not and should not mutate package visibility automatically.
+The `gmpay-edge` GHCR package is public. Release acceptance verifies an
+unauthenticated pull.
 
 ## Release gate
 
@@ -135,4 +188,4 @@ does not and should not mutate package visibility automatically.
 - [ ] Confirm merchant notification targets use public HTTPS, provider/Telegram inbound paths validate their provider-specific signatures, and GMPay/EPay outbound signatures match the documented canonical parameters.
 - [ ] Confirm no `.dev.vars`, wallet keys, merchant secrets, or Cloudflare tokens are tracked.
 - [ ] Smoke-test the selected production runtime; when releasing, verify the GHCR image digest and both architectures from the GitHub Release.
-- [ ] After the first container release, set the GitHub Package visibility to **Public** and verify an unauthenticated pull.
+- [ ] Verify the public GHCR image can be pulled without authentication.

@@ -176,29 +176,77 @@ is separate and does not alter Workers output.
 
 ## Deploy with Node and Docker
 
-After its one-time package visibility setup, the public multi-architecture image is
-`ghcr.io/gmwalletapp/gmpay-edge:latest` for `linux/amd64` and `linux/arm64`.
-The only user-facing container environment variable is `GMPAY_DATA_DIR`; persist
-that entire directory because it contains SQLite, private objects, durable queue
-state, and runtime data.
+The public [GHCR package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
+supports `linux/amd64` and `linux/arm64`. It is public, so no registry login is
+required.
+
+Choose the image tag that fits your deployment:
+
+| Tag | Use |
+| --- | --- |
+| `latest` | Recommended stable release |
+| `alpha` | Latest prerelease for testing |
+| `1.0.0` | A fixed release that will not change unexpectedly |
+
+### Docker Compose (recommended)
+
+Save the following as `compose.yml`:
+
+```yaml
+services:
+  gmpay-edge:
+    image: ghcr.io/gmwalletapp/gmpay-edge:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GMPAY_DATA_DIR: /var/lib/gmpay
+    volumes:
+      - gmpay-data:/var/lib/gmpay
+
+volumes:
+  gmpay-data:
+```
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
-The included `compose.yml` maps port `3000` and persists `/var/lib/gmpay`. After
-startup, open `http://your-host:3000/install`, confirm the externally reachable
-Origin and Allowed Hosts, and create the first root user. Do not pass Origin or
-email credentials as container environment variables: maintain ordered delivery
-channels under the top-level **Admin → Email delivery** page. Node and Workers
-show the same Resend, Postmark, SendGrid, Mailgun, SMTP, and Cloudflare Email
-types. Cloudflare Email delivers only when an `EMAIL` binding is available; an
-unavailable channel is skipped during fallback. SMTP uses implicit TLS
-on port 465 or STARTTLS on port 587; port 25 and non-public hosts are rejected.
+To test a prerelease, change `latest` to `alpha` in the `image` line before
+starting the service.
 
-For source builds use `bun run build:node`. Backup, restore, and Cloudflare data
-import use `bun run data -- backup`, `bun run data -- restore`, and
-`bun run data -- import-cloudflare`; see [Node data operations](docs/en-US/NODE_DATA_OPERATIONS.md).
+### Docker command
+
+If you do not use Compose, run the same service directly:
+
+```bash
+docker volume create gmpay-data
+docker run --detach --name gmpay-edge --restart unless-stopped \
+  --publish 3000:3000 \
+  --env GMPAY_DATA_DIR=/var/lib/gmpay \
+  --volume gmpay-data:/var/lib/gmpay \
+  ghcr.io/gmwalletapp/gmpay-edge:latest
+```
+
+Open `http://your-host:3000/install` after the container starts. Confirm the
+public address and Allowed Hosts, then create the first root user. Application,
+security, and email settings are managed in the admin interface; they do not
+need additional container environment variables.
+
+The named volume stores the database, uploaded files, queue state, and all other
+runtime data. Keep it when updating or recreating the container. Check the
+service with `curl --fail http://127.0.0.1:3000/healthz`; view Compose logs with
+`docker compose logs --follow gmpay-edge`. Update with:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+See the [deployment guide](docs/en-US/DEPLOYMENT.md) for production checks and
+[Node data operations](docs/en-US/NODE_DATA_OPERATIONS.md) for backup, restore,
+and Cloudflare migration.
 
 ## Releases and container images
 
@@ -213,9 +261,8 @@ and smoke-test in parallel before publishing the combined manifest. After a
 stable publish, matching alpha GitHub prereleases, Git tags, and GHCR image
 versions are removed automatically.
 
-After the first image is published, a repository owner must set the
-`gmpay-edge` package visibility to **Public** once in GitHub Package settings;
-the workflow does not change package visibility automatically.
+The GHCR package is public, so release and prerelease images support
+unauthenticated pulls.
 
 ## Keep a fork synchronized
 

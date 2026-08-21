@@ -29,23 +29,77 @@ bun run deploy
 
 ### Node 与 Docker
 
-完成下述一次性可见性设置后，拉取公开 GHCR 镜像并使用仓库内的 Compose 配置：
+公开的 [GHCR Package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
+支持 `linux/amd64` 与 `linux/arm64`，无需登录 Registry。
+
+| 标签 | 推荐用途 |
+| --- | --- |
+| `latest` | 最新稳定版 |
+| `alpha` | 用于测试的最新预发布版 |
+| `1.0.0` | 用于可复现部署的固定版本 |
+
+#### Docker Compose
+
+将以下内容保存为 `compose.yml`：
+
+```yaml
+services:
+  gmpay-edge:
+    image: ghcr.io/gmwalletapp/gmpay-edge:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GMPAY_DATA_DIR: /var/lib/gmpay
+    volumes:
+      - gmpay-data:/var/lib/gmpay
+
+volumes:
+  gmpay-data:
+```
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-镜像支持 `linux/amd64` 与 `linux/arm64`。唯一面向用户的环境变量是
-`GMPAY_DATA_DIR`；随附 Compose 将其设为 `/var/lib/gmpay`，并用具名卷持久化整个
-目录。不要通过容器环境变量传递 Origin、Allowed Hosts、邮件凭据或应用密钥。
+需要测试预发布版时，启动前将 `latest` 改成 `alpha`。
 
-`GET /healthz` 成功后，通过外部可访问 URL 打开 `/install`，创建 root 用户前确认
-检测到的 Origin 和 Allowed Hosts。多个服务商统一在一级菜单“后台 → 邮件配置”
-中排序维护。Node 与 Workers 显示相同的 Resend、Postmark、SendGrid、Mailgun、
-SMTP 和 Cloudflare Email；后者仅在 `EMAIL` binding 可用时投递。SMTP 的 465
-端口使用隐式 TLS，587 端口使用
-STARTTLS；拒绝 25 端口和非公网主机。
+#### Docker 命令
+
+无法使用 Compose 时，可以直接运行容器：
+
+```bash
+docker volume create gmpay-data
+docker run --detach --name gmpay-edge --restart unless-stopped \
+  --publish 3000:3000 \
+  --env GMPAY_DATA_DIR=/var/lib/gmpay \
+  --volume gmpay-data:/var/lib/gmpay \
+  ghcr.io/gmwalletapp/gmpay-edge:latest
+```
+
+#### 首次安装
+
+等待 `GET /healthz` 成功后，通过公网地址打开 `/install`。创建首位 root 用户前，
+确认检测到的地址和 Allowed Hosts。应用、安全和邮件设置均在后台维护，不要将其
+添加为容器环境变量。
+
+`GMPAY_DATA_DIR` 指向持久化目录，其中包含 SQLite、上传文件、私有对象、队列状态和
+全部运行数据。更新或重新创建容器时，必须备份并保留该具名卷。
+
+#### 常用命令
+
+使用以下命令检查和维护 Compose 部署：
+
+```bash
+curl --fail http://127.0.0.1:3000/healthz
+docker compose ps
+docker compose logs --follow gmpay-edge
+docker compose pull
+docker compose up -d
+```
+
+最后两条命令会更新所选标签并重新创建容器，同时保留具名卷。
 
 从源码构建 Node 产物使用 `bun run build:node`。Workers 命令保持完全不变，继续
 使用 Cloudflare Vite 适配器。备份、恢复和 D1/R2 迁入请遵循
@@ -99,8 +153,8 @@ semantic-release 会在两个发布通道的质量门通过后运行。`alpha` �
 smoke 各自平台镜像，再组装发布 manifest。稳定镜像及其 provenance 发布成功后，
 匹配的 alpha GitHub 预发布记录、远程 Git tag 与 GHCR 镜像版本会自动删除。
 
-首次镜像发布后，仓库所有者必须在 GitHub Package settings 中将 `gmpay-edge`
-可见性一次性设为 **Public**。工作流不会也不应自动修改 package 可见性。
+`gmpay-edge` GHCR Package 已公开；发布验收只需验证未登录拉取，无需再执行一次性
+可见性修改。
 
 ## 发布门槛
 
@@ -115,4 +169,4 @@ smoke 各自平台镜像，再组装发布 manifest。稳定镜像及其 provena
 - [ ] 确认商户回调目标为公共 HTTPS；供应商与 Telegram 入站路径校验各自签名；GMPay/EPay 出站签名与文档一致。
 - [ ] 确认仓库未跟踪 `.dev.vars`、私钥、助记词、商户 Secret 或 Cloudflare Token。
 - [ ] 对选定生产运行时执行 smoke；发布时从 GitHub Release 核对 GHCR 镜像 digest 与两种架构。
-- [ ] 首次容器发布后，将 GitHub Package 可见性设为 **Public**，并验证未登录拉取。
+- [ ] 验证无需登录即可拉取公开的 GHCR 镜像。

@@ -139,27 +139,72 @@ Workers 产物。
 
 ## 使用 Node 和 Docker 部署
 
-首次完成 package 可见性设置后，公开多架构镜像为
-`ghcr.io/gmwalletapp/gmpay-edge:latest`，支持
-`linux/amd64` 与 `linux/arm64`。容器唯一面向用户的环境变量是
-`GMPAY_DATA_DIR`；必须持久化整个目录，其中包含 SQLite、私有对象、可靠队列状态和
-运行数据。
+公开的 [GHCR Package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
+支持 `linux/amd64` 与 `linux/arm64`。镜像已公开，无需登录 Registry。
+
+根据使用场景选择镜像标签：
+
+| 标签 | 用途 |
+| --- | --- |
+| `latest` | 推荐使用的最新稳定版 |
+| `alpha` | 用于测试的最新预发布版 |
+| `1.0.0` | 不会意外变化的固定版本 |
+
+### Docker Compose（推荐）
+
+将以下内容保存为 `compose.yml`：
+
+```yaml
+services:
+  gmpay-edge:
+    image: ghcr.io/gmwalletapp/gmpay-edge:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GMPAY_DATA_DIR: /var/lib/gmpay
+    volumes:
+      - gmpay-data:/var/lib/gmpay
+
+volumes:
+  gmpay-data:
+```
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
-仓库中的 `compose.yml` 映射 3000 端口并持久化 `/var/lib/gmpay`。启动后访问
-`http://your-host:3000/install`，确认外部可访问的 Origin 和 Allowed Hosts，再创建
-首位 root 用户。不要通过容器环境变量传递 Origin 或邮件凭据；统一在一级菜单
-“后台 → 邮件配置”中维护有序的投递通道。Node 与 Workers 显示相同的 Resend、
-Postmark、SendGrid、Mailgun、SMTP 和 Cloudflare Email。Cloudflare Email 仅在
-`EMAIL` binding 可用时投递；不可用通道会在故障切换中被跳过。SMTP 的 465 端口
-使用隐式 TLS，587 端口使用 STARTTLS；拒绝 25 端口和非公网主机。
+需要测试预发布版时，启动前将 `image` 中的 `latest` 改成 `alpha`。
 
-源码构建使用 `bun run build:node`。备份、恢复和 Cloudflare 数据迁入分别使用
-`bun run data -- backup`、`bun run data -- restore`、`bun run data -- import-cloudflare`；详见
-[Node 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md)。
+### Docker 命令
+
+不使用 Compose 时，可以直接运行相同的服务：
+
+```bash
+docker volume create gmpay-data
+docker run --detach --name gmpay-edge --restart unless-stopped \
+  --publish 3000:3000 \
+  --env GMPAY_DATA_DIR=/var/lib/gmpay \
+  --volume gmpay-data:/var/lib/gmpay \
+  ghcr.io/gmwalletapp/gmpay-edge:latest
+```
+
+容器启动后访问 `http://your-host:3000/install`，确认公网地址和 Allowed Hosts，再
+创建首位 root 用户。应用、安全和邮件设置均在后台维护，不需要增加其他容器环境
+变量。
+
+具名卷会保存数据库、上传文件、队列状态和全部运行数据。更新或重新创建容器时不要
+删除该卷。使用 `curl --fail http://127.0.0.1:3000/healthz` 检查服务，使用
+`docker compose logs --follow gmpay-edge` 查看日志。更新方式如下：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+生产检查请参阅[部署指南](docs/zh-CN/DEPLOYMENT.md)，备份、恢复和 Cloudflare 数据
+迁移请参阅 [Node 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md)。
 
 ## 版本与容器镜像
 
@@ -171,8 +216,7 @@ major、minor 与 `latest` 标签。每次发布都会更新 `package.json` 和 
 工作流。原生 x64 与 Arm64 runner 会并行构建并 smoke，再发布组合 manifest。稳定版
 发布后，匹配的 alpha GitHub 预发布、Git tag 与 GHCR 镜像版本会自动删除。
 
-首次镜像发布后，仓库所有者必须在 GitHub Package settings 中将 `gmpay-edge`
-可见性一次性设为 **Public**；工作流不会自动修改 package 可见性。
+GHCR Package 已公开，正式版与预发布镜像均支持未登录拉取。
 
 ## 保持 Fork 自动同步
 
