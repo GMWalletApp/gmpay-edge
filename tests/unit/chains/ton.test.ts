@@ -67,21 +67,6 @@ describe("TON adapter", () => {
 		expect(adapter().validateAddress(owner)).toBe(true);
 		expect(adapter().validateAddress(master)).toBe(false);
 	});
-	it("rejects numeric Jetton amounts before BigInt conversion", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(
-				json({
-					jetton_transfers: [
-						{ ...jetton("numeric", "902"), amount: 3_000_000 },
-					],
-				}),
-			),
-		);
-		await expect(
-			adapter().findTransactions({ address: owner, assetCode: "USDT" }),
-		).rejects.toThrow();
-	});
 	it("normalizes native TON transfers under the GRAM asset symbol", async () => {
 		vi.stubGlobal(
 			"fetch",

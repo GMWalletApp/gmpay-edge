@@ -2,7 +2,7 @@
 
 简体中文 · [English](../en-US/DEPLOYMENT.md)
 
-本清单用于将一个单租户 GMPay Edge 实例部署到 Cloudflare Workers 或 Node/Nitro。
+本清单用于将一个单租户 GMPay Edge 实例部署到 Cloudflare Workers 或 Bun/Nitro。
 运营人员统一使用 `/admin`；商户只通过
 带签名的 GMPay 主协议或其 EPay 边界适配接入。
 
@@ -27,7 +27,7 @@ bun run deploy
 必要时可以先执行 `bunx wrangler d1 create gmpay-edge`，再执行
 `bun run db:migrate:remote` 手动准备 D1；生成的数据库 ID 不写入可移植源码配置。
 
-### Node 与 Docker
+### Bun 与 Docker
 
 公开的 [GHCR Package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
 支持 `linux/amd64` 与 `linux/arm64`，无需登录 Registry。
@@ -101,9 +101,9 @@ docker compose up -d
 
 最后两条命令会更新所选标签并重新创建容器，同时保留具名卷。
 
-从源码构建 Node 产物使用 `bun run build:node`。Workers 命令保持完全不变，继续
+从源码构建 Bun 产物使用 `bun run build:bun`。Workers 命令保持完全不变，继续
 使用 Cloudflare Vite 适配器。备份、恢复和 D1/R2 迁入请遵循
-[Node 数据运维](NODE_DATA_OPERATIONS.md)，并使用仓库维护的 `data` package script
+[Bun 数据运维](NODE_DATA_OPERATIONS.md)，并使用仓库维护的 `data` package script
 及其 `backup`、`restore` 和 `import-cloudflare` 子命令。
 
 ## Cloudflare 资源
@@ -134,11 +134,11 @@ docker compose up -d
 - [ ] 按[支付配置](PAYMENT_METHODS.md)配置计划启用的支付方式；交易所只使用只读凭证，并核对资产标识和精度。
 - [ ] 配置加密资产与法币汇率同步；在各自设置弹窗中先执行一次“立即执行”，核对原始/最终汇率，再确认每分钟 Cron 遵循每类的自动同步开关和保存周期。
 
-## Node 资源
+## Bun 资源
 
 - [ ] 确认容器以非 root 用户运行，持久化目录仅允许预期的宿主机/容器身份写入。
 - [ ] 安装并完成测试上传/订单后，确认卷中包含 `gmpay.sqlite`、私有对象和可靠队列状态。
-- [ ] 配置 Node 支持的邮件服务商并测试密码找回；确认服务商列表与 Workers 一致，容器环境中没有邮件 Secret。
+- [ ] 配置 Bun 支持的邮件服务商并测试密码找回；确认服务商列表与 Workers 一致，容器环境中没有邮件 Secret。
 - [ ] 重启容器，确认排队中的 Webhook/支付任务和定时任务恢复，且不会重复入账或投递。
 - [ ] 停止容器，使用 `bun run data -- backup` 备份到外部路径，再用 `bun run data -- restore` 恢复到新数据目录；校验清单、SQLite 完整性、migration 校验和、登录及私有对象访问。
 - [ ] 从 Workers 迁移时，针对明确的 D1 SQL 与可选 R2 导出路径执行 `bun run data -- import-cloudflare`；只导入全新或空目标，随后重新完成签名订单和回调验收。
@@ -162,7 +162,7 @@ smoke 各自平台镜像，再组装发布 manifest。稳定镜像及其 provena
 - [ ] `bun run test`
 - [ ] `bun run check`
 - [ ] `bun run build`
-- [ ] `bun run build:node`
+- [ ] `bun run build:bun`
 - [ ] 打开登录页，确认未初始化部署会引导到 root 用户初始化。
 - [ ] 创建并启用计划使用的支付方式、接入配置和收款方式；开发模拟能力不得误用于生产。
 - [ ] 验证零绑定的 `GET/HEAD /healthz`、详细 `/status`、初始化、登录，以及目标支付通道上的一笔签名 GMPay 完整订单。

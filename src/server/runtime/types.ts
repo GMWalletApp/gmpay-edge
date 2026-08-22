@@ -1,4 +1,4 @@
-export type RuntimeKind = "cloudflare" | "node";
+export type RuntimeKind = "bun" | "cloudflare";
 
 export type RuntimeDatabaseMeta = {
 	changes: number;

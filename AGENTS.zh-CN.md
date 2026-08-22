@@ -7,7 +7,7 @@
 
 ## 1. 产品边界
 
-- 产品、package、Worker、Node 服务和数据库统一为 `GMPay Edge` / `gmpay-edge`。
+- 产品、package、Worker、Bun 服务和数据库统一为 `GMPay Edge` / `gmpay-edge`。
 - GMPay Edge 是单部署、单租户支付网关。商户只表示外部 API 接入方；内部授权基于
   用户和角色。
 - 内部运营统一使用 `/admin`。GMPay 是主商户协议；EPay 只在边界适配到同一订单服务。
@@ -16,8 +16,8 @@
 
 - 使用 Bun、严格 TypeScript、React 19、TanStack Start/Router/Query/Table/Form、
   Tailwind CSS 4、shadcn/Radix、Zod、Better Auth、Drizzle、Cloudflare Workers
-  （D1、KV、R2、Queues、Cron）、Node.js + Nitro + SQLite、grammY、Paraglide、
-  Vitest、Biome 和 Wrangler；Docker 是受支持的 Node 分发方式。
+  （D1、KV、R2、Queues、Cron）、Bun + Nitro + SQLite、grammY、Paraglide、
+  Vitest、Biome 和 Wrangler；Docker 是受支持的 Bun 分发方式。
 - 禁止引入第二套路由、认证、ORM/数据库层、表单、客户端/服务端缓存、格式化、
   lint 或国际化运行时。
 - 领域与运行时归属以 `routes`、`features`、`integrations`、`components`、
@@ -155,12 +155,12 @@
 
 ## 9. 运行时、性能与安全
 
-- Workers 与 Node/Nitro 服务通过明确的运行时适配器承载同一全栈。Workers 使用
-  D1、KV、R2、Queues 和 Cron；Node 使用 SQLite 权威数据、本地缓存/对象存储、
+- Workers 与 Bun/Nitro 服务通过明确的运行时适配器承载同一全栈。Workers 使用
+  D1、KV、R2、Queues 和 Cron；Bun 使用 SQLite 权威数据、本地缓存/对象存储、
   SQLite 可靠队列和进程内调度器，全部位于一个 `GMPAY_DATA_DIR` 下。
 - 现有 Workers 命令和 Cloudflare Vite 适配器保持不变：`bun run build`、
-  `bun run predeploy`、`bun run deploy` 仅用于 Workers。Node 使用独立的
-  `bun run build:node`，并通过 GitHub Container Registry 分发单容器多架构镜像。
+  `bun run predeploy`、`bun run deploy` 仅用于 Workers。Bun 使用独立的
+  `bun run build:bun`，并通过 GitHub Container Registry 分发单容器多架构镜像。
 - KV 按最终一致设计：不可变版本 key、有限 TTL、防击穿、payload 校验和 D1 回退。
   解密 secret 不得进入 KV，也不得用 KV 决定原子授权或金额状态。
 - D1 使用 batch 与有证据的索引，遵守单 invocation 并发限制；用
@@ -176,11 +176,11 @@
   能力；启用 TOTP 时必须提供恢复码确认/复制/下载。
 - 运行时 secret 按当前产品设置契约在安装时初始化。禁止提交真实 secret、
   `.dev.vars`、Bot token、私钥、助记词、交易所 secret 或 Cloudflare token。
-- Node/Docker 对外环境变量契约只有 `GMPAY_DATA_DIR`。Origin、Allowed Hosts、邮件
+- Bun/Docker 对外环境变量契约只有 `GMPAY_DATA_DIR`。Origin、Allowed Hosts、邮件
   通道等产品设置在 `/install` 确认或由认证后的后台维护。邮件通道按顺序故障切换；
-  Node 与 Workers 显示同一组服务商类型；Cloudflare Email 仅在 `EMAIL` binding
+  Bun 与 Workers 显示同一组服务商类型；Cloudflare Email 仅在 `EMAIL` binding
   可用时投递。SMTP 拒绝 25 端口及非公网主机，并启用 TLS 证书校验。
-- Node 备份、恢复和 Cloudflare 到 Node 的导入必须使用仓库维护的 package scripts，
+- Bun 备份、恢复和 Cloudflare 到 Bun 的导入必须使用仓库维护的 package scripts，
   校验清单/校验和，并拒绝破坏性覆盖。
 
 ## 10. 证据与交付
@@ -200,7 +200,7 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
-bun run build:node
+bun run build:bun
 ```
 
 - 完成还要求当前浏览器/运行时、迁移、权限路径和文档证据。局部测试、历史结果或

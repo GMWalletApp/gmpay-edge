@@ -17,9 +17,9 @@ export default defineConfig({
 		tailwindcss(),
 		tanstackStart({
 			start: { entry: "start.ts" },
-			server: { entry: "server-entry.node.ts" },
+			server: { entry: "server-entry.bun.ts" },
 		}),
-		nitro({ preset: "node-server" }),
+		nitro({ preset: "bun" }),
 		viteReact(),
 		babel({ presets: [reactCompilerPreset()] }),
 	],

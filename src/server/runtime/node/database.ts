@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import type {
 	RuntimeDatabase,
 	RuntimeDatabaseResult,
@@ -20,21 +20,18 @@ export function openNodeDatabase(
 	filename: string,
 	options: NodeDatabaseOptions = {},
 ) {
-	const sqlite = new Database(
-		filename,
-		options.readonly ? { readonly: true, fileMustExist: true } : {},
-	);
-	sqlite.pragma(`busy_timeout = ${options.busyTimeoutMs ?? 5_000}`);
-	sqlite.pragma("foreign_keys = ON");
+	const sqlite = openSqlite(filename, options);
+	sqlite.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5_000}`);
+	sqlite.exec("PRAGMA foreign_keys = ON");
 	if (!options.readonly) {
-		sqlite.pragma("journal_mode = WAL");
-		sqlite.pragma("synchronous = FULL");
+		sqlite.exec("PRAGMA journal_mode = WAL");
+		sqlite.exec("PRAGMA synchronous = FULL");
 	}
 	return new NodeDatabase(sqlite);
 }
 
 export class NodeDatabase implements RuntimeDatabase {
-	constructor(readonly sqlite: Database.Database) {}
+	constructor(readonly sqlite: Database) {}
 
 	prepare(query: string) {
 		return new NodePreparedStatement(this.sqlite, query, []);
@@ -63,13 +60,13 @@ export class NodeDatabase implements RuntimeDatabase {
 	}
 
 	close() {
-		if (this.sqlite.open) this.sqlite.close();
+		this.sqlite.close();
 	}
 }
 
 export class NodePreparedStatement implements RuntimePreparedStatement {
 	constructor(
-		private readonly sqlite: Database.Database,
+		private readonly sqlite: Database,
 		readonly query: string,
 		private readonly values: readonly unknown[],
 	) {}
@@ -78,7 +75,7 @@ export class NodePreparedStatement implements RuntimePreparedStatement {
 		return new NodePreparedStatement(this.sqlite, this.query, values);
 	}
 
-	belongsTo(sqlite: Database.Database) {
+	belongsTo(sqlite: Database) {
 		return this.sqlite === sqlite;
 	}
 
@@ -111,19 +108,16 @@ export class NodePreparedStatement implements RuntimePreparedStatement {
 	raw<T = unknown[]>(options?: { columnNames?: false }): Promise<T[]>;
 	async raw<T = unknown[]>(options?: { columnNames?: boolean }) {
 		const statement = this.sqlite.prepare(this.query);
-		statement.raw(true);
-		const rows = statement.all(...normalizeBindings(this.values)) as T[];
+		const bindings = normalizeBindings(this.values);
+		const rows = statement.values(...bindings) as T[];
 		if (!options?.columnNames) return rows;
-		return [statement.columns().map((column) => column.name), ...rows] as [
-			string[],
-			...T[],
-		];
+		return [statement.columnNames, ...rows] as [string[], ...T[]];
 	}
 
 	execute<T = unknown>(): RuntimeDatabaseResult<T> {
 		const statement = this.sqlite.prepare(this.query);
 		const startedAt = performance.now();
-		if (statement.reader) {
+		if (statement.columnNames.length > 0) {
 			const rows = statement.all(...normalizeBindings(this.values)) as T[];
 			return result(rows, performance.now() - startedAt);
 		}
@@ -133,6 +127,15 @@ export class NodePreparedStatement implements RuntimePreparedStatement {
 			lastRowId: info.lastInsertRowid,
 		});
 	}
+}
+
+function openSqlite(filename: string, options: NodeDatabaseOptions): Database {
+	return new Database(
+		filename,
+		options.readonly
+			? { readonly: true, create: false, readwrite: false }
+			: undefined,
+	);
 }
 
 function normalizeBindings(values: readonly unknown[]): SqliteValue[] {

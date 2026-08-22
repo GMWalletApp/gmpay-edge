@@ -5,7 +5,7 @@
 简体中文 · [English](README.md)
 
 [![许可证：GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-3DA639.svg?style=flat-square)](LICENSE)
-[![运行时：Workers + Node](https://img.shields.io/badge/runtimes-Workers%20%2B%20Node-F38020.svg?style=flat-square)](docs/zh-CN/DEPLOYMENT.md)
+[![运行时：Workers + Bun](https://img.shields.io/badge/runtimes-Workers%20%2B%20Bun-F38020.svg?style=flat-square)](docs/zh-CN/DEPLOYMENT.md)
 [![Bun](https://img.shields.io/badge/toolchain-Bun-000000.svg?style=flat-square&logo=bun&logoColor=white)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6.svg?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
@@ -15,7 +15,7 @@
 [![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18.svg?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![Locales: 6](https://img.shields.io/badge/locales-6-7C3AED.svg?style=flat-square)](project.inlang/settings.json)
 
-GMPay Edge 是可部署到 Cloudflare Workers 或 Node/Nitro Docker 容器的自托管单租户加密货币支付网关。一个部署即可提供带签名的商户 API、响应式收银台、支付运营、动态角色权限、可靠的 Webhook 投递、定时处理和 Telegram 自动化。
+GMPay Edge 是可部署到 Cloudflare Workers 或 Bun/Nitro Docker 容器的自托管单租户加密货币支付网关。一个部署即可提供带签名的商户 API、响应式收银台、支付运营、动态角色权限、可靠的 Webhook 投递、定时处理和 Telegram 自动化。
 
 它适合希望掌控支付基础设施，同时通过只读方式接入公链、交易所和数字钱包的运营者。商户是外部 API 客户端；运营人员与管理员统一使用受保护的 `/admin` 后台。
 
@@ -81,7 +81,7 @@ flowchart LR
     end
 
     Cloudflare["Workers 服务<br/>D1 · KV · R2 · Queues · Cron"]
-    Node["Node 服务<br/>SQLite · 本地对象 · 可靠队列 · 调度器"]
+    Bun["Bun 服务<br/>SQLite · 本地对象 · 可靠队列 · 调度器"]
     Providers["只读支付 Provider<br/>公链 · Binance · OKX · OKPay"]
     Callbacks["商户 Webhook 端点<br/>GMPay HMAC-SHA256 · EPay MD5"]
 
@@ -91,12 +91,12 @@ flowchart LR
     Admin --> AdminUI
     TelegramUser --> TelegramBot
     Core <--> Cloudflare
-    Core <--> Node
+    Core <--> Bun
     Core <--> Providers
     Core --> Callbacks
 ```
 
-一个 Worker 或 Node 容器承载全部产品入口以及共享的订单与支付核心。GMPay HMAC-SHA256 与旧版 EPay MD5 在明确的协议边界完成验签，随后共用订单服务、状态机、收银台和 Webhook 流水线；出站回调保留订单来源协议的签名格式。Workers 使用 D1/KV/R2/Queues/Cron，Node 使用 SQLite、本地对象存储、可靠队列和调度器；支付适配器始终保持只读。
+一个 Worker 或 Bun 容器承载全部产品入口以及共享的订单与支付核心。GMPay HMAC-SHA256 与旧版 EPay MD5 在明确的协议边界完成验签，随后共用订单服务、状态机、收银台和 Webhook 流水线；出站回调保留订单来源协议的签名格式。Workers 使用 D1/KV/R2/Queues/Cron，Bun 使用 SQLite、本地对象存储、可靠队列和调度器；支付适配器始终保持只读。
 
 ## 部署到 Cloudflare Workers
 
@@ -134,10 +134,10 @@ bun run deploy
 | `WEBHOOK_QUEUE` | Queues | 异步商户 Webhook 投递 |
 
 现有 Workers 流程完全不变：`bun run build`、`bun run predeploy` 和
-`bun run deploy` 继续使用 Cloudflare Vite 适配器。Node 构建独立存在，不改变
+`bun run deploy` 继续使用 Cloudflare Vite 适配器。Bun 构建独立存在，不改变
 Workers 产物。
 
-## 使用 Node 和 Docker 部署
+## 使用 Bun 和 Docker 部署
 
 公开的 [GHCR Package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
 支持 `linux/amd64` 与 `linux/arm64`。镜像已公开，无需登录 Registry。
@@ -204,7 +204,7 @@ docker compose up -d
 ```
 
 生产检查请参阅[部署指南](docs/zh-CN/DEPLOYMENT.md)，备份、恢复和 Cloudflare 数据
-迁移请参阅 [Node 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md)。
+迁移请参阅 [Bun 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md)。
 
 ## 版本与容器镜像
 
@@ -249,7 +249,7 @@ bun run dev
 首次运行访问 <http://localhost:3000/install>。安装会创建首位用户、受保护的 `root` 角色、运行密钥、支付默认数据、4 条包含六语言消息内容的公共 Telegram 指令和 Telegram 默认设置，并要求确认检测到的 Origin，再将其写入应用地址和 Allowed Hosts。完成后会自动登录并进入后台；安装不会创建 Telegram Bot，也不会请求 Telegram API。
 
 登录页提供密码找回入口。多个邮件服务商在一级菜单“后台 → 邮件配置”中维护并
-按顺序故障切换；Node 与 Workers 显示同一组服务商类型。
+按顺序故障切换；Bun 与 Workers 显示同一组服务商类型。
 
 安装完成后：
 
@@ -289,7 +289,7 @@ GET /payments/gmpay/v1/order/query
 
 | 模块 | 技术 |
 | --- | --- |
-| 运行时 | Cloudflare Workers 或 Node/Nitro Docker |
+| 运行时 | Cloudflare Workers 或 Bun/Nitro Docker |
 | 应用 | React 19、TanStack Start/Router/Query/Table/Form |
 | UI | Tailwind CSS 4、shadcn/Radix |
 | 认证 | Better Auth |
@@ -312,13 +312,15 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
-bun run build:node
+bun run build:bun
 ```
 
 每个 clone 执行一次 `bun run hooks:install`，即可启用本地 Lefthook Conventional
 Commit 检查；commitlint 策略声明在 `package.json` 中。
 
-只有在有意修改 Drizzle Schema 时才使用 `bun run db:generate`，并检查生成的 migration。`src/paraglide` 由 Vite Paraglide 插件自动生成且被忽略，不需要提交。
+只有在有意修改 Drizzle Schema 时才使用 `bun run db:generate`，并检查生成的 migration。
+在不启动 Vite、但需要导入生成消息的检查前，运行 `bun run generate-paraglide`。
+`src/paraglide` 已被忽略，不需要提交。
 
 提交完整改动前，应在同一最终工作区运行质量门：
 
@@ -327,7 +329,7 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
-bun run build:node
+bun run build:bun
 ```
 
 测试分别位于 `tests/unit`、`tests/integration`、`tests/security` 和 `tests/e2e`。确定性 fixture 用于证明应用逻辑；保留的真实 Provider 套件会被自动化流程有意跳过，生产验收时必须使用部署者自己的基础设施人工执行。
@@ -337,7 +339,7 @@ bun run build:node
 | 主题 | 文档 |
 | --- | --- |
 | 部署与生产签收 | [部署检查清单](docs/zh-CN/DEPLOYMENT.md) |
-| Node 备份、恢复与 Cloudflare 迁入 | [Node 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md) |
+| Bun 备份、恢复与 Cloudflare 迁入 | [Bun 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md) |
 | Cloudflare 免费额度与优化 | [免费额度审计](docs/zh-CN/CLOUDFLARE_FREE_TIER.md) |
 | 商户请求、签名、错误和 EPay | [商户 API](docs/zh-CN/MERCHANT_API.md) |
 | Provider 配置与收款方式 | [支付方式](docs/zh-CN/PAYMENT_METHODS.md) |
@@ -355,7 +357,7 @@ bun run build:node
 - API 凭证 Secret、收款方式凭证和 Telegram Bot Token 会使用各自配置的应用层加密密钥加密后存储，仅在创建或轮换时显示，并在服务端需要时解析。
 - 运行设置保存在权威数据库。运行时密钥原值只返回给拥有 `settings:read` 权限的管理员，以密码字段显示；更新时提交空值会保留当前内容。
 - Better Auth 负责密码、Session 与可选 TOTP。生产使用前必须配置 Allowed Hosts、HTTPS、Origin 与 CSRF 校验、限流和邮件密码恢复；启用 TOTP 时还需确认并保留恢复码。
-- 升级前备份 D1 或完整 Node 数据目录；替换 `runtime.better_auth_secret` 会使现有认证材料失效。
+- 升级前备份 D1 或完整 Bun 数据目录；替换 `runtime.better_auth_secret` 会使现有认证材料失效。
 - 回调目标、Provider 响应、上传文件、Queue 消息和 KV 值都是不可信边界。生产验收必须覆盖 SSRF、签名、权限路径、重试、重复事件和恢复行为。
 
 公开实例前，请阅读[安全说明](docs/zh-CN/SECURITY.md)及部署检查清单中的安全内容。

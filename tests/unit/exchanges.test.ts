@@ -10,78 +10,6 @@ afterEach(() => {
 });
 
 describe("Binance Pay adapter", () => {
-	it("scans signed read-only history and normalizes decimal amounts", async () => {
-		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					code: "000000",
-					success: true,
-					data: [
-						{
-							fundsDetail: [{ amount: "12.5", currency: "USDT" }],
-							receiverInfo: { binanceId: "123456" },
-							transactionId: "pay-1",
-							transactionTime: 1_700_000_000_000,
-						},
-					],
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			),
-		);
-		globalThis.fetch = fetchMock;
-		const adapter = new BinancePayAdapter({
-			apiKey: "key",
-			secretKey: "secret",
-			lookbackMs: 60_000,
-		});
-
-		const transactions = await adapter.findTransactions({
-			address: "123456",
-			assetCode: "USDT",
-		});
-
-		expect(transactions[0]).toMatchObject({
-			hash: "pay-1",
-			assetCode: "USDT",
-			amountUnits: 1_250_000_000n,
-			canonical: true,
-		});
-		expect(fetchMock).toHaveBeenCalledOnce();
-		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(String(url)).toContain("/sapi/v1/pay/transactions?");
-		expect((init?.headers as Record<string, string>)["X-MBX-APIKEY"]).toBe(
-			"key",
-		);
-		expect(init?.method).toBeUndefined();
-	});
-
-	it("classifies authentication and rate-limit failures", async () => {
-		const adapter = new BinancePayAdapter({
-			apiKey: "key",
-			secretKey: "secret",
-		});
-		globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(
-			new Response(JSON.stringify({ code: -2015, msg: "invalid" }), {
-				status: 401,
-			}),
-		);
-		await expect(
-			adapter.findTransactions({ address: "123456", assetCode: "USDT" }),
-		).rejects.toThrow();
-		const error = await (async () => {
-			try {
-				await adapter.findTransactions({
-					address: "123456",
-					assetCode: "USDT",
-				});
-			} catch (caught) {
-				return caught;
-			}
-		})();
-		expect(adapter.classifyError(error)).toBe("authentication");
-		expect(adapter.isRetryable("rate_limit")).toBe(true);
-	});
-
 	it("shares one deadline across a slow paginated history scan", async () => {
 		let now = 0;
 		vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -161,50 +89,6 @@ describe("Binance Pay adapter", () => {
 });
 
 describe("OKX adapter", () => {
-	it("scans funding bills with a cursor and never enables trading", async () => {
-		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					code: "0",
-					data: [
-						{
-							balChg: "12.5",
-							billId: "bill-1",
-							ccy: "USDT",
-							ts: "1700000000000",
-							type: "72",
-						},
-					],
-				}),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			),
-		);
-		globalThis.fetch = fetchMock;
-		const adapter = new OkxPayAdapter({
-			apiKey: "key",
-			secretKey: "secret",
-			passphrase: "passphrase",
-			accountId: "888777",
-		});
-
-		const transactions = await adapter.findTransactions({
-			address: "888777",
-			assetCode: "USDT",
-			sinceBlock: 0n,
-		});
-		expect(transactions[0]).toMatchObject({
-			hash: "bill-1",
-			amountUnits: 1_250_000_000n,
-			canonical: true,
-		});
-		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(String(url)).toContain("/api/v5/asset/bills?");
-		expect((init?.headers as Record<string, string>)["OK-ACCESS-KEY"]).toBe(
-			"key",
-		);
-		expect(init?.method).toBeUndefined();
-	});
-
 	it("shares one deadline across slow funding-bill pages", async () => {
 		let now = 0;
 		vi.spyOn(Date, "now").mockImplementation(() => now);

@@ -47,11 +47,11 @@ jobs:
 
       - name: Run quality gate
         run: |
-          bun run build
+          bun run generate-paraglide
           bun run typecheck
           bun run test
           bun run check
-          bun run build:node
+          bun run build:bun
 
       - name: Run semantic-release
         env:

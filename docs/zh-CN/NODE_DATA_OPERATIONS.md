@@ -1,8 +1,8 @@
-# Node 数据运维
+# Bun 数据运维
 
-Node 部署将 SQLite 数据库保存在 `$GMPAY_DATA_DIR/gmpay.sqlite`，私有对象保存在
-`$GMPAY_DATA_DIR/objects`。仓库维护的 CLI 直接使用 Bun 及其 SQLite 驱动；应用服务
-本身仍由 Node.js 运行。
+Bun 部署将 SQLite 数据库保存在 `$GMPAY_DATA_DIR/gmpay.sqlite`，私有对象保存在
+`$GMPAY_DATA_DIR/objects`。仓库维护的 CLI 与应用服务均使用 Bun 及其原生 SQLite
+驱动。
 
 ## 备份与恢复
 
@@ -31,7 +31,7 @@ docker compose run --rm --no-deps \
 ## 迁入 Cloudflare 导出数据
 
 先将 D1 导出为 SQL，并将 R2 对象导出到本地目录；对象在该目录中的相对路径必须保持
-原始 R2 key。然后把数据导入全新或空的 Node 数据目录：
+原始 R2 key。然后把数据导入全新或空的 Bun 数据目录：
 
 ```bash
 wrangler d1 export DB --remote --output ./d1-export.sql
@@ -62,6 +62,6 @@ GMPAY_DATA_DIR=/srv/gmpay bun run data -- import-cloudflare \
 非字符串自定义元数据，以及找不到对应导出对象的清单 key 都会被拒绝。不提供此
 sidecar 时仍会迁移对象内容和 key，但无法还原 R2 元数据。
 
-脚本会确认 D1 导出包含仓库中的全部迁移，为 Node 迁移器记录校验和，校验外键，并把
+脚本会确认 D1 导出包含仓库中的全部迁移，为本地迁移器记录校验和，校验外键，并把
 R2 key 路径转换成私有对象的哈希布局。非空目标会被拒绝，因此失败或重复执行导入不会
 覆盖现有实例。

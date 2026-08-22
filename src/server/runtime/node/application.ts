@@ -57,7 +57,7 @@ export async function createNodeApplication(
 	);
 	const pendingTasks = new Set<Promise<unknown>>();
 	const env: RuntimeEnv = {
-		runtime: "node",
+		runtime: "bun",
 		DB: database,
 		CACHE: new NodeMemoryCache(),
 		FILES: new NodeObjectStorage(layout.objects),
@@ -70,7 +70,7 @@ export async function createNodeApplication(
 				.catch((error: unknown) => {
 					console.error(
 						JSON.stringify({
-							event: "node_background_task_failed",
+							event: "bun_background_task_failed",
 							error: error instanceof Error ? error.name : "UnknownError",
 						}),
 					);

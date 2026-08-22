@@ -24,7 +24,7 @@ afterEach(async () => {
 	);
 });
 
-describe("NodeDatabase", () => {
+describe("Bun SQLite database", () => {
 	it("implements D1-style statements and atomic batches", async () => {
 		const database = openNodeDatabase(":memory:");
 		await database.exec(
@@ -132,9 +132,19 @@ describe("NodeObjectStorage", () => {
 describe("Node durable background services", () => {
 	it("reuses queue statements instead of preparing them per operation", async () => {
 		const database = openNodeDatabase(":memory:");
-		const prepare = vi.spyOn(database.sqlite, "prepare");
 		const queue = new NodeDurableQueue<{ id: string }>(database, "payments");
-		const preparedAtStartup = prepare.mock.calls.length;
+		const statements = Reflect.get(queue, "statements") as {
+			insert: { run: (...values: unknown[]) => unknown };
+			selectCandidates: { all: (...values: unknown[]) => unknown };
+			claim: { get: (...values: unknown[]) => unknown };
+			retry: { run: (...values: unknown[]) => unknown };
+			ack: { run: (...values: unknown[]) => unknown };
+		};
+		const insert = vi.spyOn(statements.insert, "run");
+		const selectCandidates = vi.spyOn(statements.selectCandidates, "all");
+		const claim = vi.spyOn(statements.claim, "get");
+		const retry = vi.spyOn(statements.retry, "run");
+		const ack = vi.spyOn(statements.ack, "run");
 
 		await queue.send({ id: "payment-1" });
 		const [claimed] = queue.claim(1, 1_000, Date.now());
@@ -148,8 +158,11 @@ describe("Node durable background services", () => {
 		if (!retried) throw new Error("Expected a retried message");
 		queue.ack(retried.id, retried.lease_token);
 
-		expect(preparedAtStartup).toBeGreaterThan(0);
-		expect(prepare).toHaveBeenCalledTimes(preparedAtStartup);
+		expect(insert).toHaveBeenCalledOnce();
+		expect(selectCandidates).toHaveBeenCalledTimes(2);
+		expect(claim).toHaveBeenCalledTimes(2);
+		expect(retry).toHaveBeenCalledOnce();
+		expect(ack).toHaveBeenCalledOnce();
 		database.close();
 	});
 
@@ -173,18 +186,18 @@ describe("Node durable background services", () => {
 		);
 
 		consumer.start();
-		await vi.advanceTimersByTimeAsync(0);
+		await advanceTimersByTime(0);
 		expect(claim).toHaveBeenCalledTimes(1);
-		await vi.advanceTimersByTimeAsync(299);
+		await advanceTimersByTime(299);
 		expect(claim).toHaveBeenCalledTimes(2);
-		await vi.advanceTimersByTimeAsync(1);
+		await advanceTimersByTime(1);
 		expect(claim).toHaveBeenCalledTimes(3);
 
 		await queue.send({ id: "payment-1" });
-		await vi.advanceTimersByTimeAsync(0);
+		await advanceTimersByTime(0);
 		expect(handled).toEqual(["payment-1"]);
 		await queue.sendBatch([{ body: { id: "payment-2" } }]);
-		await vi.advanceTimersByTimeAsync(0);
+		await advanceTimersByTime(0);
 		expect(handled).toEqual(["payment-1", "payment-2"]);
 
 		await consumer.stop();
@@ -233,7 +246,7 @@ describe("Node durable background services", () => {
 		);
 		const scheduler = new NodeScheduler(task, { intervalMs: 1_000 });
 		scheduler.start();
-		await vi.advanceTimersByTimeAsync(2_000);
+		await advanceTimersByTime(2_000);
 		expect(task).toHaveBeenCalledTimes(1);
 		resolveTask?.();
 		await scheduler.stop();
@@ -267,6 +280,12 @@ describe("Node durable background services", () => {
 		]);
 	});
 });
+
+async function advanceTimersByTime(durationMs: number) {
+	vi.advanceTimersByTime(durationMs);
+	await Promise.resolve();
+	await Promise.resolve();
+}
 
 async function temporaryDirectory() {
 	const directory = await mkdtemp(join(tmpdir(), "gmpay-node-runtime-"));

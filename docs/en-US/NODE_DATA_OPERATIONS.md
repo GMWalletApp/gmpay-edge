@@ -1,9 +1,9 @@
-# Node data operations
+# Bun data operations
 
-The Node deployment keeps its SQLite database at
+The Bun deployment keeps its SQLite database at
 `$GMPAY_DATA_DIR/gmpay.sqlite` and private objects under
-`$GMPAY_DATA_DIR/objects`. The maintained CLI runs directly with Bun and uses
-Bun's SQLite driver, while the application server continues to run on Node.js.
+`$GMPAY_DATA_DIR/objects`. The maintained CLI and application server both use
+Bun and its native SQLite driver.
 
 ## Backup and restore
 
@@ -36,7 +36,7 @@ Encrypt them at rest, restrict access, and test restoration regularly.
 ## Import a Cloudflare export
 
 Export D1 as SQL and export R2 objects into a local directory whose relative
-paths are the original object keys. Then import into a new or empty Node data
+paths are the original object keys. Then import into a new or empty Bun data
 directory:
 
 ```bash
@@ -70,7 +70,7 @@ without a matching exported object are rejected. Without this sidecar, object
 bytes and keys are imported but R2 metadata cannot be reconstructed.
 
 The import verifies that all repository migrations exist in the D1 export,
-records their checksums for the Node migration runner, validates foreign keys,
+records their checksums for the local migration runner, validates foreign keys,
 and converts R2 key paths into the hashed private-object layout. It refuses a
 non-empty target, so a failed or repeated import cannot overwrite an existing
 instance.

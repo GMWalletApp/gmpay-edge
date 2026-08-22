@@ -8,7 +8,7 @@ checklist scope; old or unrelated checklist items never become active implicitly
 
 ## 1. Product boundary
 
-- The product, package, Worker, Node service, and database are `GMPay Edge` /
+- The product, package, Worker, Bun service, and database are `GMPay Edge` /
   `gmpay-edge`.
 - GMPay Edge is a single-deployment, single-tenant payment gateway. A merchant is
   an external API client; internal authorization is user-and-role based.
@@ -19,8 +19,8 @@ checklist scope; old or unrelated checklist items never become active implicitly
 
 - Use Bun, strict TypeScript, React 19, TanStack Start/Router/Query/Table/Form,
   Tailwind CSS 4, shadcn/Radix, Zod, Better Auth, Drizzle, Cloudflare Workers
-  (D1, KV, R2, Queues, Cron), Node.js with Nitro and SQLite, grammY, Paraglide,
-  Vitest, Biome, and Wrangler. Docker is the supported Node distribution.
+  (D1, KV, R2, Queues, Cron), Bun with Nitro and SQLite, grammY, Paraglide,
+  Vitest, Biome, and Wrangler. Docker is the supported Bun distribution.
 - Do not introduce a second router, auth system, ORM/database layer, form system,
   client/server cache, formatter, linter, or i18n runtime.
 - Domain and runtime ownership remains centered on `routes`, `features`,
@@ -210,13 +210,13 @@ checklist scope; old or unrelated checklist items never become active implicitly
 
 ## 9. Runtimes, performance, and security
 
-- Workers and the Node/Nitro service run the same full stack behind explicit
-  runtime adapters. Workers use D1, KV, R2, Queues, and Cron. Node uses SQLite as
+- Workers and the Bun/Nitro service run the same full stack behind explicit
+  runtime adapters. Workers use D1, KV, R2, Queues, and Cron. Bun uses SQLite as
   authoritative data plus local cache/object storage, durable SQLite queues, and
   an in-process scheduler under one `GMPAY_DATA_DIR`.
 - Existing Workers commands and the Cloudflare Vite adapter remain unchanged:
   `bun run build`, `bun run predeploy`, and `bun run deploy` are Workers-only.
-  Node uses the separate `bun run build:node` build and is distributed as one
+  Bun uses the separate `bun run build:bun` build and is distributed as one
   multi-architecture Docker image through GitHub Container Registry.
 - Treat KV as eventually consistent. Use immutable versioned keys, bounded TTL,
   cache-stampede control, validated payloads, and D1 fallback. Do not store
@@ -239,13 +239,13 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - Runtime secrets are initialized during installation and stored according to
   the current product settings contract. Never commit real secrets, `.dev.vars`,
   Bot tokens, private keys, seed phrases, exchange secrets, or Cloudflare tokens.
-- The public Node/Docker environment contract contains only `GMPAY_DATA_DIR`.
+- The public Bun/Docker environment contract contains only `GMPAY_DATA_DIR`.
   Origin, Allowed Hosts, email channels, and other product settings are confirmed
   during `/install` or maintained in authenticated administration. Ordered email
-  channels support provider fallback. Node and Workers expose the same provider
+  channels support provider fallback. Bun and Workers expose the same provider
   types; Cloudflare Email delivers only when the `EMAIL` binding is available.
   SMTP rejects port 25 and non-public hosts and validates TLS certificates.
-- Node backups, restores, and Cloudflare-to-Node imports must use the maintained
+- Bun backups, restores, and Cloudflare-to-Bun imports must use the maintained
   package scripts, validate manifests/checksums, and refuse destructive overwrite.
 
 ## 10. Evidence and delivery
@@ -269,7 +269,7 @@ bun run typecheck
 bun run test
 bun run check
 bun run build
-bun run build:node
+bun run build:bun
 ```
 
 - Completion additionally requires current browser/runtime evidence, migration

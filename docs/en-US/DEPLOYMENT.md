@@ -3,7 +3,7 @@
 [简体中文](../zh-CN/DEPLOYMENT.md) · English
 
 This checklist deploys one single-tenant GMPay Edge instance on Cloudflare
-Workers or Node/Nitro. Operators use
+Workers or Bun/Nitro. Operators use
 `/admin`; merchants integrate only through the signed GMPay protocol or its
 EPay boundary adapter.
 
@@ -38,7 +38,7 @@ If necessary, prepare D1 manually with `bunx wrangler d1 create gmpay-edge`
 and then `bun run db:migrate:remote`. Keep the generated database ID out of the
 portable source configuration.
 
-### Node and Docker
+### Bun and Docker
 
 The public [GHCR package](https://github.com/orgs/GMWalletApp/packages/container/package/gmpay-edge)
 supports `linux/amd64` and `linux/arm64`. No registry login is required.
@@ -115,10 +115,10 @@ docker compose up -d
 The final two commands update the selected tag and recreate the container while
 keeping the named volume.
 
-To build the Node artifact from source, run `bun run build:node`. The Workers
+To build the Bun artifact from source, run `bun run build:bun`. The Workers
 commands remain exactly as above and continue to use the Cloudflare Vite adapter.
 For backups, restores, and D1/R2 migration, follow
-[Node data operations](NODE_DATA_OPERATIONS.md) and use the maintained `data`
+[Bun data operations](NODE_DATA_OPERATIONS.md) and use the maintained `data`
 package script with its `backup`, `restore`, and `import-cloudflare` subcommands.
 
 ## Cloudflare resources
@@ -150,11 +150,11 @@ package script with its `backup`, `restore`, and `import-cloudflare` subcommands
 - [ ] Configure each intended provider according to [PAYMENT_METHODS.md](PAYMENT_METHODS.md); use read-only exchange credentials and verify token identifiers and decimals.
 - [ ] Configure crypto and fiat rate sync settings; use **Run now** in each settings dialog once, verify raw/final observations, then confirm the one-minute Cron respects each category's automatic-sync switch and saved interval.
 
-## Node resources
+## Bun resources
 
 - [ ] Confirm the container runs as its non-root user and the persisted directory is writable only by the intended host/container identity.
 - [ ] Confirm the volume contains `gmpay.sqlite`, private objects, and durable queue state after installation and a test upload/order.
-- [ ] Configure a supported Node email provider and send a password-recovery test. Confirm the provider list matches Workers and no email secret appears in the container environment.
+- [ ] Configure a supported Bun email provider and send a password-recovery test. Confirm the provider list matches Workers and no email secret appears in the container environment.
 - [ ] Restart the container and confirm queued Webhook/payment work and scheduled jobs resume without duplicate accounting or delivery.
 - [ ] Stop the container, run `bun run data -- backup` to an external location, restore with `bun run data -- restore` into a new data directory, and verify manifest, SQLite integrity, migration checksum, sign-in, and private-object access.
 - [ ] When migrating from Workers, run `bun run data -- import-cloudflare` against explicit D1 SQL and optional R2 export paths; import only into a new or empty target, then repeat signed order and callback acceptance tests.
@@ -181,7 +181,7 @@ unauthenticated pull.
 - [ ] `bun run test`
 - [ ] `bun run check`
 - [ ] `bun run build`
-- [ ] `bun run build:node`
+- [ ] `bun run build:bun`
 - [ ] Open sign-in and verify an uninitialized deployment redirects to root-user initialization.
 - [ ] Create and enable the intended asset, channel, and receiving address; development-only mock channels must never be enabled unintentionally in production.
 - [ ] Verify binding-free `GET/HEAD /healthz`, detailed `/status`, root-user initialization, sign-in, and one signed GMPay end-to-end order in the intended channel.

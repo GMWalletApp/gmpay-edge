@@ -17,7 +17,7 @@ afterEach(async () => {
 	);
 });
 
-describe("Node server runtime", () => {
+describe("Bun server runtime", () => {
 	it("keeps runtime bindings isolated across concurrent requests", async () => {
 		const first = runtimeEnv("first");
 		const second = runtimeEnv("second");
@@ -37,7 +37,7 @@ describe("Node server runtime", () => {
 		expect(() => getRuntimeEnv()).toThrow(/outside a server request/);
 	});
 
-	it("migrates and opens the persistent Node application layout", async () => {
+	it("migrates and opens the persistent Bun application layout", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "gmpay-node-server-"));
 		temporaryDirectories.push(directory);
 		const application = await createNodeApplication(directory);
@@ -49,7 +49,7 @@ describe("Node server runtime", () => {
 				.first<{ count: number }>();
 			expect(migration?.count).toBeGreaterThan(0);
 			expect(application.dataDirectory).toBe(directory);
-			expect(application.env.runtime).toBe("node");
+			expect(application.env.runtime).toBe("bun");
 			expect(application.env.MAIL).toBeDefined();
 		} finally {
 			await application.stop();
@@ -69,7 +69,7 @@ describe("Node server runtime", () => {
 
 function runtimeEnv(name: string): RuntimeEnv {
 	return {
-		runtime: "node",
+		runtime: "bun",
 		DB: {
 			prepare(query) {
 				return `${name}:${query}` as never;

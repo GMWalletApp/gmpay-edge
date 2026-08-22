@@ -24,7 +24,7 @@ afterEach(async () => {
 	);
 });
 
-describe("Node data operations", () => {
+describe("Bun data operations", () => {
 	it("backs up and restores a validated database and object store", async () => {
 		const root = await temporaryDirectory();
 		const data = join(root, "data");
@@ -44,7 +44,9 @@ describe("Node data operations", () => {
 			readonly: true,
 		});
 		expect(
-			restoredDatabase.sqlite.pragma("integrity_check", { simple: true }),
+			await restoredDatabase
+				.prepare("PRAGMA integrity_check")
+				.first<string>("integrity_check"),
 		).toBe("ok");
 		restoredDatabase.close();
 		const restoredObject = await new NodeObjectStorage(
@@ -119,10 +121,9 @@ describe("Node data operations", () => {
 		const database = openNodeDatabase(join(target, "gmpay.sqlite"), {
 			readonly: true,
 		});
-		const migrationCount = database.sqlite
+		const migrationCount = await database
 			.prepare("SELECT count(*) count FROM node_migrations")
-			.pluck()
-			.get();
+			.first<number>("count");
 		expect(migrationCount).toBeGreaterThan(0);
 		database.close();
 		const object = await new NodeObjectStorage(join(target, "objects")).get(
