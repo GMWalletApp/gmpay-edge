@@ -1,4 +1,5 @@
-import { md5 } from "@noble/hashes/legacy.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 import type {
@@ -26,12 +27,26 @@ const configSchema = z.object({
 });
 export type OkPayConfig = z.infer<typeof configSchema>;
 
-const responseSchema = z.looseObject({ data: z.unknown().optional() });
+const responseSchema = z.looseObject({
+	status: z.string(),
+	code: z.union([z.string(), z.number()]).optional(),
+	data: z.unknown().optional(),
+	id: z.union([z.string(), z.number()]).optional(),
+	msg: z.string().optional(),
+	sign: z.string().optional(),
+});
+const successResponseSchema = z.looseObject({
+	status: z.literal("success"),
+	code: z.union([z.literal(200), z.literal("200")]),
+	data: z.unknown(),
+	id: z.union([z.string(), z.number()]),
+	sign: z.string().regex(/^[A-F0-9]{64}$/),
+});
 const transferSchema = z.looseObject({
 	// OKPay amounts are decimal strings at the protocol boundary. Do not
 	// coerce JSON numbers because their precision is not recoverable.
-	amount: z.string(),
-	coin: z.string(),
+	amount: z.string().optional(),
+	coin: z.string().optional(),
 	order_id: z.union([z.string(), z.number()]).optional(),
 	status: z.union([z.string(), z.number()]),
 	unique_id: z.union([z.string(), z.number()]).optional(),
@@ -68,6 +83,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 		assetCode: string;
 		description: string;
 		returnUrl?: string;
+		callbackUrl?: string;
 	}): Promise<OkPayHostedPayment> {
 		return observeProviderOperation(
 			{
@@ -81,6 +97,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 					{
 						amount: input.amount,
 						coin: input.assetCode.toUpperCase(),
+						callback_url: input.callbackUrl,
 						name: input.description,
 						return_url: input.returnUrl,
 						unique_id: input.orderId,
@@ -136,10 +153,12 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 	}
 
 	verifyCallback(input: Record<string, unknown>) {
-		const supplied = String(input.sign ?? "");
-		const unsigned = { ...input };
-		delete unsigned.sign;
-		return constantTimeEqual(supplied, this.signature(clean(unsigned)));
+		if (String(input.id ?? "").trim() !== this.config.shopId) return false;
+		try {
+			return constantTimeEqual(String(input.sign ?? ""), this.signature(input));
+		} catch {
+			return false;
+		}
 	}
 
 	parseCallback(input: Record<string, unknown>) {
@@ -166,12 +185,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 					operation: "health_check",
 					classifyError: (error) => this.classifyError(error),
 				},
-				(counters) =>
-					this.post(
-						"checkTransferByTxid",
-						{ txid: `health-${Date.now()}` },
-						counters,
-					),
+				(counters) => this.post("balance", {}, counters),
 			);
 			return {
 				healthy: true,
@@ -189,6 +203,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 	}
 
 	classifyError(error: unknown): AdapterErrorKind {
+		if (error instanceof OkPayInvalidResponseError) return "invalid_response";
 		if (error instanceof OkPayHttpError) {
 			if (error.status === 401 || error.status === 403) return "authentication";
 			if (error.status === 429) return "rate_limit";
@@ -208,7 +223,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 	}
 
 	private normalize(
-		data: z.infer<typeof transferSchema>,
+		data: z.infer<typeof completedTransferSchema>,
 		fallbackId: string,
 	): NormalizedTransaction {
 		const providerOrderId = String(data.order_id ?? fallbackId);
@@ -251,8 +266,10 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 					counters,
 				);
 				const data = transferSchema.parse(responseData(payload));
-				return Number(data.status) === 1 && isPositiveDecimal(data.amount)
-					? this.normalize(data, providerOrderId)
+				if (Number(data.status) !== 1) return null;
+				const completed = completedTransferSchema.parse(data);
+				return isPositiveDecimal(completed.amount)
+					? this.normalize(completed, providerOrderId)
 					: null;
 			},
 		);
@@ -263,7 +280,12 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 		input: Record<string, unknown>,
 		counters?: ProviderOperationCounters,
 	) {
-		const fields = clean({ ...input, id: this.config.shopId });
+		const fields = clean({
+			...input,
+			id: this.config.shopId,
+			timestamp: Math.floor(Date.now() / 1000),
+			nonce: crypto.randomUUID(),
+		});
 		fields.sign = this.signature(fields);
 		counters?.request();
 		const response = await fetch(
@@ -275,16 +297,36 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 				signal: AbortSignal.timeout(this.config.timeoutMs),
 			},
 		);
-		const payload = responseSchema.parse(await response.json());
 		if (!response.ok) throw new OkPayHttpError(response.status);
-		return payload;
+		let decoded: unknown;
+		try {
+			decoded = await response.json();
+		} catch {
+			throw new OkPayInvalidResponseError();
+		}
+		const payload = responseSchema.parse(decoded);
+		if (payload.status !== "success")
+			throw new OkPayHttpError(normalizeStatus(payload.code));
+		const success = successResponseSchema.parse(payload);
+		if (!this.verifyCallback(success)) throw new OkPayInvalidResponseError();
+		return success;
 	}
 
-	private signature(input: Record<string, string>) {
-		const message = `${sortedQuery(input)}&token=${this.config.apiKey}`;
-		return bytesToHex(md5(utf8ToBytes(message))).toUpperCase();
+	private signature(input: Record<string, unknown>) {
+		return bytesToHex(
+			hmac(
+				sha256,
+				utf8ToBytes(this.config.apiKey),
+				utf8ToBytes(signatureBase(input)),
+			),
+		).toUpperCase();
 	}
 }
+
+const completedTransferSchema = transferSchema.extend({
+	amount: z.string(),
+	coin: z.string(),
+});
 
 function isSafePaymentUrl(value: string) {
 	try {
@@ -306,15 +348,13 @@ class OkPayHttpError extends Error {
 	}
 }
 
+class OkPayInvalidResponseError extends Error {}
+
 function clean(input: Record<string, unknown>) {
 	return Object.fromEntries(
 		Object.entries(input)
 			.filter(
-				([, value]) =>
-					value !== undefined &&
-					value !== null &&
-					value !== "" &&
-					value !== false,
+				([, value]) => value !== undefined && value !== null && value !== "",
 			)
 			.map(([key, value]) => [key, String(value)]),
 	);
@@ -326,13 +366,42 @@ function isPositiveDecimal(value: string | number) {
 	return decimalToUnits(normalized, decimalPlaces(normalized)) > 0n;
 }
 
-function sortedQuery(input: Record<string, string>) {
-	const params = new URLSearchParams();
-	for (const key of Object.keys(input).sort()) {
-		const value = input[key];
-		if (value !== undefined) params.set(key, value);
+function signatureBase(input: Record<string, unknown>) {
+	return flatten(input)
+		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+		.map(([key, value]) => `${key}=${value}`)
+		.join("&");
+}
+
+function flatten(
+	input: Record<string, unknown>,
+	prefix = "",
+): Array<[string, string]> {
+	const fields: Array<[string, string]> = [];
+	for (const [key, value] of Object.entries(input)) {
+		if (key === "sign" || value === null || value === undefined || value === "")
+			continue;
+		const path = prefix ? `${prefix}.${key}` : key;
+		if (typeof value === "object" && !Array.isArray(value)) {
+			fields.push(...flatten(value as Record<string, unknown>, path));
+			continue;
+		}
+		if (
+			typeof value !== "string" &&
+			typeof value !== "number" &&
+			typeof value !== "boolean"
+		)
+			throw new OkPayInvalidResponseError();
+		fields.push([path, String(value)]);
 	}
-	return decodeURIComponent(params.toString().replace(/\+/g, " "));
+	return fields;
+}
+
+function normalizeStatus(code: string | number | undefined) {
+	const status = Number(code);
+	return Number.isInteger(status) && status >= 400 && status <= 599
+		? status
+		: 400;
 }
 
 function responseData(payload: Record<string, unknown>) {

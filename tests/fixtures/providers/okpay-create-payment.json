@@ -1,6 +1,11 @@
 {
+	"status": "success",
+	"code": 200,
 	"data": {
 		"order_id": "ok-order",
-		"pay_url": "https://pay.example/order"
-	}
+		"pay_url": "https://pay.example/order",
+		"status": 0
+	},
+	"id": 12345,
+	"sign": "1F54879FE95B9D605B3A40638A7B047D52DE4AE6C829F7FE18893B46102E059B"
 }

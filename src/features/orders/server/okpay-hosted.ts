@@ -54,6 +54,14 @@ export async function initializeOkPayOrder(
 			amount: order.paymentAmount,
 			assetCode: order.paymentAsset,
 			description: input.description ?? input.externalOrderId ?? order.orderId,
+			...(runtime.betterAuthUrl
+				? {
+						callbackUrl: new URL(
+							"/api/providers/okpay/notify",
+							runtime.betterAuthUrl,
+						).toString(),
+					}
+				: {}),
 			...(input.returnUrl ? { returnUrl: input.returnUrl } : {}),
 		});
 		await db

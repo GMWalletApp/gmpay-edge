@@ -1,4 +1,5 @@
-import { md5 } from "@noble/hashes/legacy.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -172,7 +173,7 @@ describe("OKPay notification flow", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const counters = createDatastoreCounters();
-		const body: Record<string, string> = callback();
+		const body: Record<string, unknown> = callback();
 		body.amount = "999";
 		const response = await handleOkPayNotification(
 			new Request("https://edge.example/api/providers/okpay/notify", {
@@ -320,22 +321,37 @@ function notification(requestId: string) {
 }
 
 function callback() {
-	const input: Record<string, string> = {
-		amount: "3.5",
-		coin: "USDT",
-		id: "12345",
-		order_id: "ok-order",
-		unique_id: orderId,
+	const input = {
+		status: "success",
+		code: 200,
+		data: {
+			amount: "3.5",
+			coin: "USDT",
+			order_id: "ok-order",
+			pay_user_id: 123456789,
+			status: 1,
+			type: "deposit",
+			unique_id: orderId,
+		},
+		id: 12345,
 	};
-	const query = new URLSearchParams();
-	for (const key of Object.keys(input).sort()) {
-		const value = input[key];
-		if (value !== undefined) query.set(key, value);
-	}
-	const message = `${decodeURIComponent(query.toString().replace(/\+/g, " "))}&token=secret`;
+	const message = [
+		"code=200",
+		"data.amount=3.5",
+		"data.coin=USDT",
+		"data.order_id=ok-order",
+		"data.pay_user_id=123456789",
+		"data.status=1",
+		"data.type=deposit",
+		`data.unique_id=${orderId}`,
+		"id=12345",
+		"status=success",
+	].join("&");
 	return {
 		...input,
-		sign: bytesToHex(md5(utf8ToBytes(message))).toUpperCase(),
+		sign: bytesToHex(
+			hmac(sha256, utf8ToBytes("secret"), utf8ToBytes(message)),
+		).toUpperCase(),
 	};
 }
 

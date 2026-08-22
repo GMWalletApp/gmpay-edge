@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { recordPaymentTransaction } from "#/features/payments/server/process";
 import { recordInboundWebhookReceipt } from "#/features/webhooks/server/inbound-receipts";
 import { OkPayAdapter } from "#/integrations/wallets/okpay";
@@ -10,6 +11,19 @@ import {
 import { loadRuntimeConfig } from "#/server/runtime-config";
 
 const maximumBodyBytes = 64 * 1024;
+const notificationEnvelopeSchema = z.looseObject({
+	status: z.literal("success"),
+	code: z.union([z.literal(200), z.literal("200")]),
+	id: z.union([z.string(), z.number()]),
+	sign: z.string().min(1),
+});
+const depositNotificationSchema = z.looseObject({
+	coin: z.string().min(1),
+	order_id: z.union([z.string(), z.number()]),
+	status: z.union([z.literal(1), z.literal("1")]),
+	type: z.literal("deposit"),
+	unique_id: z.union([z.string(), z.number()]),
+});
 
 export async function handleOkPayNotification(request: Request, env: Env) {
 	const startedAt = Date.now();
@@ -46,8 +60,17 @@ export async function handleOkPayNotification(request: Request, env: Env) {
 			"unknown",
 			"invalid_notification",
 		);
-	const { input, source } = parsed;
-	const orderId = String(source.unique_id ?? "").trim();
+	const envelope = notificationEnvelopeSchema.safeParse(parsed.input);
+	const notification = depositNotificationSchema.safeParse(parsed.source);
+	if (!envelope.success || !notification.success)
+		return finish(
+			errorResponse(request, "invalid_notification", 400),
+			"unknown",
+			"invalid_notification",
+		);
+	const { input } = parsed;
+	const source = notification.data;
+	const orderId = String(source.unique_id).trim();
 	if (!orderId)
 		return finish(
 			errorResponse(request, "invalid_notification", 400),
@@ -93,8 +116,8 @@ export async function handleOkPayNotification(request: Request, env: Env) {
 			"invalid_signature",
 		);
 	const callback = {
-		assetCode: String(source.coin ?? "").toUpperCase(),
-		providerOrderId: String(source.order_id ?? ""),
+		assetCode: source.coin.toUpperCase(),
+		providerOrderId: String(source.order_id),
 	};
 	if (
 		callback.providerOrderId !== row.provider_order_id ||
