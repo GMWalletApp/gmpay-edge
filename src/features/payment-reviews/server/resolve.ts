@@ -5,7 +5,7 @@ import type { PaymentRuntime } from "#/features/payments/server/payment-events";
 import { DomainError } from "#/lib/domain-error";
 
 export const resolvePaymentReviewSchema = z.object({
-	reviewId: z.string().uuid(),
+	reviewId: z.uuid(),
 	decision: z.enum(["approve", "reject"]),
 	transactionHash: z.string().trim().min(8).max(256).optional(),
 	note: z.string().trim().min(3).max(1_000),

@@ -21,11 +21,11 @@ export function openNodeDatabase(
 	options: NodeDatabaseOptions = {},
 ) {
 	const sqlite = openSqlite(filename, options);
-	sqlite.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5_000}`);
-	sqlite.exec("PRAGMA foreign_keys = ON");
+	sqlite.run(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5_000}`);
+	sqlite.run("PRAGMA foreign_keys = ON");
 	if (!options.readonly) {
-		sqlite.exec("PRAGMA journal_mode = WAL");
-		sqlite.exec("PRAGMA synchronous = FULL");
+		sqlite.run("PRAGMA journal_mode = WAL");
+		sqlite.run("PRAGMA synchronous = FULL");
 	}
 	return new NodeDatabase(sqlite);
 }
@@ -52,7 +52,7 @@ export class NodeDatabase implements RuntimeDatabase {
 
 	async exec(query: string) {
 		const startedAt = performance.now();
-		this.sqlite.exec(query);
+		this.sqlite.run(query);
 		return {
 			count: countSqlStatements(query),
 			duration: performance.now() - startedAt,

@@ -1,4 +1,4 @@
-import { useStore } from "@tanstack/react-store";
+import { useSelector } from "@tanstack/react-store";
 import { createContext, useContext, useEffect } from "react";
 import {
 	type Direction,
@@ -22,7 +22,7 @@ type DirectionProviderProps = {
 };
 
 export function DirectionProvider({ children }: DirectionProviderProps) {
-	const dir = useStore(preferencesStore, (state) => state.direction);
+	const dir = useSelector(preferencesStore, (state) => state.direction);
 
 	useEffect(() => {
 		window.document.documentElement.dir = dir;

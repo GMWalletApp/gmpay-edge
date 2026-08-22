@@ -17,7 +17,7 @@ import {
 } from "#/server/request-body";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 
-const sourceIdSchema = z.string().uuid();
+const sourceIdSchema = z.uuid();
 const maximumBodyBytes = 2 * 1024 * 1024;
 const maximumDeliveriesPerMinute = 600;
 const activityWriteBatchSize = 100;

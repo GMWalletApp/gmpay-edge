@@ -15,7 +15,7 @@ export const Route = createFileRoute(
 					systemPermission("payment_reviews", "read"),
 				);
 				const env = getEnv();
-				const reviewIdResult = z.string().uuid().safeParse(params.reviewId);
+				const reviewIdResult = z.uuid().safeParse(params.reviewId);
 				if (!reviewIdResult.success)
 					return new Response("Invalid review ID", { status: 400 });
 				const reviewId = reviewIdResult.data;

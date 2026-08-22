@@ -29,7 +29,7 @@ const alchemyNetworkByRail: Record<z.infer<typeof evmNetworkSchema>, string> = {
 	bsc: "BNB_MAINNET",
 	polygon: "MATIC_MAINNET",
 };
-const sourceIdSchema = z.string().uuid();
+const sourceIdSchema = z.uuid();
 const externalSourceIdSchema = z.string().trim().min(4).max(128);
 const secretSchema = z.string().trim().min(16).max(512);
 const createSourceSchema = z.object({
@@ -272,9 +272,7 @@ export const listPaymentProviderEventsFn = createServerFn({ method: "GET" })
 	});
 
 export const retryPaymentProviderEventFn = createServerFn({ method: "POST" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const context = await sourceAdminContext(
 			systemPermission("webhooks", "update"),

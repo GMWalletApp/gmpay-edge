@@ -2,7 +2,6 @@ export type DatastoreCounters = {
 	d1Prepare: number;
 	d1Batch: number;
 	d1Exec: number;
-	d1Dump: number;
 	d1StatementBind: number;
 	d1StatementRun: number;
 	d1StatementFirst: number;
@@ -20,7 +19,6 @@ export function createDatastoreCounters(): DatastoreCounters {
 		d1Prepare: 0,
 		d1Batch: 0,
 		d1Exec: 0,
-		d1Dump: 0,
 		d1StatementBind: 0,
 		d1StatementRun: 0,
 		d1StatementFirst: 0,
@@ -73,12 +71,6 @@ export function instrumentD1(
 				return (...args: Parameters<D1Database["exec"]>) => {
 					counters.d1Exec += 1;
 					return Reflect.apply(target.exec, target, args);
-				};
-			}
-			if (property === "dump") {
-				return (...args: Parameters<D1Database["dump"]>) => {
-					counters.d1Dump += 1;
-					return Reflect.apply(target.dump, target, args);
 				};
 			}
 			return Reflect.get(target, property, receiver);

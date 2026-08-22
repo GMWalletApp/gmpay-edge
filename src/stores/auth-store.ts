@@ -1,4 +1,4 @@
-import { useStore } from "@tanstack/react-store";
+import { useSelector } from "@tanstack/react-store";
 import { Store } from "@tanstack/store";
 
 export type AuthUser = {
@@ -28,5 +28,5 @@ export const authStore = new Store<AuthState, AuthActions>(
 );
 
 export function useAuthUser() {
-	return useStore(authStore, (state) => state.user);
+	return useSelector(authStore, (state) => state.user);
 }

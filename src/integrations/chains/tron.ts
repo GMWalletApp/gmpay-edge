@@ -140,8 +140,10 @@ export class TronAdapter implements PaymentAdapter<TronConfig> {
 			this.currentBlock(deadlineAt, counters),
 		]);
 		const parsedInfo = z
-			.object({ id: z.string().optional(), blockNumber: z.number().optional() })
-			.passthrough()
+			.looseObject({
+				id: z.string().optional(),
+				blockNumber: z.number().optional(),
+			})
 			.parse(info);
 		if (!parsedInfo.id || parsedInfo.blockNumber == null) return null;
 		const blockHash = await this.blockHash(

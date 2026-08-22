@@ -129,9 +129,7 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 	});
 
 export const getInboundWebhookReceiptFn = createServerFn({ method: "GET" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const { db } = await adminContext(
 			systemPermission("webhooks", "read"),
@@ -221,18 +219,14 @@ export const listAdminWebhooksFn = createServerFn({ method: "GET" })
 	});
 
 export const getAdminWebhookDeliveryFn = createServerFn({ method: "GET" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const { db } = await adminContext(systemPermission("webhooks", "read"));
 		return loadAdminWebhookDelivery(db, data.id);
 	});
 
 export const retryWebhookDeliveryFn = createServerFn({ method: "POST" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const { db, env, request, user } = await adminContext(
 			systemPermission("webhooks", "update"),

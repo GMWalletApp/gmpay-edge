@@ -206,7 +206,7 @@ export async function importCloudflareData({
 		await mkdir(staging, { recursive: true });
 		const database = openDataDatabase(layout.database);
 		try {
-			database.exec(await readFile(d1Sql, "utf8"));
+			database.run(await readFile(d1Sql, "utf8"));
 			const migrations = await loadNodeMigrations();
 			seedNodeMigrations(database, migrations);
 			validateDatabase(database, migrations);
@@ -291,7 +291,7 @@ function seedNodeMigrations(database: Database, migrations: NodeMigration[]) {
 		throw new Error(
 			`D1 export is missing required migrations: ${missing.map(({ name }) => name).join(", ")}`,
 		);
-	database.exec(`CREATE TABLE node_migrations (
+	database.run(`CREATE TABLE node_migrations (
 		name TEXT PRIMARY KEY NOT NULL,
 		checksum TEXT NOT NULL,
 		applied_at INTEGER NOT NULL
@@ -311,10 +311,10 @@ function openDataDatabase(filename: string, create = true) {
 		create,
 		strict: true,
 	});
-	database.exec("PRAGMA busy_timeout = 5000");
-	database.exec("PRAGMA foreign_keys = ON");
-	database.exec("PRAGMA journal_mode = WAL");
-	database.exec("PRAGMA synchronous = FULL");
+	database.run("PRAGMA busy_timeout = 5000");
+	database.run("PRAGMA foreign_keys = ON");
+	database.run("PRAGMA journal_mode = WAL");
+	database.run("PRAGMA synchronous = FULL");
 	return database;
 }
 

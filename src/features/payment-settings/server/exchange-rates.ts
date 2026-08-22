@@ -26,19 +26,17 @@ const okxTickersSchema = z.object({
 	code: z.literal("0"),
 	data: z.array(z.object({ instId: z.string(), last: z.string() })),
 });
-const fiatRatesSchema = z
-	.object({
-		success: z.boolean().optional(),
-		rates: z.record(z.string(), z.number().positive()).optional(),
-		quotes: z.record(z.string(), z.number().positive()).optional(),
-		error: z
-			.object({
-				code: z.union([z.string(), z.number()]).optional(),
-				type: z.string().optional(),
-			})
-			.optional(),
-	})
-	.passthrough();
+const fiatRatesSchema = z.looseObject({
+	success: z.boolean().optional(),
+	rates: z.record(z.string(), z.number().positive()).optional(),
+	quotes: z.record(z.string(), z.number().positive()).optional(),
+	error: z
+		.object({
+			code: z.union([z.string(), z.number()]).optional(),
+			type: z.string().optional(),
+		})
+		.optional(),
+});
 
 class ExchangeRateProviderError extends Error {
 	readonly failureCode: `http_${number}` | "provider_error";

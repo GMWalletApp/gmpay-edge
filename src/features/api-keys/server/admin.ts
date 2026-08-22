@@ -96,7 +96,7 @@ export const createApiKeyFn = createServerFn({ method: "POST" })
 
 export const setApiKeyEnabledFn = createServerFn({ method: "POST" })
 	.validator((input: { id: string; enabled: boolean }) =>
-		z.object({ id: z.string().uuid(), enabled: z.boolean() }).parse(input),
+		z.object({ id: z.uuid(), enabled: z.boolean() }).parse(input),
 	)
 	.handler(async ({ data }) => {
 		const { db, request, user } = await adminContext(
@@ -111,9 +111,7 @@ export const setApiKeyEnabledFn = createServerFn({ method: "POST" })
 	});
 
 export const revokeApiKeyFn = createServerFn({ method: "POST" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const { db, request, user } = await adminContext(
 			systemPermission("api_keys", "delete"),
@@ -127,9 +125,7 @@ export const revokeApiKeyFn = createServerFn({ method: "POST" })
 	});
 
 export const rotateApiKeyFn = createServerFn({ method: "POST" })
-	.validator((input: { id: string }) =>
-		z.object({ id: z.string().uuid() }).parse(input),
-	)
+	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
 		const context = await adminContext(systemPermission("api_keys", "update"));
 		if (!context.runtime.apiKeyPepper)

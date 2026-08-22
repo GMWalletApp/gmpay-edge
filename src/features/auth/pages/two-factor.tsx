@@ -18,7 +18,7 @@ export function TwoFactorPage() {
 	const [trustDevice, setTrustDevice] = useState(false);
 	const [loading, setLoading] = useState(false);
 
-	async function verify(event: React.FormEvent) {
+	async function verify(event: React.SubmitEvent<HTMLFormElement>) {
 		event.preventDefault();
 		setLoading(true);
 		try {

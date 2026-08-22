@@ -34,8 +34,8 @@ const epayInputSchema = z
 		pid: z.union([z.string(), z.number()]).transform(String),
 		money: z.union([z.string(), z.number()]).transform(String),
 		out_trade_no: z.string().trim().min(1).max(128),
-		notify_url: z.string().trim().url(),
-		return_url: z.string().trim().url().optional(),
+		notify_url: z.string().trim().pipe(z.url()),
+		return_url: z.string().trim().pipe(z.url()).optional(),
 		name: z.string().trim().max(500).optional(),
 		type: z
 			.string()

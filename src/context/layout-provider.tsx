@@ -1,4 +1,4 @@
-import { useStore } from "@tanstack/react-store";
+import { useSelector } from "@tanstack/react-store";
 import { createContext, useContext } from "react";
 import {
 	type Collapsible,
@@ -29,8 +29,11 @@ type LayoutProviderProps = {
 };
 
 export function LayoutProvider({ children }: LayoutProviderProps) {
-	const collapsible = useStore(preferencesStore, (state) => state.collapsible);
-	const variant = useStore(preferencesStore, (state) => state.variant);
+	const collapsible = useSelector(
+		preferencesStore,
+		(state) => state.collapsible,
+	);
+	const variant = useSelector(preferencesStore, (state) => state.variant);
 
 	const contextValue: LayoutContextType = {
 		resetLayout: preferencesStore.actions.resetLayout,

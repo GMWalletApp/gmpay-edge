@@ -1,4 +1,4 @@
-import { useStore } from "@tanstack/react-store";
+import { useSelector } from "@tanstack/react-store";
 import { createContext, useContext, useEffect } from "react";
 import {
 	defaultFont,
@@ -34,9 +34,12 @@ type ThemeProviderState = {
 const ThemeContext = createContext<ThemeProviderState | null>(null);
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
-	const theme = useStore(preferencesStore, (state) => state.theme);
-	const font = useStore(preferencesStore, (state) => state.font);
-	const systemTheme = useStore(preferencesStore, (state) => state.systemTheme);
+	const theme = useSelector(preferencesStore, (state) => state.theme);
+	const font = useSelector(preferencesStore, (state) => state.font);
+	const systemTheme = useSelector(
+		preferencesStore,
+		(state) => state.systemTheme,
+	);
 
 	const resolvedTheme: ResolvedTheme = theme === "auto" ? systemTheme : theme;
 

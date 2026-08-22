@@ -37,7 +37,7 @@ export async function applyNodeMigrations(
 	const migrations = await loadNodeMigrations(directory);
 
 	const apply = database.sqlite.transaction(() => {
-		database.sqlite.exec(`CREATE TABLE IF NOT EXISTS node_migrations (
+		database.sqlite.run(`CREATE TABLE IF NOT EXISTS node_migrations (
 			name TEXT PRIMARY KEY NOT NULL,
 			checksum TEXT NOT NULL,
 			applied_at INTEGER NOT NULL
@@ -59,7 +59,7 @@ export async function applyNodeMigrations(
 				continue;
 			}
 			for (const statement of splitMigration(migration.sql))
-				database.sqlite.exec(statement);
+				database.sqlite.run(statement);
 			record.run(migration.name, migration.checksum, Date.now());
 			appliedCount += 1;
 		}

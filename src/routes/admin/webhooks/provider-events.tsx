@@ -6,12 +6,7 @@ import { validateProTableSearch } from "#/lib/pro-table-url-state";
 export const Route = createFileRoute("/admin/webhooks/provider-events")({
 	validateSearch: (search) => ({
 		...validateProTableSearch(search),
-		sourceId: z
-			.string()
-			.uuid()
-			.optional()
-			.catch(undefined)
-			.parse(search.sourceId),
+		sourceId: z.uuid().optional().catch(undefined).parse(search.sourceId),
 	}),
 	component: RouteComponent,
 });

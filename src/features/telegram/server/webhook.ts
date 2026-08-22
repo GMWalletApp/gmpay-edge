@@ -32,7 +32,7 @@ export async function handleTelegramWebhookRequest(
 		});
 		return response;
 	};
-	const parsedBotId = z.string().uuid().safeParse(botIdInput);
+	const parsedBotId = z.uuid().safeParse(botIdInput);
 	if (!parsedBotId.success)
 		return finish(
 			withRequestId(

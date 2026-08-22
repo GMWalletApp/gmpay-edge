@@ -195,7 +195,7 @@ const teamWebhooksSchema = z.object({
 			id: z.string().min(1).max(128),
 			network: z.string().min(1).max(64),
 			webhook_type: z.string().min(1).max(64),
-			webhook_url: z.string().url().max(2_048),
+			webhook_url: z.url().max(2_048),
 			is_active: z.boolean(),
 		}),
 	),

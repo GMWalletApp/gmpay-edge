@@ -195,7 +195,7 @@ function runtimeImports(source: string) {
 		)
 		.statements.flatMap((statement) =>
 			ts.isImportDeclaration(statement) &&
-			!statement.importClause?.isTypeOnly &&
+			statement.importClause?.phaseModifier !== ts.SyntaxKind.TypeKeyword &&
 			ts.isStringLiteral(statement.moduleSpecifier)
 				? [statement.moduleSpecifier.text]
 				: [],

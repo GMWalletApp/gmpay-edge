@@ -16,7 +16,7 @@ const publicSmtpHostname =
 
 export const emailChannelSchema = z
 	.object({
-		id: z.string().uuid().optional(),
+		id: z.uuid().optional(),
 		name: z.string().trim().min(1).max(80),
 		provider: z.enum(emailProviderIds),
 		credential: z.string().max(1_000).default(""),
@@ -75,12 +75,12 @@ export const emailChannelSchema = z
 	});
 
 export const emailChannelEnabledSchema = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	enabled: z.boolean(),
 });
 
 export const emailChannelOrderSchema = z
-	.object({ ids: z.array(z.string().uuid()).min(1).max(100) })
+	.object({ ids: z.array(z.uuid()).min(1).max(100) })
 	.superRefine((value, context) => {
 		if (new Set(value.ids).size !== value.ids.length)
 			context.addIssue({

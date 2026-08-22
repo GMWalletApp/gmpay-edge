@@ -17,7 +17,7 @@ export const providerEventListSchema = z.object({
 	pageIndex: z.number().int().min(0).default(0),
 	pageSize: z.number().int().min(1).max(100).default(10),
 	search: z.string().trim().max(128).default(""),
-	sourceId: z.string().uuid().optional(),
+	sourceId: z.uuid().optional(),
 	status: providerEventStatusSchema.optional(),
 });
 

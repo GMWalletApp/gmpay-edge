@@ -22,7 +22,6 @@ describe("datastore call counters", () => {
 			prepare: vi.fn(() => statement),
 			batch: vi.fn(async () => []),
 			exec: vi.fn(async () => ({ count: 1, duration: 0 })),
-			dump: vi.fn(async () => new ArrayBuffer(0)),
 		} as unknown as D1Database;
 		const db = instrumentD1(database, counters);
 
@@ -32,13 +31,11 @@ describe("datastore call counters", () => {
 		await db.prepare("SELECT 1").run();
 		await db.batch([]);
 		await db.exec("SELECT 1");
-		await db.dump();
 
 		expect(counters).toEqual({
 			d1Prepare: 4,
 			d1Batch: 1,
 			d1Exec: 1,
-			d1Dump: 1,
 			d1StatementBind: 1,
 			d1StatementRun: 1,
 			d1StatementFirst: 1,

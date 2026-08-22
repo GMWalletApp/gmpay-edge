@@ -29,7 +29,7 @@ describe("payment event source activation policy", () => {
 					enabled: true,
 					authTokenRotated: false,
 				}),
-			).toThrowError(
+			).toThrow(
 				expect.objectContaining({
 					code: "payment_event_source_not_ready",
 					status: 409,
@@ -55,7 +55,7 @@ describe("payment event source activation policy", () => {
 			const current = next.authTokenRotated
 				? ready
 				: { ...ready, enabled: false };
-			expect(() => paymentEventSourceUpdatePolicy(current, next)).toThrowError(
+			expect(() => paymentEventSourceUpdatePolicy(current, next)).toThrow(
 				expect.objectContaining({ code: "payment_event_source_not_ready" }),
 			);
 		}
@@ -78,7 +78,7 @@ describe("payment event source activation policy", () => {
 				enabled: true,
 				authTokenRotated: false,
 			}),
-		).toThrowError(
+		).toThrow(
 			expect.objectContaining({ code: "payment_event_source_not_ready" }),
 		);
 	});

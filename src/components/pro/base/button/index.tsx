@@ -106,7 +106,7 @@ export function ProButton({
 						{tooltip}
 						<TooltipPrimitive.Arrow
 							className={
-								"z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] bg-foreground fill-foreground"
+								"z-50 size-2.5 translate-y-[calc(-50%-2px)] rotate-45 rounded-[2px] bg-foreground fill-foreground"
 							}
 						/>
 					</TooltipPrimitive.Content>
@@ -209,7 +209,11 @@ async function copyToClipboard(text: string) {
 	textarea.select();
 
 	try {
-		if (!document.execCommand("copy"))
+		// Clipboard API requires a secure context; keep this fallback for HTTP deployments.
+		const legacyDocument = document as unknown as {
+			execCommand(commandId: "copy"): boolean;
+		};
+		if (!legacyDocument.execCommand("copy"))
 			throw new Error("Copy command was rejected.");
 	} finally {
 		document.body.removeChild(textarea);

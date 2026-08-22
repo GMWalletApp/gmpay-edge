@@ -34,14 +34,14 @@ const webhookRequestQuerySchema = z.record(z.string(), z.string());
 export const webhookRequestSnapshotSchema = z.discriminatedUnion("method", [
 	z.object({
 		method: z.literal("POST"),
-		url: z.string().url(),
+		url: z.url(),
 		headers: webhookRequestHeadersSchema,
 		body: webhookJsonObjectSchema,
 		query: z.null(),
 	}),
 	z.object({
 		method: z.literal("GET"),
-		url: z.string().url(),
+		url: z.url(),
 		headers: webhookRequestHeadersSchema,
 		body: z.null(),
 		query: webhookRequestQuerySchema,

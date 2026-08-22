@@ -26,18 +26,16 @@ const configSchema = z.object({
 });
 export type OkPayConfig = z.infer<typeof configSchema>;
 
-const responseSchema = z.object({ data: z.unknown().optional() }).passthrough();
-const transferSchema = z
-	.object({
-		// OKPay amounts are decimal strings at the protocol boundary. Do not
-		// coerce JSON numbers because their precision is not recoverable.
-		amount: z.string(),
-		coin: z.string(),
-		order_id: z.union([z.string(), z.number()]).optional(),
-		status: z.union([z.string(), z.number()]),
-		unique_id: z.union([z.string(), z.number()]).optional(),
-	})
-	.passthrough();
+const responseSchema = z.looseObject({ data: z.unknown().optional() });
+const transferSchema = z.looseObject({
+	// OKPay amounts are decimal strings at the protocol boundary. Do not
+	// coerce JSON numbers because their precision is not recoverable.
+	amount: z.string(),
+	coin: z.string(),
+	order_id: z.union([z.string(), z.number()]).optional(),
+	status: z.union([z.string(), z.number()]),
+	unique_id: z.union([z.string(), z.number()]).optional(),
+});
 
 export type OkPayHostedPayment = {
 	providerOrderId: string;

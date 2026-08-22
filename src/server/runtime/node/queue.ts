@@ -303,7 +303,7 @@ export class NodeQueueConsumer<T> {
 }
 
 function initializeQueueSchema(database: NodeDatabase) {
-	database.sqlite.exec(`CREATE TABLE IF NOT EXISTS node_queue_messages (
+	database.sqlite.run(`CREATE TABLE IF NOT EXISTS node_queue_messages (
 		id TEXT PRIMARY KEY NOT NULL,
 		queue TEXT NOT NULL,
 		body TEXT NOT NULL,

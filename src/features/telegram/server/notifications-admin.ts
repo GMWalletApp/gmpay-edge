@@ -131,7 +131,7 @@ export const listTelegramNotificationsFn = createServerFn({ method: "GET" })
 	});
 
 const notificationTargetInput = z.object({
-	botId: z.string().uuid(),
+	botId: z.uuid(),
 	name: z.string().trim().min(2).max(80),
 	targetType: z.enum(["private", "group", "channel"]),
 	targetId: z
@@ -208,7 +208,7 @@ export const createTelegramNotificationBindingFn = createServerFn({
 	});
 
 const notificationConfigurationInput = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	locale: z.enum(supportedLocales),
 	events: z
 		.array(z.enum(webhookEventTypes))
@@ -265,7 +265,7 @@ export const updateTelegramNotificationBindingFn = createServerFn({
 	});
 
 const notificationStateInput = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	enabled: z.boolean(),
 });
 
@@ -350,7 +350,7 @@ export const updateTelegramDefaultsFn = createServerFn({ method: "POST" })
 		return { events };
 	});
 
-const notificationIdInput = z.object({ id: z.string().uuid() });
+const notificationIdInput = z.object({ id: z.uuid() });
 
 export const deleteTelegramNotificationBindingFn = createServerFn({
 	method: "POST",

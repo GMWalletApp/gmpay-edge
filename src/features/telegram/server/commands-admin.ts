@@ -157,7 +157,7 @@ export const createTelegramCommandFn = createServerFn({ method: "POST" })
 		};
 	});
 
-const commandUpdateInput = commandInput.extend({ id: z.string().uuid() });
+const commandUpdateInput = commandInput.extend({ id: z.uuid() });
 
 export const updateTelegramCommandFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof commandUpdateInput>) =>
@@ -215,7 +215,7 @@ export const updateTelegramCommandFn = createServerFn({ method: "POST" })
 	});
 
 const commandStateInput = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	enabled: z.boolean(),
 });
 
@@ -247,7 +247,7 @@ export const setTelegramCommandEnabledFn = createServerFn({ method: "POST" })
 		return data;
 	});
 
-const commandIdInput = z.object({ id: z.string().uuid() });
+const commandIdInput = z.object({ id: z.uuid() });
 
 export const deleteTelegramCommandFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof commandIdInput>) =>

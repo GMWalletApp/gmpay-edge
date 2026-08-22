@@ -45,14 +45,14 @@ const gmpayCreateSchema = z.object({
 	network: z.string().trim().max(32).optional(),
 	amount: z.union([
 		orderAmountSchema,
-		z.number().finite().positive().transform(String).pipe(orderAmountSchema),
+		z.number().positive().transform(String).pipe(orderAmountSchema),
 	]),
-	notify_url: z.string().trim().url(),
+	notify_url: z.string().trim().pipe(z.url()),
 	signature: z
 		.string()
 		.trim()
 		.regex(/^[0-9a-f]{64}$/),
-	redirect_url: z.string().trim().url().optional(),
+	redirect_url: z.string().trim().pipe(z.url()).optional(),
 	name: z.string().trim().max(500).optional(),
 	payment_type: z.string().trim().max(32).optional(),
 });

@@ -239,7 +239,7 @@ export const reorderEmailChannelsFn = createServerFn({ method: "POST" })
 	});
 
 const testEmailSchema = z.object({
-	channelId: z.string().uuid().nullable(),
+	channelId: z.uuid().nullable(),
 	recipient: z.email().max(320),
 });
 

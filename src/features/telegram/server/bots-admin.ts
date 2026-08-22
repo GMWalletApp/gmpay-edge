@@ -109,7 +109,7 @@ export const createTelegramBotFn = createServerFn({ method: "POST" })
 	});
 
 const botUpdateInput = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	name: z.string().trim().min(2).max(80),
 	token: z
 		.string()
@@ -136,7 +136,7 @@ export const updateTelegramBotFn = createServerFn({ method: "POST" })
 		});
 	});
 
-const botAction = z.object({ id: z.string().uuid(), enabled: z.boolean() });
+const botAction = z.object({ id: z.uuid(), enabled: z.boolean() });
 
 export const setTelegramBotEnabledFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof botAction>) => botAction.parse(input))
@@ -154,7 +154,7 @@ export const setTelegramBotEnabledFn = createServerFn({ method: "POST" })
 		});
 	});
 
-const botIdInput = z.object({ id: z.string().uuid() });
+const botIdInput = z.object({ id: z.uuid() });
 
 export const testTelegramBotFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof botIdInput>) => botIdInput.parse(input))
