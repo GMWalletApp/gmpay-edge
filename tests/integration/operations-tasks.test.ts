@@ -248,6 +248,24 @@ describe("manual operations tasks", () => {
 		expect(runs.results).toEqual([{ status: "succeeded", count: 1 }]);
 	});
 
+	it("uses the task lease index when expiring stale runs", async () => {
+		const plan = await db
+			.prepare(
+				`EXPLAIN QUERY PLAN
+				 UPDATE operation_task_runs
+				 SET status = 'failed', completed_at = ?,
+				 duration_ms = MAX(0, ? - started_at),
+				 error_code = 'lease_expired'
+				 WHERE task = ? AND status = 'running' AND started_at <= ?`,
+			)
+			.bind(Date.now(), Date.now(), "lease-plan-test", Date.now())
+			.all<{ detail: string }>();
+
+		expect(plan.results.map(({ detail }) => detail).join("\n")).toContain(
+			"operation_task_runs_task_status_started_idx",
+		);
+	});
+
 	it("expires a stale task lease atomically before starting its replacement", async () => {
 		const now = Date.now();
 		const staleStartedAt = now - 30 * 60_000 - 1;

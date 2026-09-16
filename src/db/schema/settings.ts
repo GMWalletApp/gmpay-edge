@@ -120,6 +120,11 @@ export const operationTaskRuns = sqliteTable(
 			table.task,
 			table.startedAt,
 		),
+		index("operation_task_runs_task_status_started_idx").on(
+			table.task,
+			table.status,
+			table.startedAt,
+		),
 		index("operation_task_runs_retention_idx")
 			.on(table.completedAt, table.id)
 			.where(sql`${table.status} IN ('succeeded', 'failed')`),

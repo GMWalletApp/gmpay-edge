@@ -1,0 +1,1 @@
+CREATE INDEX `operation_task_runs_task_status_started_idx` ON `operation_task_runs` (`task`,`status`,`started_at`);
