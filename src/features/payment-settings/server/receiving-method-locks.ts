@@ -43,6 +43,7 @@ export class ReceivingMethodUnavailableError extends Error {
 		message = "The receiving method is already reserved for this amount",
 		readonly reason:
 			| "collision"
+			| "order_conflict"
 			| "not_ready"
 			| "limit_rate_unavailable"
 			| "below_minimum"
@@ -314,13 +315,12 @@ export async function allocateReceivingMethodAndSnapshot(
 				.bind(input.orderId, input.orderId),
 		);
 	const results = await db.batch(statements);
-	const orderChanged =
-		orderMutationIndex === undefined ||
-		(results[orderMutationIndex]?.meta.changes ?? 0) === 1;
+	const changed = (index: number | undefined) =>
+		index === undefined || (results[index]?.meta.changes ?? 0) === 1;
 	if (
-		orderChanged &&
-		(results[lockIndex]?.meta.changes ?? 0) === 1 &&
-		(results[snapshotIndex]?.meta.changes ?? 0) === 1
+		changed(orderMutationIndex) &&
+		changed(lockIndex) &&
+		changed(snapshotIndex)
 	)
 		return { lockId, receivingMethodId: input.receivingMethodId };
 	if (input.order) {
@@ -332,6 +332,13 @@ export async function allocateReceivingMethodAndSnapshot(
 			.first<{ value: number }>();
 		if (existing) throw new PaymentOrderConflictError();
 	}
+	// The lock statement runs before the existing-order update, so a stale
+	// order version is only visible once the amount itself was free.
+	if (input.existingOrder && changed(lockIndex))
+		throw new ReceivingMethodUnavailableError(
+			"The order changed while selecting a payment option",
+			"order_conflict",
+		);
 	throw new ReceivingMethodUnavailableError();
 }
 

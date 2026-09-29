@@ -460,7 +460,7 @@ describe("D1 payment processing flow", () => {
 				"SELECT id, status FROM order_payments WHERE order_id = 'order-late'",
 			)
 			.first<{ id: string; status: string }>();
-		expect(payment?.status).toBe("detected");
+		expect(payment?.status).toBe("pending_review");
 		const audit = await db
 			.prepare(
 				"SELECT action FROM audit_logs WHERE target_id = 'order-late' ORDER BY created_at DESC LIMIT 1",
@@ -837,6 +837,256 @@ describe("D1 payment processing flow", () => {
 			.run();
 	});
 
+	it("refreshes confirmations of a paid order without new events or a paid_at rewrite", async () => {
+		const now = Date.now();
+		const target = "TIdempotent111111111111111111111111";
+		await insertOrderWithSnapshot(db, {
+			id: "order-idempotent",
+			externalOrderId: "merchant-idempotent",
+			status: "pending",
+			target,
+			expiresAt: now + 900_000,
+			now,
+		});
+		const settled = transaction({
+			hash: "tx-idempotent",
+			to: target,
+			confirmations: 2,
+		});
+		await expect(
+			recordPaymentTransaction(env, "order-idempotent", settled),
+		).resolves.toEqual({ duplicate: false, status: "paid" });
+		const before = await orderPaymentState(db, "order-idempotent");
+		expect(before.paid_at).toBeTypeOf("number");
+		expect(before.events).toBe(1);
+
+		for (const confirmations of [3, 40]) {
+			await expect(
+				recordPaymentTransaction(env, "order-idempotent", {
+					...settled,
+					confirmations,
+					blockHash: "canonical",
+				}),
+			).resolves.toEqual({ duplicate: true, status: "paid" });
+		}
+		const after = await orderPaymentState(db, "order-idempotent");
+		expect(after).toEqual({
+			...before,
+			payment_confirmations: 40,
+			chain_confirmations: 40,
+		});
+	});
+
+	it("completes an expired order when its attributed payment confirms", async () => {
+		const now = Date.now();
+		const target = "TExpiredConfirming111111111111111";
+		await insertOrderWithSnapshot(db, {
+			id: "order-expired-confirming",
+			externalOrderId: "merchant-expired-confirming",
+			status: "expired",
+			target,
+			expiresAt: now - 60_000,
+			version: 2,
+			now,
+		});
+		await insertAttributedPayment(db, {
+			orderId: "order-expired-confirming",
+			hash: "tx-expired-confirming",
+			target,
+			amountUnits: "10000000",
+			now,
+		});
+		await expect(
+			recordPaymentTransaction(
+				env,
+				"order-expired-confirming",
+				transaction({
+					hash: "tx-expired-confirming",
+					to: target,
+					confirmations: 2,
+				}),
+			),
+		).resolves.toEqual({ duplicate: false, status: "paid" });
+		const events = await db
+			.prepare(
+				"SELECT type FROM webhook_events WHERE order_id = 'order-expired-confirming' ORDER BY created_at, rowid",
+			)
+			.all<{ type: string }>();
+		expect(events.results.map((event) => event.type)).toEqual(["order.paid"]);
+		await expect(
+			db
+				.prepare(
+					"SELECT status, received_amount_units FROM orders WHERE id = 'order-expired-confirming'",
+				)
+				.first(),
+		).resolves.toEqual({ status: "paid", received_amount_units: "10000000" });
+	});
+
+	it("keeps an expired order terminal while an attributed partial payment settles", async () => {
+		const now = Date.now();
+		const target = "TExpiredPartial1111111111111111111";
+		await insertOrderWithSnapshot(db, {
+			id: "order-expired-partial",
+			externalOrderId: "merchant-expired-partial",
+			status: "expired",
+			target,
+			expiresAt: now - 60_000,
+			version: 2,
+			now,
+		});
+		await insertAttributedPayment(db, {
+			orderId: "order-expired-partial",
+			hash: "tx-expired-partial",
+			target,
+			amountUnits: "4000000",
+			now,
+		});
+		await expect(
+			recordPaymentTransaction(
+				env,
+				"order-expired-partial",
+				transaction({
+					hash: "tx-expired-partial",
+					to: target,
+					amountUnits: 4_000_000n,
+					confirmations: 2,
+				}),
+			),
+		).resolves.toEqual({ duplicate: false, status: "expired" });
+		const state = await db
+			.prepare(
+				`SELECT o.status, o.received_amount_units, op.status AS payment_status,
+				 (SELECT COUNT(*) FROM webhook_events WHERE order_id = o.id) AS events
+				 FROM orders o JOIN order_payments op ON op.order_id = o.id WHERE o.id = 'order-expired-partial'`,
+			)
+			.first();
+		expect(state).toEqual({
+			status: "expired",
+			received_amount_units: "4000000",
+			payment_status: "confirmed",
+			events: 0,
+		});
+	});
+
+	it("counts reviewed late payments only once an administrator accepts them", async () => {
+		const now = Date.now();
+		const target = "TTwoLate11111111111111111111111111";
+		await insertOrderWithSnapshot(db, {
+			id: "order-two-late",
+			externalOrderId: "merchant-two-late",
+			status: "expired",
+			target,
+			expiresAt: now - 1,
+			version: 1,
+			now,
+		});
+		await recordPaymentTransaction(
+			env,
+			"order-two-late",
+			transaction({ hash: "tx-late-a", to: target, confirmations: 2 }),
+		);
+		await recordPaymentTransaction(
+			env,
+			"order-two-late",
+			transaction({
+				hash: "tx-late-b",
+				to: target,
+				amountUnits: 1_000_000n,
+				confirmations: 2,
+			}),
+		);
+		const payments = await db
+			.prepare(
+				"SELECT id, transaction_id, status FROM order_payments WHERE order_id = 'order-two-late' ORDER BY transaction_id",
+			)
+			.all<{ id: string; transaction_id: string; status: string }>();
+		expect(payments.results.map((payment) => payment.status)).toEqual([
+			"pending_review",
+			"pending_review",
+		]);
+		const [first, second] = payments.results;
+		if (!(first && second)) throw new Error("Expected two late payments");
+		await expect(
+			resolveLatePayment(env, first.id, "accept"),
+		).resolves.toMatchObject({ status: "paid" });
+		await expect(
+			db
+				.prepare(
+					"SELECT status, received_amount_units FROM orders WHERE id = 'order-two-late'",
+				)
+				.first(),
+		).resolves.toEqual({ status: "paid", received_amount_units: "10000000" });
+		await expect(
+			resolveLatePayment(env, second.id, "reject"),
+		).resolves.toMatchObject({ status: "paid", decision: "reject" });
+		await expect(
+			db
+				.prepare(
+					"SELECT status, received_amount_units FROM orders WHERE id = 'order-two-late'",
+				)
+				.first(),
+		).resolves.toEqual({ status: "paid", received_amount_units: "10000000" });
+	});
+
+	it("tracks chain state of a payment awaiting review without counting it", async () => {
+		const now = Date.now();
+		const target = "TReviewTrack1111111111111111111111";
+		await insertOrderWithSnapshot(db, {
+			id: "order-review-track",
+			externalOrderId: "merchant-review-track",
+			status: "expired",
+			target,
+			expiresAt: now - 1,
+			version: 1,
+			now,
+		});
+		const late = transaction({
+			hash: "tx-review-track",
+			to: target,
+			confirmations: 1,
+		});
+		await recordPaymentTransaction(env, "order-review-track", late);
+		await expect(
+			recordPaymentTransaction(env, "order-review-track", {
+				...late,
+				confirmations: 3,
+			}),
+		).resolves.toEqual({ duplicate: true, status: "expired" });
+		await expect(
+			db
+				.prepare(
+					`SELECT op.status, op.confirmations, o.received_amount_units,
+					 (SELECT COUNT(*) FROM webhook_events WHERE order_id = o.id) AS events
+					 FROM order_payments op JOIN orders o ON o.id = op.order_id
+					 WHERE o.id = 'order-review-track'`,
+				)
+				.first(),
+		).resolves.toEqual({
+			status: "pending_review",
+			confirmations: 3,
+			received_amount_units: "0",
+			events: 1,
+		});
+		await expect(
+			recordPaymentTransaction(env, "order-review-track", {
+				...late,
+				confirmations: 0,
+				canonical: false,
+				blockHash: "fork-review",
+			}),
+		).resolves.toEqual({ duplicate: true, status: "expired" });
+		const payment = await db
+			.prepare(
+				"SELECT id, status FROM order_payments WHERE order_id = 'order-review-track'",
+			)
+			.first<{ id: string; status: string }>();
+		expect(payment?.status).toBe("reorged");
+		if (!payment) throw new Error("Expected reviewed payment");
+		await expect(
+			resolveLatePayment(env, payment.id, "accept"),
+		).rejects.toMatchObject({ code: "payment_decision_already_resolved" });
+	});
+
 	it("does not guess a partial transfer between shared-address orders", async () => {
 		const now = Date.now();
 		const target = "TAmbiguous11111111111111111111111111";
@@ -953,6 +1203,80 @@ async function seedOrder(db: D1Database) {
 		expiresAt: now + 900_000,
 		now,
 	});
+}
+
+async function orderPaymentState(db: D1Database, orderId: string) {
+	const state = await db
+		.prepare(
+			`SELECT o.status, o.paid_at, op.confirmations AS payment_confirmations,
+			 op.confirmed_at, bt.confirmations AS chain_confirmations,
+			 (SELECT COUNT(*) FROM webhook_events WHERE order_id = o.id) AS events
+			 FROM orders o JOIN order_payments op ON op.order_id = o.id
+			 JOIN blockchain_transactions bt
+			 ON op.transaction_id = bt.network || ':' || bt.tx_hash || ':' || bt.event_index
+			 WHERE o.id = ?`,
+		)
+		.bind(orderId)
+		.first<{
+			status: string;
+			paid_at: number | null;
+			payment_confirmations: number;
+			confirmed_at: number | null;
+			chain_confirmations: number;
+			events: number;
+		}>();
+	if (!state) throw new Error(`Missing payment state for ${orderId}`);
+	return state;
+}
+
+/** An attributed, still confirming payment that was counted before the order expired. */
+async function insertAttributedPayment(
+	db: D1Database,
+	input: {
+		orderId: string;
+		hash: string;
+		target: string;
+		amountUnits: string;
+		now: number;
+	},
+) {
+	await db.batch([
+		db
+			.prepare(
+				`INSERT INTO order_payments (id, order_id, transaction_id, amount_units,
+				 confirmations, status, detected_at, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, 1, 'confirming', ?, ?, ?)`,
+			)
+			.bind(
+				crypto.randomUUID(),
+				input.orderId,
+				`tron:${input.hash}:0`,
+				input.amountUnits,
+				input.now,
+				input.now,
+				input.now,
+			),
+		db
+			.prepare(
+				`INSERT INTO blockchain_transactions (id, network, tx_hash, event_index,
+				 from_address, to_address, asset_code, amount_units, block_number, block_hash,
+				 confirmations, status, observed_at, created_at, updated_at)
+				 VALUES (?, 'tron', ?, 0, 'TFrom1111111111111111111111111111', ?, 'USDT', ?, '100',
+				 'canonical', 1, 'pending', ?, ?, ?)`,
+			)
+			.bind(
+				crypto.randomUUID(),
+				input.hash,
+				input.target,
+				input.amountUnits,
+				input.now,
+				input.now,
+				input.now,
+			),
+		db
+			.prepare("UPDATE orders SET received_amount_units = ? WHERE id = ?")
+			.bind(input.amountUnits, input.orderId),
+	]);
 }
 
 async function insertOrderWithSnapshot(

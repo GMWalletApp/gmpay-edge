@@ -1,8 +1,7 @@
 import {
-	convertByRate,
+	convertByRates,
 	decimalPlaces,
 	decimalToUnits,
-	divideByRate,
 	unitsToDecimal,
 } from "#/lib/money";
 
@@ -14,6 +13,18 @@ export type ExchangeRateQuote = {
 	finalRate: string;
 	observedAt: number;
 };
+
+type ObservedRate = {
+	base: string;
+	quote: string;
+	raw_rate: string;
+	rate: string;
+	source: string;
+	adjustment_bps: number;
+	observed_at: number;
+};
+
+type QuoteLeg = { observed: ObservedRate; invert: boolean };
 
 const dollarParityAssets = new Set(["USD", "USDT", "USDC"]);
 
@@ -29,6 +40,17 @@ export async function quoteUsdAmountMinor(
 	return quote ? decimalToUnits(quote.paymentAmount, 2).toString() : null;
 }
 
+/**
+ * Quotes `amount` of `currency` in `paymentAsset`. A direct observation of the
+ * pair is used when present (USD, USDT and USDC are interchangeable on either
+ * side); other fiat currencies bridge through USD with the catalog's USD/fiat
+ * and asset/USDT rows. Built-in catalog defaults are seeded with
+ * `observed_at = 0` and stay quotable until the first synchronization replaces
+ * them; every observed rate is usable only inside its validity window.
+ *
+ * A composite quote records the product of its leg rates, the sum of their
+ * basis-point adjustments, the oldest observation time and both sources.
+ */
 export async function quoteWithExchangeRate(
 	db: D1Database,
 	input: {
@@ -40,76 +62,49 @@ export async function quoteWithExchangeRate(
 	},
 ): Promise<ExchangeRateQuote | null> {
 	const now = input.now ?? Date.now();
-	if (
-		input.currency === input.paymentAsset ||
-		(dollarParityAssets.has(input.paymentAsset) &&
-			dollarParityAssets.has(input.currency))
-	)
+	if (sameUnit(input.currency, input.paymentAsset))
 		return parityQuote(input.amount, input.assetDecimals, now);
 
+	const symbols = [input.currency, input.paymentAsset, ...dollarParityAssets];
 	const observed = await db
 		.prepare(
 			`SELECT base, quote, raw_rate, rate, source, adjustment_bps, observed_at
 			 FROM exchange_rates
-			 WHERE raw_rate IS NOT NULL AND rate IS NOT NULL AND (
-			  (base = ? AND quote = ?) OR (base = ? AND quote = ?)
-			  OR (? IN ('USD', 'USDT', 'USDC') AND
-			   ((base IN ('USD', 'USDT', 'USDC') AND quote = ?)
-			    OR (base = ? AND quote IN ('USD', 'USDT', 'USDC'))))
-			 )
-			 ORDER BY CASE WHEN base = ? OR quote = ? THEN 0 ELSE 1 END,
-			 observed_at DESC LIMIT 1`,
+			 WHERE raw_rate IS NOT NULL AND rate IS NOT NULL
+			 AND (observed_at = 0 OR expires_at > ?)
+			 AND base IN (?, ?, ?, ?, ?) AND quote IN (?, ?, ?, ?, ?)
+			 ORDER BY observed_at DESC`,
 		)
-		.bind(
-			input.paymentAsset,
-			input.currency,
-			input.currency,
-			input.paymentAsset,
-			input.paymentAsset,
-			input.currency,
-			input.currency,
-			input.paymentAsset,
-			input.paymentAsset,
+		.bind(now, ...symbols, ...symbols)
+		.all<ObservedRate>();
+	const legs = quoteLegs(observed.results, input.currency, input.paymentAsset);
+	if (
+		!legs ||
+		legs.some(
+			({ observed }) =>
+				decimalToUnits(observed.rate, decimalPlaces(observed.rate)) <= 0n,
 		)
-		.first<{
-			base: string;
-			quote: string;
-			raw_rate: string;
-			rate: string;
-			source: string;
-			adjustment_bps: number;
-			observed_at: number;
-		}>();
-	if (!observed) return null;
-	if (decimalToUnits(observed.rate, decimalPlaces(observed.rate)) <= 0n)
+	)
 		return null;
-	const amountDecimals = decimalPlaces(input.amount);
-	const rateDecimals = decimalPlaces(observed.rate);
-	const divide =
-		observed.base === input.paymentAsset ||
-		(dollarParityAssets.has(observed.base) &&
-			dollarParityAssets.has(input.paymentAsset));
 	return {
-		paymentAmount: divide
-			? divideByRate(
-					input.amount,
-					amountDecimals,
-					observed.rate,
-					rateDecimals,
-					input.assetDecimals,
-				)
-			: convertByRate(
-					input.amount,
-					amountDecimals,
-					observed.rate,
-					rateDecimals,
-					input.assetDecimals,
-				),
-		source: observed.source,
-		rawRate: observed.raw_rate,
-		adjustmentBps: observed.adjustment_bps,
-		finalRate: observed.rate,
-		observedAt: observed.observed_at,
+		paymentAmount: convertByRates(
+			input.amount,
+			decimalPlaces(input.amount),
+			legs.map(({ observed, invert }) => ({ rate: observed.rate, invert })),
+			input.assetDecimals,
+		),
+		source: legs.map(({ observed }) => observed.source).join("+"),
+		rawRate: legs
+			.map(({ observed }) => observed.raw_rate)
+			.reduce(multiplyDecimals),
+		adjustmentBps: legs.reduce(
+			(sum, { observed }) => sum + observed.adjustment_bps,
+			0,
+		),
+		finalRate: legs
+			.map(({ observed }) => observed.rate)
+			.reduce(multiplyDecimals),
+		observedAt: Math.min(...legs.map(({ observed }) => observed.observed_at)),
 	};
 }
 
@@ -120,6 +115,47 @@ export function applyBasisPoints(rate: string, adjustmentBps: number) {
 	const rateUnits = decimalToUnits(rate, decimals);
 	const adjusted = rateUnits * BigInt(10_000 + adjustmentBps);
 	return unitsToDecimal(adjusted, decimals + 4);
+}
+
+function quoteLegs(rates: readonly ObservedRate[], from: string, to: string) {
+	const direct = findLeg(rates, from, to);
+	if (direct) return [direct];
+	if (dollarParityAssets.has(from) || dollarParityAssets.has(to)) return null;
+	const toDollar = findLeg(rates, from, "USD");
+	const fromDollar = findLeg(rates, "USD", to);
+	return toDollar && fromDollar ? [toDollar, fromDollar] : null;
+}
+
+/** Rows arrive freshest first, so the first connecting observation wins. */
+function findLeg(
+	rates: readonly ObservedRate[],
+	from: string,
+	to: string,
+): QuoteLeg | null {
+	for (const observed of rates) {
+		if (sameUnit(observed.base, observed.quote)) continue;
+		if (sameUnit(observed.base, from) && sameUnit(observed.quote, to))
+			return { observed, invert: false };
+		if (sameUnit(observed.base, to) && sameUnit(observed.quote, from))
+			return { observed, invert: true };
+	}
+	return null;
+}
+
+function sameUnit(left: string, right: string) {
+	return (
+		left === right ||
+		(dollarParityAssets.has(left) && dollarParityAssets.has(right))
+	);
+}
+
+function multiplyDecimals(left: string, right: string) {
+	const leftDecimals = decimalPlaces(left);
+	const rightDecimals = decimalPlaces(right);
+	return unitsToDecimal(
+		decimalToUnits(left, leftDecimals) * decimalToUnits(right, rightDecimals),
+		leftDecimals + rightDecimals,
+	);
 }
 
 function parityQuote(

@@ -180,6 +180,98 @@ describe("provider payment event consumer", () => {
 		});
 	});
 
+	it("records a post-expiry transfer as a late payment without degrading the source", async () => {
+		await resetOrder(db);
+		const expiredAt = Date.now() - 600_000;
+		await db.batch([
+			db
+				.prepare(
+					"UPDATE payment_ingresses SET health_status = 'healthy', last_error_code = NULL WHERE id = ?",
+				)
+				.bind(sourceId),
+			db.prepare(
+				"INSERT INTO system_settings (key, value, is_secret, created_at, updated_at) VALUES ('orders.immediate_release_mode', 'true', 0, 0, 0)",
+			),
+			db
+				.prepare(
+					"UPDATE orders SET status = 'expired', expires_at = ?, version = version + 1 WHERE id = 'order-provider'",
+				)
+				.bind(expiredAt),
+			db.prepare(
+				"DELETE FROM receiving_method_locks WHERE order_id = 'order-provider'",
+			),
+		]);
+		try {
+			await insertEvent(db, "event-late-transfer", "tx-late-transfer");
+			const message = queueMessage("event-late-transfer");
+			await handlePaymentProviderEvent(message, { DB: db } as Env);
+
+			expect(message.ack).toHaveBeenCalledOnce();
+			expect(await providerState(db, "event-late-transfer")).toEqual({
+				event_status: "succeeded",
+				last_error_code: null,
+				order_status: "expired",
+				payments: 1,
+			});
+			await expect(
+				db
+					.prepare(
+						"SELECT status FROM order_payments WHERE order_id = 'order-provider'",
+					)
+					.first(),
+			).resolves.toEqual({ status: "pending_review" });
+
+			// A transfer far outside the late window matches nothing: ignored,
+			// but the ingress stays healthy because the RPC confirmed the transfer.
+			mocks.createPaymentMethodAdapters.mockResolvedValue([
+				{
+					adapter: adapter((hash) => ({
+						...transaction(hash),
+						timestamp: new Date(expiredAt + 3 * 86_400_000),
+					})),
+				},
+			]);
+			await insertEvent(db, "event-stray-transfer", "tx-stray-transfer");
+			const stray = queueMessage("event-stray-transfer");
+			await handlePaymentProviderEvent(stray, { DB: db } as Env);
+			expect(stray.ack).toHaveBeenCalledOnce();
+			expect(await providerState(db, "event-stray-transfer")).toMatchObject({
+				event_status: "ignored",
+				last_error_code: "payment_attribution_not_found",
+				payments: 1,
+			});
+			await expect(
+				db
+					.prepare(
+						"SELECT health_status, last_error_code FROM payment_ingresses WHERE id = ?",
+					)
+					.bind(sourceId)
+					.first(),
+			).resolves.toEqual({ health_status: "healthy", last_error_code: null });
+		} finally {
+			await db.batch([
+				db.prepare(
+					"DELETE FROM system_settings WHERE key = 'orders.immediate_release_mode'",
+				),
+				db
+					.prepare(
+						"UPDATE orders SET status = 'pending', expires_at = ?, version = version + 1 WHERE id = 'order-provider'",
+					)
+					.bind(Date.now() + 900_000),
+				db
+					.prepare(
+						`INSERT INTO receiving_method_locks
+					 (id, receiving_method_id, asset_id, order_id, expected_amount_units,
+					  collision_key, expires_at, reusable_at, created_at)
+					 VALUES ('lock-provider', 'method-ethereum', 'asset-usdc', 'order-provider',
+					  '10000000', 'method-ethereum:asset-usdc:10000000', ?, ?, ?)`,
+					)
+					.bind(Date.now() + 900_000, Date.now() + 86_400_000, Date.now()),
+			]);
+			await resetOrder(db);
+		}
+	});
+
 	it("retains an ambiguous shared-address transfer without mutating money", async () => {
 		await resetOrder(db);
 		await insertCompetingOrder(db);

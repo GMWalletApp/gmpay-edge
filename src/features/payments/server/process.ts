@@ -16,8 +16,8 @@ import {
 	paymentWebhookInstance,
 } from "#/features/payments/server/payment-events";
 import {
-	type PaymentAggregate,
 	PaymentAttributionConflictError,
+	type PaymentStatus,
 	paymentTransactionId,
 	reconcileOrderPayment,
 } from "#/features/payments/server/reconciliation";
@@ -27,6 +27,16 @@ import type { NormalizedTransaction } from "#/integrations/chains/types";
 import { DomainError } from "#/lib/domain-error";
 import { loadOperationalSettings } from "#/server/operational-settings";
 import type { RuntimeConfig } from "#/server/runtime-config";
+
+type StoredPayment = {
+	id: string;
+	order_id: string;
+	amount_units: string;
+	confirmations: number;
+	status: PaymentStatus;
+	block_hash: string | null;
+	blockchain_status: string | null;
+};
 
 export async function recordPaymentTransaction(
 	env: PaymentRuntime,
@@ -92,21 +102,6 @@ export async function recordPaymentTransaction(
 			"Transaction does not match the payment target",
 		);
 	}
-	if (
-		!reviewApproval &&
-		(order.status === "expired" || order.status === "cancelled")
-	) {
-		const policy = (await loadOperationalSettings(env.DB)).latePaymentPolicy;
-		if (policy !== "accept") {
-			return recordLatePayment(
-				env,
-				{ ...order, paymentAmount: order.paymentAmount },
-				transaction,
-				policy,
-				commit?.guard,
-			);
-		}
-	}
 
 	const transactionId = paymentTransactionId(transaction);
 	const existingPayment = await env.DB.prepare(
@@ -122,15 +117,7 @@ export async function recordPaymentTransaction(
 			transaction.eventIndex,
 			transactionId,
 		)
-		.first<{
-			id: string;
-			order_id: string;
-			amount_units: string;
-			confirmations: number;
-			status: PaymentAggregate["status"];
-			block_hash: string | null;
-			blockchain_status: string | null;
-		}>();
+		.first<StoredPayment>();
 	if (existingPayment && existingPayment.order_id !== orderId) {
 		throw new PaymentAttributionConflictError();
 	}
@@ -144,7 +131,24 @@ export async function recordPaymentTransaction(
 			"A previously observed transaction changed amount",
 		);
 	}
-	const paymentStatus: PaymentAggregate["status"] =
+	const terminalOrder =
+		order.status === "expired" || order.status === "cancelled";
+	// Only a transfer that is not yet attributed can be late; confirmation
+	// updates of an attributed payment never pass through the late policy.
+	if (!existingPayment && terminalOrder && !reviewApproval) {
+		const policy = (await loadOperationalSettings(env.DB)).latePaymentPolicy;
+		if (policy !== "accept") {
+			return recordLatePayment(
+				env,
+				{ ...order, paymentAmount: order.paymentAmount },
+				transaction,
+				policy,
+				commit?.guard,
+			);
+		}
+	}
+
+	const paymentStatus: PaymentStatus =
 		transaction.canonical === false
 			? "reorged"
 			: !transaction.success
@@ -154,32 +158,64 @@ export async function recordPaymentTransaction(
 					: transaction.confirmations > 0
 						? "confirming"
 						: "detected";
-	const blockchainStatus =
-		paymentStatus === "reorged"
-			? "reorged"
-			: paymentStatus === "rejected"
-				? "failed"
-				: paymentStatus === "confirmed"
-					? "confirmed"
-					: "pending";
-	if (
-		existingPayment &&
-		existingPayment.confirmations === transaction.confirmations &&
-		existingPayment.status === paymentStatus &&
-		existingPayment.block_hash === transaction.blockHash &&
-		existingPayment.blockchain_status === blockchainStatus &&
-		!(reviewApproval && ["expired", "cancelled"].includes(order.status))
-	) {
-		if (reviewApproval || commit?.guard)
-			await env.DB.batch([
-				...(commit?.guard ? [commit.guard] : []),
-				...(reviewApproval
-					? paymentReviewApprovalStatements(env.DB, orderId, reviewApproval)
-					: []),
-			]);
-		return { duplicate: true, status: order.status };
+	const now = Date.now();
+	const guard = commit?.guard ? [commit.guard] : [];
+	const approvalStatements = () =>
+		reviewApproval
+			? paymentReviewApprovalStatements(env.DB, orderId, reviewApproval, now)
+			: [];
+
+	if (existingPayment) {
+		const awaitingReview =
+			existingPayment.status === "pending_review" && !reviewApproval;
+		if (
+			awaitingReview ||
+			(existingPayment.status === paymentStatus &&
+				!(reviewApproval && terminalOrder))
+		) {
+			// Confirmation growth of an unchanged payment is a duplicate observation:
+			// refresh the stored chain state without a new order event. A payment
+			// awaiting review stays outside the balance until it is decided, unless
+			// the chain dropped or rejected the transfer.
+			const trackedStatus: PaymentStatus =
+				awaitingReview &&
+				paymentStatus !== "reorged" &&
+				paymentStatus !== "rejected"
+					? "pending_review"
+					: paymentStatus;
+			const blockchainStatus = blockchainStatusFor(trackedStatus);
+			const changed =
+				existingPayment.status !== trackedStatus ||
+				existingPayment.confirmations !== transaction.confirmations ||
+				existingPayment.block_hash !== transaction.blockHash ||
+				existingPayment.blockchain_status !== blockchainStatus;
+			if (changed || guard.length || reviewApproval)
+				await env.DB.batch([
+					...guard,
+					...(changed
+						? [
+								blockchainTransactionUpsert(
+									env.DB,
+									transaction,
+									blockchainStatus,
+									now,
+								),
+								paymentRowUpdate(
+									env.DB,
+									existingPayment.id,
+									transaction.confirmations,
+									trackedStatus,
+									now,
+								),
+							]
+						: []),
+					...approvalStatements(),
+				]);
+			return { duplicate: true, status: order.status };
+		}
 	}
 
+	const blockchainStatus = blockchainStatusFor(paymentStatus);
 	const prior = await env.DB.prepare(
 		"SELECT amount_units, confirmations, status FROM order_payments WHERE order_id = ? AND transaction_id <> ?",
 	)
@@ -187,7 +223,7 @@ export async function recordPaymentTransaction(
 		.all<{
 			amount_units: string;
 			confirmations: number;
-			status: PaymentAggregate["status"];
+			status: PaymentStatus;
 		}>();
 	const aggregate = reconcileOrderPayment({
 		expectedUnits: BigInt(order.expected_amount_units),
@@ -205,17 +241,43 @@ export async function recordPaymentTransaction(
 			},
 		],
 	});
+	const completesOrder =
+		aggregate.status === "paid" || aggregate.status === "overpaid";
+	if (existingPayment && terminalOrder && !reviewApproval && !completesOrder) {
+		// An attributed payment changed on an expired or cancelled order without
+		// settling it. The order keeps its terminal status; only the payment rows
+		// and the balance follow the chain.
+		await env.DB.batch([
+			...guard,
+			blockchainTransactionUpsert(env.DB, transaction, blockchainStatus, now),
+			paymentRowUpdate(
+				env.DB,
+				existingPayment.id,
+				transaction.confirmations,
+				paymentStatus,
+				now,
+			),
+			env.DB.prepare(
+				`UPDATE orders SET received_amount_units = ?, version = version + 1,
+				 updated_at = ? WHERE id = ? AND version = ?`,
+			).bind(aggregate.receivedUnits.toString(), now, orderId, order.version),
+			env.DB.prepare(
+				`SELECT CASE WHEN changes() = 1 THEN 1
+				 ELSE json_extract('payment update conflict', '$') END`,
+			),
+		]);
+		return { duplicate: false, status: order.status };
+	}
 	assertTransition(
 		order.status,
 		aggregate.status,
 		transaction.canonical === false
 			? "chain_reorg"
-			: existingPayment
+			: existingPayment && existingPayment.status !== "pending_review"
 				? "confirmations_updated"
 				: "payment_detected",
 	);
 
-	const now = Date.now();
 	const eventId = crypto.randomUUID();
 	const eventType = `order.${aggregate.status}` as OrderWebhookPayload["event"];
 	const payload = {
@@ -250,40 +312,15 @@ export async function recordPaymentTransaction(
 
 	const paymentRowId = existingPayment?.id ?? crypto.randomUUID();
 	const statements = [
-		...(commit?.guard ? [commit.guard] : []),
-		env.DB.prepare(
-			`INSERT INTO blockchain_transactions (id, network, tx_hash, event_index, from_address, to_address, asset_code, amount_units, block_number, block_hash, confirmations, status, observed_at, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT(network, tx_hash, event_index) DO UPDATE SET
-			 block_number = excluded.block_number, block_hash = excluded.block_hash,
-			 confirmations = excluded.confirmations, status = excluded.status,
-			 updated_at = excluded.updated_at`,
-		).bind(
-			crypto.randomUUID(),
-			transaction.network,
-			transaction.hash,
-			transaction.eventIndex,
-			transaction.from,
-			transaction.to,
-			transaction.assetCode,
-			transaction.amountUnits.toString(),
-			transaction.blockNumber.toString(),
-			transaction.blockHash,
-			transaction.confirmations,
-			blockchainStatus,
-			transaction.timestamp.getTime(),
-			now,
-			now,
-		),
+		...guard,
+		blockchainTransactionUpsert(env.DB, transaction, blockchainStatus, now),
 		existingPayment
-			? env.DB.prepare(
-					"UPDATE order_payments SET confirmations = ?, status = ?, confirmed_at = ?, updated_at = ? WHERE id = ?",
-				).bind(
+			? paymentRowUpdate(
+					env.DB,
+					existingPayment.id,
 					transaction.confirmations,
 					paymentStatus,
-					paymentStatus === "confirmed" ? now : null,
 					now,
-					existingPayment.id,
 				)
 			: env.DB.prepare(
 					"INSERT OR IGNORE INTO order_payments (id, order_id, transaction_id, amount_units, confirmations, status, detected_at, confirmed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -300,15 +337,15 @@ export async function recordPaymentTransaction(
 					now,
 				),
 		env.DB.prepare(
-			`UPDATE orders SET status = ?, received_amount_units = ?, paid_at = ?,
+			`UPDATE orders SET status = ?, received_amount_units = ?,
+			 paid_at = CASE WHEN ? = 1 THEN COALESCE(paid_at, ?) ELSE NULL END,
 			 version = version + 1, updated_at = ? WHERE id = ? AND version = ?
 			 AND EXISTS (SELECT 1 FROM order_payments WHERE id = ? AND order_id = ?)`,
 		).bind(
 			aggregate.status,
 			aggregate.receivedUnits.toString(),
-			aggregate.status === "paid" || aggregate.status === "overpaid"
-				? now
-				: null,
+			completesOrder ? 1 : 0,
+			now,
 			now,
 			orderId,
 			order.version,
@@ -319,7 +356,7 @@ export async function recordPaymentTransaction(
 			`SELECT CASE WHEN changes() = 1 THEN 1
 			 ELSE json_extract('payment update conflict', '$') END`,
 		),
-		...(["paid", "overpaid"].includes(aggregate.status)
+		...(completesOrder
 			? [
 					env.DB.prepare(
 						`UPDATE receiving_method_locks SET released_at = ?
@@ -345,9 +382,7 @@ export async function recordPaymentTransaction(
 				"INSERT INTO webhook_deliveries (id, event_id, order_id, api_key_id, status, attempt_count, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', 0, ?, ?)",
 			).bind(id, eventId, orderId, endpoint.api_key_id, now, now),
 		),
-		...(reviewApproval
-			? paymentReviewApprovalStatements(env.DB, orderId, reviewApproval, now)
-			: []),
+		...approvalStatements(),
 	];
 	try {
 		await env.DB.batch(statements);
@@ -367,15 +402,7 @@ export async function recordPaymentTransaction(
 				transaction.eventIndex,
 				transactionId,
 			)
-			.first<{
-				order_id: string;
-				amount_units: string;
-				confirmations: number;
-				status: PaymentAggregate["status"];
-				block_hash: string | null;
-				blockchain_status: string | null;
-				order_status: OrderStatus;
-			}>();
+			.first<StoredPayment & { order_status: OrderStatus }>();
 		if (attributed?.order_id !== orderId) {
 			if (attributed) throw new PaymentAttributionConflictError();
 			throw error;
@@ -400,4 +427,62 @@ export async function recordPaymentTransaction(
 		eventType,
 	);
 	return { duplicate: false, status: aggregate.status };
+}
+
+function blockchainStatusFor(status: PaymentStatus) {
+	if (status === "reorged") return "reorged";
+	if (status === "rejected") return "failed";
+	if (status === "confirmed") return "confirmed";
+	return "pending";
+}
+
+function blockchainTransactionUpsert(
+	db: D1Database,
+	transaction: NormalizedTransaction,
+	status: string,
+	now: number,
+) {
+	return db
+		.prepare(
+			`INSERT INTO blockchain_transactions (id, network, tx_hash, event_index, from_address, to_address, asset_code, amount_units, block_number, block_hash, confirmations, status, observed_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(network, tx_hash, event_index) DO UPDATE SET
+			 block_number = excluded.block_number, block_hash = excluded.block_hash,
+			 confirmations = excluded.confirmations, status = excluded.status,
+			 updated_at = excluded.updated_at`,
+		)
+		.bind(
+			crypto.randomUUID(),
+			transaction.network,
+			transaction.hash,
+			transaction.eventIndex,
+			transaction.from,
+			transaction.to,
+			transaction.assetCode,
+			transaction.amountUnits.toString(),
+			transaction.blockNumber.toString(),
+			transaction.blockHash,
+			transaction.confirmations,
+			status,
+			transaction.timestamp.getTime(),
+			now,
+			now,
+		);
+}
+
+/** `confirmed_at` records the first confirmation and survives later refreshes. */
+function paymentRowUpdate(
+	db: D1Database,
+	paymentId: string,
+	confirmations: number,
+	status: PaymentStatus,
+	now: number,
+) {
+	return db
+		.prepare(
+			`UPDATE order_payments SET confirmations = ?, status = ?,
+			 confirmed_at = CASE WHEN ? = 'confirmed' THEN COALESCE(confirmed_at, ?) ELSE NULL END,
+			 updated_at = ? WHERE id = ?`,
+		)
+		.bind(confirmations, status, status, now, now, paymentId);
 }

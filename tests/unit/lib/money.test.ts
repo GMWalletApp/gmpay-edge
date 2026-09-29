@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-	convertByRate,
+	convertByRates,
 	decimalToUnits,
-	divideByRate,
 	quantizeUnitsUp,
 	unitsToDecimal,
 } from "#/lib/money";
@@ -15,9 +14,30 @@ describe("money", () => {
 	it("rejects precision loss by default", () =>
 		expect(() => decimalToUnits("1.0000001", 6)).toThrow(/precision/));
 	it("rounds a quoted payment amount up", () =>
-		expect(convertByRate("10.00", 2, "0.333333", 6, 6)).toBe("3.33333"));
+		expect(
+			convertByRates("10.00", 2, [{ rate: "0.333333", invert: false }], 6),
+		).toBe("3.33333"));
 	it("divides by a base-to-quote rate and rounds payment up", () =>
-		expect(divideByRate("100.00", 2, "3.000000", 6, 6)).toBe("33.333334"));
+		expect(
+			convertByRates("100.00", 2, [{ rate: "3.000000", invert: true }], 6),
+		).toBe("33.333334"));
+	it("composes rate legs exactly and rounds only once", () => {
+		// 700 CNY -> 100 USD (÷7) -> 307.502... TRX (÷0.3252) rounds up once.
+		expect(
+			convertByRates(
+				"700",
+				0,
+				[
+					{ rate: "7", invert: true },
+					{ rate: "0.3252", invert: true },
+				],
+				6,
+			),
+		).toBe("307.503076");
+		expect(() =>
+			convertByRates("1", 0, [{ rate: "0", invert: true }], 6),
+		).toThrow(/positive/);
+	});
 	it("quantizes payment units upward without floating point", () => {
 		expect(quantizeUnitsUp(14_925_374n, 6, 4)).toEqual({
 			amountUnits: 14_925_400n,

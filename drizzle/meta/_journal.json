@@ -64,6 +64,13 @@
       "when": 1789567149275,
       "tag": "0008_operation_task_lease_index",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790661413935,
+      "tag": "0009_audit_hardening",
+      "breakpoints": true
     }
   ]
 }

@@ -90,7 +90,7 @@ export async function createOrder(
 		const { initializeOkPayOrder } = await import(
 			"#/features/orders/server/okpay-hosted"
 		);
-		await initializeOkPayOrder(db, order, input);
+		await initializeOkPayOrder(db, order, input, { deleteOrder: true });
 	}
 	return order;
 }

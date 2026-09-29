@@ -81,7 +81,7 @@ export function parseGmpayQueryInput(value: unknown) {
 }
 
 export function toCreateOrderInput(input: GmpayCreateInput): CreateOrderInput {
-	return createOrderSchema.parse({
+	return parseMerchantOrderInput({
 		externalOrderId: input.order_id,
 		amount: input.amount,
 		currency: input.currency,
@@ -94,18 +94,48 @@ export function toCreateOrderInput(input: GmpayCreateInput): CreateOrderInput {
 	});
 }
 
+/** Shared order constraints rejected after protocol parsing stay 400-class errors. */
+export function parseMerchantOrderInput(value: unknown): CreateOrderInput {
+	const parsed = createOrderSchema.safeParse(value);
+	if (parsed.success) return parsed.data;
+	throw merchantParameterError(parsed.error.issues);
+}
+
+export function merchantParameterError(
+	issues: readonly { path: PropertyKey[] }[],
+) {
+	const field = issues[0]?.path[0];
+	if (field === "amount")
+		return new OrderServiceError("invalid_amount", "Invalid order amount", 400);
+	if (field === "currency")
+		return new OrderServiceError(
+			"invalid_currency",
+			"Unsupported order currency",
+			400,
+		);
+	return new OrderServiceError(
+		"invalid_parameters",
+		"Invalid request parameters",
+		400,
+	);
+}
+
 export async function authenticateGmpayCreate(
 	db: D1Database,
 	input: GmpayCreateInput,
+	requestId?: string,
 ) {
-	return authenticateGmpayParameters(db, input, "orders:create");
+	return authenticateGmpayParameters(db, input, "orders:create", {
+		requestId,
+	});
 }
 
 export async function authenticateGmpayQuery(
 	db: D1Database,
 	input: z.infer<typeof gmpayQuerySchema>,
+	requestId?: string,
 ) {
-	return authenticateGmpayParameters(db, input, "orders:read");
+	return authenticateGmpayParameters(db, input, "orders:read", { requestId });
 }
 
 export function gmpayCreateResponse(order: ApiOrder, requestId: string) {
@@ -154,6 +184,8 @@ export function gmpayOrderError(error: OrderServiceError) {
 	const codes: Record<string, number> = {
 		external_order_exists: 10002,
 		invalid_amount: 10004,
+		invalid_currency: 10009,
+		invalid_parameters: 10009,
 		expiry_exceeds_limit: 10009,
 		receiving_method_not_found: 10003,
 		receiving_method_not_ready: 10003,
@@ -173,6 +205,8 @@ export function gmpayOrderMessage(error: OrderServiceError) {
 	const messages: Record<string, string> = {
 		external_order_exists: "External order ID already exists",
 		invalid_amount: "Invalid order amount",
+		invalid_currency: "Unsupported order currency",
+		invalid_parameters: "invalid parameters",
 		expiry_exceeds_limit: "Order expiry exceeds the configured maximum",
 		receiving_method_not_found: "No receiving method matches the request",
 		receiving_method_not_ready: "No receiving method is currently available",
@@ -202,7 +236,11 @@ export async function handleGmpayQueryRequest(
 				gmpayError(requestId, 10009, "invalid parameters"),
 				400,
 			);
-		const principal = await authenticateGmpayQuery(env.DB, parsed.data);
+		const principal = await authenticateGmpayQuery(
+			env.DB,
+			parsed.data,
+			requestId,
+		);
 		if (!principal)
 			return gatewayResponse(
 				gmpayError(requestId, 401, "signature verification failed"),
@@ -255,12 +293,22 @@ export async function handleGmpayCreateRequest(
 				await readLimitedRequestText(request, merchantRequestBodyLimitBytes),
 			),
 		);
-		if (!parsed.success)
+		if (!parsed.success) {
+			const invalid = merchantParameterError(parsed.error.issues);
 			return gatewayResponse(
-				gmpayError(requestId, 10009, "invalid parameters"),
+				gmpayError(
+					requestId,
+					gmpayOrderError(invalid),
+					gmpayOrderMessage(invalid),
+				),
 				400,
 			);
-		const principal = await authenticateGmpayCreate(env.DB, parsed.data);
+		}
+		const principal = await authenticateGmpayCreate(
+			env.DB,
+			parsed.data,
+			requestId,
+		);
 		if (!principal)
 			return gatewayResponse(
 				gmpayError(requestId, 401, "signature verification failed"),

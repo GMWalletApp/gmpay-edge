@@ -7,6 +7,7 @@ import {
 	systemPermission,
 } from "#/features/access/system-rbac";
 import {
+	type OrderStatus,
 	orderAmountSchema,
 	orderCurrencySchema,
 	orderIdPathSchema,
@@ -19,11 +20,17 @@ import {
 	resendOrderNotification,
 } from "#/features/orders/server/admin-actions";
 import { createOrder } from "#/features/orders/server/create";
+import {
+	assertTransition,
+	InvalidOrderTransitionError,
+	type TransitionReason,
+} from "#/features/orders/state-machine";
 import { recordPaymentTransaction } from "#/features/payments/server/process";
 import { DomainError } from "#/lib/domain-error";
 import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 
 const orderIdSchema = z.object({ orderId: orderIdPathSchema });
 const refundSchema = orderIdSchema.extend({
@@ -112,7 +119,7 @@ export const createDevelopmentOrderFn = createServerFn({ method: "POST" })
 				crypto.randomUUID(),
 				user.id,
 				order.orderId,
-				request.headers.get("x-request-id"),
+				requestId(request),
 				request.headers.get("cf-connecting-ip"),
 				JSON.stringify({ amount: order.amount, currency: order.currency }),
 				Date.now(),
@@ -144,16 +151,17 @@ export const simulateDevelopmentOrderStatusFn = createServerFn({
 				LEFT JOIN order_payment_snapshots ops ON ops.order_id = o.id
 				WHERE o.id = ? LIMIT 1`)
 			.bind(data.orderId)
-			.first<{ status: string; expected_amount_units: string | null }>();
+			.first<{ status: OrderStatus; expected_amount_units: string | null }>();
 		if (!order)
 			throw new DomainError("order_not_found", 404, "Order not found");
+		assertDevelopmentTransition(order.status, data.status);
 		const expected = BigInt(order.expected_amount_units ?? "0");
 		const received = developmentReceivedAmount(data.status, expected);
 		const now = Date.now();
 		await db.batch([
 			db
 				.prepare(
-					"UPDATE orders SET status = ?, received_amount_units = ?, paid_at = ?, version = version + 1, updated_at = ? WHERE id = ?",
+					"UPDATE orders SET status = ?, received_amount_units = ?, paid_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND status = ?",
 				)
 				.bind(
 					data.status,
@@ -161,7 +169,11 @@ export const simulateDevelopmentOrderStatusFn = createServerFn({
 					["paid", "overpaid", "refunded"].includes(data.status) ? now : null,
 					now,
 					data.orderId,
+					order.status,
 				),
+			db.prepare(
+				"SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('order simulation conflict', '$') END",
+			),
 			db
 				.prepare(
 					`INSERT INTO audit_logs (id, actor_user_id, action, target_type,
@@ -172,7 +184,7 @@ export const simulateDevelopmentOrderStatusFn = createServerFn({
 					crypto.randomUUID(),
 					user.id,
 					data.orderId,
-					request.headers.get("x-request-id"),
+					requestId(request),
 					request.headers.get("cf-connecting-ip"),
 					JSON.stringify({ status: order.status }),
 					JSON.stringify({
@@ -184,6 +196,34 @@ export const simulateDevelopmentOrderStatusFn = createServerFn({
 		]);
 		return { ...data, receivedAmountUnits: received.toString() };
 	});
+
+const developmentTransitionReasons: Partial<
+	Record<OrderStatus, TransitionReason>
+> = {
+	expired: "expired",
+	cancelled: "merchant_cancelled",
+	failed: "processing_failed",
+	refunded: "admin_refund",
+};
+
+/** The development simulator obeys the same state machine as real payments. */
+function assertDevelopmentTransition(from: OrderStatus, to: OrderStatus) {
+	try {
+		assertTransition(
+			from,
+			to,
+			developmentTransitionReasons[to] ?? "payment_detected",
+		);
+	} catch (error) {
+		if (error instanceof InvalidOrderTransitionError)
+			throw new DomainError(
+				"order_status_conflict",
+				409,
+				"Order status does not allow this simulation",
+			);
+		throw error;
+	}
+}
 
 function developmentReceivedAmount(
 	status: (typeof orderStatuses)[number],
@@ -364,7 +404,7 @@ export const simulateOrderPaymentFn = createServerFn({ method: "POST" })
 				crypto.randomUUID(),
 				user.id,
 				data.orderId,
-				request.headers.get("x-request-id"),
+				requestId(request),
 				request.headers.get("cf-connecting-ip"),
 				JSON.stringify(result),
 				now,
@@ -390,7 +430,7 @@ export const checkAdminOrderPaymentFn = createServerFn({ method: "POST" })
 			data.orderId,
 			{
 				actorUserId: user.id,
-				requestId: request.headers.get("x-request-id"),
+				requestId: requestId(request),
 				ipAddress: request.headers.get("cf-connecting-ip"),
 			},
 		);
@@ -413,7 +453,7 @@ export const cancelAdminOrderFn = createServerFn({ method: "POST" })
 			data.orderId,
 			{
 				actorUserId: user.id,
-				requestId: request.headers.get("x-request-id"),
+				requestId: requestId(request),
 				ipAddress: request.headers.get("cf-connecting-ip"),
 			},
 		);
@@ -436,7 +476,7 @@ export const refundAdminOrderFn = createServerFn({ method: "POST" })
 			data,
 			{
 				actorUserId: user.id,
-				requestId: request.headers.get("x-request-id"),
+				requestId: requestId(request),
 				ipAddress: request.headers.get("cf-connecting-ip"),
 			},
 		);
@@ -459,7 +499,7 @@ export const resendOrderNotificationFn = createServerFn({ method: "POST" })
 			data.orderId,
 			{
 				actorUserId: user.id,
-				requestId: request.headers.get("x-request-id"),
+				requestId: requestId(request),
 				ipAddress: request.headers.get("cf-connecting-ip"),
 			},
 		);

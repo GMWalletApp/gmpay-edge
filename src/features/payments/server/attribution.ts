@@ -70,7 +70,8 @@ export async function resolvePaymentTransactionOrder(
 	const targetIndex = caseInsensitiveAddressNetworks.has(transaction.network)
 		? "order_payment_snapshots_target_nocase_idx"
 		: "order_payment_snapshots_target_idx";
-	const candidates = await db
+	const observedAt = transaction.timestamp.getTime();
+	const active = await db
 		.prepare(
 			`SELECT DISTINCT o.id AS order_id, o.received_amount_units,
 			 ops.expected_amount_units
@@ -98,11 +99,41 @@ export async function resolvePaymentTransactionOrder(
 			transaction.network,
 			transaction.assetCode,
 			transaction.to,
-			transaction.timestamp.getTime(),
-			transaction.timestamp.getTime(),
+			observedAt,
+			observedAt,
 			preferredOrderId ?? "",
 		)
 		.all<AttributionCandidate>();
+	// Immediate release keeps no lock after expiry, so a transfer observed after
+	// every matching order closed is a late payment for one of them rather than
+	// an unattributable transfer. The reorg-monitor window bounds how far back.
+	const candidates = active.results.length
+		? active
+		: await db
+				.prepare(
+					`SELECT DISTINCT o.id AS order_id, o.received_amount_units,
+					 ops.expected_amount_units
+					 FROM order_payment_snapshots ops INDEXED BY ${targetIndex}
+					 JOIN orders o ON o.id = ops.order_id
+					 WHERE ops.rail_code = ? AND ops.asset_code = ?
+					 AND ${targetPredicate}
+					 AND ${immediateReleaseModeSql} = 1
+					 AND o.status IN ('expired','cancelled')
+					 AND o.created_at <= ? AND o.expires_at < ?
+					 AND o.expires_at >= ? - COALESCE(
+					  (SELECT json_extract(value, '$') FROM system_settings
+					   WHERE key = 'payments.reorg_monitor_ms'), 86400000)
+					 LIMIT 101`,
+				)
+				.bind(
+					transaction.network,
+					transaction.assetCode,
+					transaction.to,
+					observedAt,
+					observedAt,
+					observedAt,
+				)
+				.all<AttributionCandidate>();
 	if (candidates.results.length === 101)
 		throw new PaymentAttributionAmbiguousError();
 

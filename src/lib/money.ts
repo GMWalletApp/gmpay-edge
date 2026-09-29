@@ -50,33 +50,30 @@ export function quantizeUnitsUp(
 	};
 }
 
-export function convertByRate(
-	amount: string,
-	amountDecimals: number,
-	rate: string,
-	rateDecimals: number,
-	outputDecimals: number,
-): string {
-	const amountUnits = decimalToUnits(amount, amountDecimals);
-	const rateUnits = decimalToUnits(rate, rateDecimals);
-	const numerator = amountUnits * rateUnits * 10n ** BigInt(outputDecimals);
-	const denominator = 10n ** BigInt(amountDecimals + rateDecimals);
-	const roundedUp = (numerator + denominator - 1n) / denominator;
-	return unitsToDecimal(roundedUp, outputDecimals);
-}
+export type RateLeg = { rate: string; invert: boolean };
 
-export function divideByRate(
+/**
+ * Applies exact decimal rate legs in order (`invert` divides instead of
+ * multiplying) and rounds the final amount up once, so composite quotes never
+ * accumulate intermediate rounding.
+ */
+export function convertByRates(
 	amount: string,
 	amountDecimals: number,
-	rate: string,
-	rateDecimals: number,
+	legs: readonly RateLeg[],
 	outputDecimals: number,
 ): string {
-	const amountUnits = decimalToUnits(amount, amountDecimals);
-	const rateUnits = decimalToUnits(rate, rateDecimals);
-	if (rateUnits <= 0n) throw new RangeError("Rate must be positive");
-	const numerator = amountUnits * 10n ** BigInt(rateDecimals + outputDecimals);
-	const denominator = rateUnits * 10n ** BigInt(amountDecimals);
+	let numerator =
+		decimalToUnits(amount, amountDecimals) * 10n ** BigInt(outputDecimals);
+	let denominator = 10n ** BigInt(amountDecimals);
+	for (const leg of legs) {
+		const rateDecimals = decimalPlaces(leg.rate);
+		const rateUnits = decimalToUnits(leg.rate, rateDecimals);
+		if (rateUnits <= 0n) throw new RangeError("Rate must be positive");
+		const scale = 10n ** BigInt(rateDecimals);
+		numerator *= leg.invert ? scale : rateUnits;
+		denominator *= leg.invert ? rateUnits : scale;
+	}
 	return unitsToDecimal(
 		(numerator + denominator - 1n) / denominator,
 		outputDecimals,

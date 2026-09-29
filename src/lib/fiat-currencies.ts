@@ -157,6 +157,12 @@ export const fiatCurrencyCodes = [
 	"ZWG",
 ] as const;
 
+const fiatCurrencyCodeSet: ReadonlySet<string> = new Set(fiatCurrencyCodes);
+
+export function isFiatCurrencyCode(value: string) {
+	return fiatCurrencyCodeSet.has(value);
+}
+
 export function fiatCurrencyOptions(locale: string) {
 	const names = new Intl.DisplayNames([locale], { type: "currency" });
 	return fiatCurrencyCodes.map((value) => {

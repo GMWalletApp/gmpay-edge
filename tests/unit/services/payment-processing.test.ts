@@ -18,6 +18,19 @@ describe("payment reconciliation", () => {
 		});
 	});
 
+	it("keeps payments awaiting review outside the balance", () => {
+		expect(
+			reconcileOrderPayment({
+				expectedUnits: 100n,
+				requiredConfirmations: 1,
+				payments: [
+					{ amountUnits: 100n, confirmations: 5, status: "pending_review" },
+					{ amountUnits: 100n, confirmations: 5, status: "confirmed" },
+				],
+			}),
+		).toEqual({ receivedUnits: 100n, confirmedUnits: 100n, status: "paid" });
+	});
+
 	it("aggregates split payments and waits for every required amount to confirm", () => {
 		const confirming = reconcileOrderPayment({
 			expectedUnits: 100n,

@@ -16,6 +16,10 @@ import {
 	ReceivingMethodUnavailableError,
 	releaseReceivingMethodLock,
 } from "#/features/payment-settings/server/receiving-method-locks";
+import {
+	createDatastoreCounters,
+	instrumentD1,
+} from "../helpers/datastore-counters";
 import { applyMigrations } from "./migrations";
 
 describe("receiving method allocation and immutable snapshots", () => {
@@ -169,6 +173,56 @@ describe("receiving method allocation and immutable snapshots", () => {
 		expect(order?.version).toBe(1);
 	});
 
+	it("reports an order version conflict without retrying other amounts", async () => {
+		await db
+			.prepare(
+				`INSERT INTO orders (id, external_order_id, status, amount_minor, currency,
+				 currency_decimals, payment_asset_id, received_amount_units, expires_at,
+				 version, created_at, updated_at)
+				 VALUES ('order-conflict', 'merchant-conflict', 'pending', '100', 'USD',
+				 2, 'asset-trx', '0', 2000, 3, 1, 1)`,
+			)
+			.run();
+		const counters = createDatastoreCounters();
+		await expect(
+			allocateUniqueReceivingMethodAndSnapshot(instrumentD1(db, counters), {
+				orderId: "order-conflict",
+				receivingMethodId: "asset-trx",
+				paymentMethodId: "asset-trx",
+				expectedAmountUnits: "5000000",
+				orderAmountUsdMinor: "100",
+				decimals: 6,
+				expiresAt: 2_000,
+				reusableAt: 2_000,
+				now: 1_000,
+				existingOrder: { expectedVersion: 2 },
+			}),
+		).rejects.toMatchObject({ reason: "order_conflict" });
+		// One lock sweep plus one allocation attempt: no amount-collision retries.
+		expect(counters.d1Batch).toBe(2);
+		await expect(
+			db
+				.prepare(
+					"SELECT COUNT(*) AS count FROM receiving_method_locks WHERE order_id = 'order-conflict'",
+				)
+				.first(),
+		).resolves.toEqual({ count: 0 });
+		await expect(
+			allocateUniqueReceivingMethodAndSnapshot(db, {
+				orderId: "order-conflict",
+				receivingMethodId: "asset-trx",
+				paymentMethodId: "asset-trx",
+				expectedAmountUnits: "5000000",
+				orderAmountUsdMinor: "100",
+				decimals: 6,
+				expiresAt: 2_000,
+				reusableAt: 2_000,
+				now: 1_000,
+				existingOrder: { expectedVersion: 3 },
+			}),
+		).resolves.toMatchObject({ expectedAmountUnits: "5000000" });
+	});
+
 	it("rolls back a newly created order when its amount lock collides", async () => {
 		await expect(
 			allocateReceivingMethodAndSnapshot(db, {
@@ -212,7 +266,7 @@ describe("receiving method allocation and immutable snapshots", () => {
 		const input = createOrderSchema.parse({
 			externalOrderId: "method-order",
 			amount: "1",
-			currency: "TRX",
+			currency: "USD",
 			receivingMethodId: "asset-trx",
 		});
 		const created = await createOrder(

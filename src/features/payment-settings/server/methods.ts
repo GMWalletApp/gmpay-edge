@@ -11,6 +11,7 @@ import { deleteReceivingMethod } from "#/features/payment-settings/server/delete
 import { parseReceivingProviderConfiguration } from "#/features/payment-settings/server/provider-config";
 import { unitsToDecimal } from "#/lib/money";
 import { encryptSecret } from "#/lib/secrets";
+import { requestId } from "#/server/http";
 
 const receivingMethodIdInput = z.object({
 	id: z.string().trim().min(1).max(100),
@@ -262,7 +263,7 @@ export const createReceivingMethodFn = createServerFn({ method: "POST" })
 						crypto.randomUUID(),
 						context.user.id,
 						id,
-						context.request.headers.get("x-request-id"),
+						requestId(context.request),
 						context.request.headers.get("cf-connecting-ip"),
 						JSON.stringify({
 							name: data.name,
@@ -337,7 +338,7 @@ export const updateReceivingMethodFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					context.user.id,
 					data.id,
-					context.request.headers.get("x-request-id"),
+					requestId(context.request),
 					context.request.headers.get("cf-connecting-ip"),
 					JSON.stringify({
 						name: current.name,
@@ -366,7 +367,7 @@ export const deleteReceivingMethodFn = createServerFn({ method: "POST" })
 		);
 		return deleteReceivingMethod(context.db, data.id, {
 			actorUserId: context.user.id,
-			requestId: context.request.headers.get("x-request-id"),
+			requestId: requestId(context.request),
 			ipAddress: context.request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -432,7 +433,7 @@ export const setReceivingMethodEnabledFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					context.user.id,
 					data.id,
-					context.request.headers.get("x-request-id"),
+					requestId(context.request),
 					context.request.headers.get("cf-connecting-ip"),
 					JSON.stringify({ enabled: data.enabled }),
 					now,

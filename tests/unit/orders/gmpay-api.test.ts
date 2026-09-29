@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { OrderServiceError } from "#/features/orders/server/create";
 import {
 	gmpayCreateResponse,
+	gmpayOrderError,
 	gmpayOrderMessage,
+	merchantParameterError,
 	parseGmpayCreateInput,
 	parseGmpayRequestBody,
 	toCreateOrderInput,
@@ -61,7 +63,7 @@ describe("GMPay create transaction input", () => {
 				paymentNetwork: undefined,
 			});
 		expect(() => toCreateOrderInput({ ...valid, network: undefined })).toThrow(
-			"Payment asset and network must be provided together",
+			expect.objectContaining({ code: "invalid_parameters", status: 400 }),
 		);
 	});
 
@@ -110,6 +112,22 @@ describe("GMPay create transaction input", () => {
 		);
 		expect(JSON.stringify(response)).not.toMatch(
 			/externalOrderId|external_order_id/,
+		);
+	});
+
+	it("maps shared order validation failures to 400-class merchant codes", () => {
+		const amount = merchantParameterError([{ path: ["amount"] }]);
+		const currency = merchantParameterError([{ path: ["currency"] }]);
+		const other = merchantParameterError([{ path: ["notifyUrl"] }]);
+		expect([amount, currency, other].map((error) => error.status)).toEqual([
+			400, 400, 400,
+		]);
+		expect(gmpayOrderError(amount)).toBe(10004);
+		expect(gmpayOrderError(currency)).toBe(10009);
+		expect(gmpayOrderError(other)).toBe(10009);
+		expect(gmpayOrderMessage(currency)).toBe("Unsupported order currency");
+		expect(() => toCreateOrderInput({ ...valid, currency: "abc" })).toThrow(
+			expect.objectContaining({ code: "invalid_currency" }),
 		);
 	});
 

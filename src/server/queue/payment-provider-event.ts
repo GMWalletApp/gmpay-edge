@@ -207,13 +207,9 @@ export async function handlePaymentProviderEvent(
 			return;
 		}
 		if (error instanceof PaymentAttributionNotFoundError) {
-			await completeProviderEvent(
-				env.DB,
-				lease,
-				"ignored",
-				"webhook_rpc_mismatch",
-				row.source_id,
-			);
+			// The authoritative RPC confirmed the transfer; it only matches no
+			// eligible order, which says nothing about the ingress health.
+			await completeProviderEvent(env.DB, lease, "ignored", error.code);
 			message.ack();
 			return;
 		}

@@ -19,14 +19,9 @@ const transitions = {
 		"cancelled",
 		"failed",
 	],
-	confirming: [
-		"partially_paid",
-		"paid",
-		"overpaid",
-		"expired",
-		"failed",
-		"pending",
-	],
+	// A confirming order already holds the full amount; it settles through
+	// confirmations (or a reorg back to pending) instead of expiring.
+	confirming: ["partially_paid", "paid", "overpaid", "failed", "pending"],
 	partially_paid: [
 		"pending",
 		"confirming",
@@ -34,6 +29,7 @@ const transitions = {
 		"overpaid",
 		"expired",
 		"failed",
+		"refunded",
 	],
 	paid: ["pending", "partially_paid", "overpaid", "refunded", "confirming"],
 	overpaid: ["pending", "partially_paid", "refunded", "paid", "confirming"],

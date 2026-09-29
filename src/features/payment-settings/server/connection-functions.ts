@@ -12,6 +12,7 @@ import {
 import { adminContext } from "#/features/payment-settings/server/admin-context";
 import { loadPaymentConnectionApiKey } from "#/features/payment-settings/server/connection-credentials";
 import { testPaymentConnection } from "#/features/payment-settings/server/connection-health";
+import { requestId } from "#/server/http";
 
 const railKindSchema = z.enum(["chain", "exchange", "wallet"]);
 type RailKind = z.infer<typeof railKindSchema>;
@@ -142,7 +143,7 @@ export const updateProviderConnectionFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					context.user.id,
 					data.id,
-					context.request.headers.get("x-request-id"),
+					requestId(context.request),
 					context.request.headers.get("cf-connecting-ip"),
 					JSON.stringify({
 						railCode: connection.rail_code,
@@ -269,7 +270,7 @@ export const updateChainConnectionFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					context.user.id,
 					data.id,
-					context.request.headers.get("x-request-id"),
+					requestId(context.request),
 					context.request.headers.get("cf-connecting-ip"),
 					JSON.stringify({
 						name: current.name,
@@ -404,7 +405,7 @@ export const setPaymentConnectionEnabledFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					context.user.id,
 					data.id,
-					context.request.headers.get("x-request-id"),
+					requestId(context.request),
 					context.request.headers.get("cf-connecting-ip"),
 					JSON.stringify({ enabled: data.enabled }),
 					now,

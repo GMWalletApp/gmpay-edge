@@ -21,13 +21,15 @@ type ExpirableOrder = {
 	code: string | null;
 	network: string | null;
 	version: number;
-	status: Extract<OrderStatus, "pending" | "confirming" | "partially_paid">;
+	status: Extract<OrderStatus, "pending" | "partially_paid">;
 };
 
 export async function expireOrders(
 	env: PaymentRuntime,
 	now = Date.now(),
 ): Promise<number> {
+	// The full status list is what lets SQLite prove the partial index applies;
+	// confirming orders already hold the full amount and settle via confirmations.
 	const storedCandidates = await env.DB.prepare(
 		`SELECT o.id, o.external_order_id, o.amount_minor, o.currency,
 		 o.currency_decimals, o.status, o.received_amount_units,
@@ -37,6 +39,7 @@ export async function expireOrders(
 		 FROM orders o INDEXED BY orders_expiration_idx
 		 LEFT JOIN order_payment_snapshots ops ON ops.order_id = o.id
 		 WHERE o.status IN ('pending','confirming','partially_paid')
+		 AND o.status <> 'confirming'
 		 AND o.expires_at <= ? ORDER BY o.expires_at LIMIT 100`,
 	)
 		.bind(now)
@@ -84,7 +87,7 @@ export async function expireOrder(
 	}));
 	const results = await env.DB.batch([
 		env.DB.prepare(
-			"UPDATE orders SET status = 'expired', version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND status IN ('pending','confirming','partially_paid')",
+			"UPDATE orders SET status = 'expired', version = version + 1, updated_at = ? WHERE id = ? AND version = ? AND status IN ('pending','partially_paid')",
 		).bind(now, order.id, order.version),
 		env.DB.prepare(
 			`UPDATE receiving_method_locks SET released_at = ?

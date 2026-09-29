@@ -9,6 +9,7 @@ import {
 	refreshExchangeRates,
 	saveRateSyncConfiguration,
 } from "#/features/payment-settings/server/exchange-rates";
+import { requestId } from "#/server/http";
 
 const rateSyncCategoryInput = z.object({
 	category: z.enum(["crypto", "fiat"]),
@@ -39,6 +40,10 @@ const updateManualRatesInput = z.object({
 		.max(500),
 });
 
+// A manual correction is an operator-attested observation; it stays quotable
+// until a synchronization replaces it, matching the catalog seed validity.
+const MANUAL_RATE_VALIDITY_MS = 10 * 365 * 86_400_000;
+
 export const updateManualRatesFn = createServerFn({ method: "POST" })
 	.validator((input: z.input<typeof updateManualRatesInput>) =>
 		updateManualRatesInput.parse(input),
@@ -50,10 +55,17 @@ export const updateManualRatesFn = createServerFn({ method: "POST" })
 			data.rates.map((rate) =>
 				context.db
 					.prepare(
-						`UPDATE exchange_rates SET rate = ?, updated_at = ?
-						 WHERE id = ? AND category = ?`,
+						`UPDATE exchange_rates SET rate = ?, observed_at = ?, expires_at = ?,
+						 updated_at = ? WHERE id = ? AND category = ?`,
 					)
-					.bind(rate.rate, now, rate.id, rate.category),
+					.bind(
+						rate.rate,
+						now,
+						now + MANUAL_RATE_VALIDITY_MS,
+						now,
+						rate.id,
+						rate.category,
+					),
 			),
 		);
 		if (results.some((result) => result.meta.changes !== 1))
@@ -188,7 +200,7 @@ async function auditRateSyncSettings(
 			crypto.randomUUID(),
 			context.user.id,
 			category,
-			context.request.headers.get("x-request-id"),
+			requestId(context.request),
 			context.request.headers.get("cf-connecting-ip"),
 			JSON.stringify(details),
 			now,
@@ -201,7 +213,7 @@ function rateSyncAuditContext(
 ) {
 	return {
 		actorUserId: context.user.id,
-		requestId: context.request.headers.get("x-request-id"),
+		requestId: requestId(context.request),
 		ipAddress: context.request.headers.get("cf-connecting-ip"),
 	};
 }

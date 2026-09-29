@@ -1,7 +1,6 @@
 import type { CreateOrderInput } from "#/features/orders/schema";
 import { OrderServiceError } from "#/features/orders/server/create";
 import type { ApiOrder } from "#/features/orders/server/query";
-import { assertTransition } from "#/features/orders/state-machine";
 import { OkPayAdapter } from "#/integrations/wallets/okpay";
 import { decryptSecret } from "#/lib/secrets";
 import { loadRuntimeConfig } from "#/server/runtime-config";
@@ -10,6 +9,7 @@ export async function initializeOkPayOrder(
 	db: D1Database,
 	order: ApiOrder,
 	input: CreateOrderInput,
+	failure: { deleteOrder: boolean },
 ) {
 	if (!(order.paymentAmount && order.paymentAsset))
 		throw new OrderServiceError(
@@ -76,25 +76,70 @@ export async function initializeOkPayOrder(
 			)
 			.run();
 	} catch (error) {
-		const now = Date.now();
-		assertTransition("pending", "failed", "processing_failed");
-		await db.batch([
-			db
-				.prepare(
-					"UPDATE orders SET status = 'failed', version = version + 1, updated_at = ? WHERE id = ? AND status = 'pending'",
-				)
-				.bind(now, order.orderId),
-			db
-				.prepare(
-					"UPDATE receiving_method_locks SET released_at = ? WHERE order_id = ? AND released_at IS NULL",
-				)
-				.bind(now, order.orderId),
-		]);
-		if (error instanceof OrderServiceError) throw error;
-		throw new OrderServiceError(
-			"provider_unavailable",
-			"OKPay could not create the hosted payment",
-			502,
-		);
+		const failed =
+			error instanceof OrderServiceError
+				? error
+				: new OrderServiceError(
+						"provider_unavailable",
+						"OKPay could not create the hosted payment",
+						502,
+					);
+		await rollbackHostedPayment(db, order.orderId, failure.deleteOrder, failed);
+		throw failed;
 	}
+}
+
+/**
+ * The provider never created anything the payer could pay, so nothing is owed.
+ * Release the payment selection (and the merchant order created by this
+ * request) instead of burning the external order ID as a failed order.
+ */
+async function rollbackHostedPayment(
+	db: D1Database,
+	orderId: string,
+	deleteOrder: boolean,
+	failure: OrderServiceError,
+) {
+	const now = Date.now();
+	await db.batch([
+		db
+			.prepare("DELETE FROM receiving_method_locks WHERE order_id = ?")
+			.bind(orderId),
+		db
+			.prepare(
+				`DELETE FROM order_payment_snapshots WHERE order_id = ?
+				 AND NOT EXISTS (SELECT 1 FROM order_payments WHERE order_id = ?)`,
+			)
+			.bind(orderId, orderId),
+		deleteOrder
+			? db
+					.prepare(
+						`DELETE FROM orders WHERE id = ? AND status = 'pending'
+						 AND NOT EXISTS (SELECT 1 FROM order_payment_snapshots WHERE order_id = ?)`,
+					)
+					.bind(orderId, orderId)
+			: db
+					.prepare(
+						`UPDATE orders SET payment_asset_id = NULL, provider_order_id = NULL,
+						 payment_url = NULL, version = version + 1, updated_at = ?
+						 WHERE id = ? AND status = 'pending'
+						 AND NOT EXISTS (SELECT 1 FROM order_payment_snapshots WHERE order_id = ?)`,
+					)
+					.bind(now, orderId, orderId),
+		db
+			.prepare(
+				`INSERT INTO audit_logs (id, action, target_type, target_id, after, created_at)
+				 VALUES (?, 'order.hosted_payment_failed', 'order', ?, ?, ?)`,
+			)
+			.bind(
+				crypto.randomUUID(),
+				orderId,
+				JSON.stringify({
+					provider: "okpay",
+					code: failure.code,
+					rolledBack: deleteOrder ? "order" : "selection",
+				}),
+				now,
+			),
+	]);
 }

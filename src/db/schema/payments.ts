@@ -313,6 +313,7 @@ export const receivingMethodLocks = sqliteTable(
 	},
 	(table) => [
 		index("receiving_method_locks_collision_idx").on(table.reusableAt),
+		index("receiving_method_locks_order_idx").on(table.orderId),
 		index("receiving_method_locks_expiry_idx").on(
 			table.releasedAt,
 			table.expiresAt,
@@ -381,7 +382,14 @@ export const orderPayments = sqliteTable(
 		amountUnits: text("amount_units").notNull(),
 		confirmations: integer("confirmations").notNull().default(0),
 		status: text("status", {
-			enum: ["detected", "confirming", "confirmed", "reorged", "rejected"],
+			enum: [
+				"detected",
+				"confirming",
+				"confirmed",
+				"pending_review",
+				"reorged",
+				"rejected",
+			],
 		}).notNull(),
 		detectedAt: integer("detected_at", { mode: "timestamp_ms" }).notNull(),
 		confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),

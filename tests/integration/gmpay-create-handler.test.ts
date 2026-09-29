@@ -1,6 +1,9 @@
 import { Miniflare } from "miniflare";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { signGmpayParameters } from "#/features/api-keys/server/gmpay-signature";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+	AUTH_FAILURE_LIMIT,
+	signGmpayParameters,
+} from "#/features/api-keys/server/gmpay-signature";
 import { OrderServiceError } from "#/features/orders/server/create";
 import {
 	handleGmpayCreateRequest,
@@ -319,13 +322,151 @@ describe("GMPay create transaction HTTP handler", () => {
 			{ DB: rejectedDb } as Env,
 		);
 		expect(rejected.status).toBe(401);
+		// Credential lookup, runtime config, and one failure-bucket claim.
 		expect(rejectedCounters).toMatchObject({
-			d1Prepare: 2,
-			d1StatementFirst: 1,
+			d1Prepare: 3,
+			d1StatementFirst: 2,
 			d1StatementAll: 1,
 			d1StatementRun: 0,
 			d1Batch: 0,
 		});
+	});
+
+	it.each([
+		{
+			name: "a non-HTTPS notify_url",
+			overrides: { notify_url: "http://merchant.example/notify" },
+			code: 10009,
+			message: "invalid parameters",
+		},
+		{
+			name: "a token without its network",
+			overrides: { token: "USDT" },
+			code: 10009,
+			message: "invalid parameters",
+		},
+		{
+			name: "a non-HTTPS redirect_url",
+			overrides: { redirect_url: "http://merchant.example/return" },
+			code: 10009,
+			message: "invalid parameters",
+		},
+		{
+			name: "an unknown currency code",
+			overrides: { currency: "ABC" },
+			code: 10009,
+			message: "Unsupported order currency",
+		},
+		{
+			name: "a non-alphabetic currency code",
+			overrides: { currency: "AB1" },
+			code: 10009,
+			message: "Unsupported order currency",
+		},
+		{
+			name: "an amount with more than 18 integer digits",
+			overrides: { amount: "1234567890123456789.00" },
+			code: 10004,
+			message: "Invalid order amount",
+		},
+	])("rejects $name with a documented 400-class code", async ({
+		name,
+		overrides,
+		code,
+		message,
+	}) => {
+		const parameters = {
+			pid,
+			order_id: `ORDER-INVALID-${name.replaceAll(/\W+/g, "-")}`,
+			currency: "USD",
+			amount: "10.00",
+			notify_url: "https://merchant.example/notify",
+			...overrides,
+		};
+		const response = await handleGmpayCreateRequest(
+			new Request(
+				"https://pay.example/payments/gmpay/v1/order/create-transaction",
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						...parameters,
+						signature: signGmpayParameters(parameters, secret),
+					}),
+				},
+			),
+			{ DB: db } as Env,
+		);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({
+			status_code: code,
+			message,
+			data: null,
+		});
+		await expect(
+			db
+				.prepare(
+					"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
+				)
+				.bind(parameters.order_id)
+				.first(),
+		).resolves.toEqual({ count: 0 });
+	});
+
+	it("bounds repeated authentication failures per PID and logs a structured line", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const probePid = "100000000099";
+		const probe = (attempt: number) =>
+			handleGmpayCreateRequest(
+				new Request(
+					"https://pay.example/payments/gmpay/v1/order/create-transaction",
+					{
+						method: "POST",
+						headers: {
+							"content-type": "application/json",
+							"x-request-id": `probe-${attempt}`,
+						},
+						body: JSON.stringify({
+							pid: probePid,
+							order_id: `ORDER-PROBE-${attempt}`,
+							currency: "USD",
+							amount: "10.00",
+							notify_url: "https://merchant.example/notify",
+							signature: "0".repeat(64),
+						}),
+					},
+				),
+				{ DB: db } as Env,
+			);
+		try {
+			for (let attempt = 1; attempt <= AUTH_FAILURE_LIMIT; attempt++)
+				expect((await probe(attempt)).status).toBe(401);
+			const refused = await probe(AUTH_FAILURE_LIMIT + 1);
+			expect(refused.status).toBe(429);
+			expect(await refused.json()).toMatchObject({ status_code: 429 });
+			expect(warn).toHaveBeenCalledWith("merchant_auth_failed", {
+				pid: probePid,
+				requestId: "probe-1",
+			});
+			expect(warn).toHaveBeenCalledTimes(AUTH_FAILURE_LIMIT);
+			await expect(
+				db
+					.prepare(
+						"SELECT SUM(count) AS failures FROM rate_limit_counters WHERE bucket_key = ?",
+					)
+					.bind(`api-key-auth-fail:${probePid}`)
+					.first(),
+			).resolves.toEqual({ failures: AUTH_FAILURE_LIMIT });
+			await expect(
+				db
+					.prepare(
+						"SELECT COUNT(*) AS count FROM rate_limit_counters WHERE bucket_key LIKE 'api-key:%' AND bucket_key <> 'api-key:key'",
+					)
+					.first(),
+			).resolves.toEqual({ count: 0 });
+		} finally {
+			warn.mockRestore();
+		}
 	});
 
 	it("rejects a body changed after signing", async () => {

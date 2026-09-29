@@ -5,10 +5,13 @@ import {
 } from "#/lib/webhook-url";
 
 describe("webhook URL validation", () => {
-	it("accepts public HTTPS endpoints", () => {
-		expect(isSafeWebhookUrl("https://merchant.example/webhooks/gmpay")).toBe(
-			true,
-		);
+	it.each([
+		"https://merchant.example/webhooks/gmpay",
+		"https://merchant.example./webhooks/gmpay",
+		"https://[2606:2800:220:1:248:1893:25c8:1946]/webhook",
+		"https://[2002:5db8:d822::1]/webhook",
+	])("accepts public HTTPS endpoint %s", (url) => {
+		expect(isSafeWebhookUrl(url)).toBe(true);
 	});
 
 	it.each([
@@ -28,6 +31,17 @@ describe("webhook URL validation", () => {
 		"https://[::ffff:192.168.1.3]/webhook",
 		"https://[::ffff:224.0.0.1]/webhook",
 		"https://user:password@merchant.example/webhook",
+		"https://localhost./webhook",
+		"https://LOCALHOST../webhook",
+		"https://127.0.0.1./webhook",
+		"https://metadata.google.internal./computeMetadata/v1/",
+		"https://[64:ff9b::7f00:1]/webhook",
+		"https://[64:ff9b::5db8:d822]/webhook",
+		"https://[64:ff9b:1::a]/webhook",
+		"https://[2002:7f00:1::]/webhook",
+		"https://[2002:c0a8:103::1]/webhook",
+		"https://[2001::1]/webhook",
+		"https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/webhook",
 	])("rejects unsafe endpoint %s", (url) => {
 		expect(isSafeWebhookUrl(url)).toBe(false);
 	});

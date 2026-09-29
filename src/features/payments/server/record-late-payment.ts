@@ -40,7 +40,9 @@ export async function recordLatePayment(
 		return { duplicate: true, status: order.status };
 	if (existing) throw new PaymentAttributionConflictError();
 	const now = Date.now();
-	const paymentStatus = policy === "review" ? "detected" : "rejected";
+	// A reviewed late transfer stays outside the order balance until an
+	// administrator accepts it; reconciliation never counts pending_review rows.
+	const paymentStatus = policy === "review" ? "pending_review" : "rejected";
 	const transactionStatus = policy === "review" ? "pending" : "failed";
 	const eventType =
 		policy === "review" ? "payment.late_detected" : "payment.late_rejected";

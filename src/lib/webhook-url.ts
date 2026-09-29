@@ -26,7 +26,8 @@ export function isSafePublicUrl(
 			url.password
 		)
 			return false;
-		const hostname = url.hostname.toLowerCase();
+		// A trailing dot is the same host to resolvers but not to a blocklist.
+		const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
 		if (
 			blockedHostnames.has(hostname) ||
 			hostname.endsWith(".local") ||
@@ -139,25 +140,38 @@ function isPrivateIpv6(hostname: string) {
 	const address = parseIpv6(hostname.replace(/^\[|\]$/g, "").toLowerCase());
 	if (address === null) return false;
 	const upper96 = address >> 32n;
-	if (upper96 === 0n || upper96 === 0xffffn) {
-		const ipv4 = Number(address & 0xffff_ffffn);
-		return isPrivateIpv4Octets([
-			(ipv4 >>> 24) & 255,
-			(ipv4 >>> 16) & 255,
-			(ipv4 >>> 8) & 255,
-			ipv4 & 255,
-		]);
-	}
+	// IPv4-compatible and IPv4-mapped addresses embed the IPv4 in the low 32 bits.
+	if (upper96 === 0n || upper96 === 0xffffn)
+		return isPrivateIpv4Octets(ipv4Octets(address & 0xffff_ffffn));
+	// 6to4 (2002::/16) embeds the IPv4 address in bits 16-47.
+	if (address >> 112n === 0x2002n)
+		return isPrivateIpv4Octets(ipv4Octets((address >> 80n) & 0xffff_ffffn));
 	return (
 		address === 0n ||
 		address === 1n ||
 		address >> 64n === 0x100n ||
+		// NAT64 well-known (64:ff9b::/96) and local-use (64:ff9b:1::/48) prefixes
+		// reach translated IPv4 space, so they are never public endpoints.
+		upper96 === 0x0064_ff9bn << 64n ||
+		address >> 80n === 0x0064_ff9b_0001n ||
+		// Teredo (2001::/32) tunnels obfuscated IPv4 endpoints.
+		address >> 96n === 0x2001_0000n ||
 		address >> 80n === 0x2001_0002n ||
 		address >> 96n === 0x2001_0db8n ||
 		address >> 121n === 0x7en ||
 		address >> 118n === 0x3fan ||
 		address >> 120n === 0xffn
 	);
+}
+
+function ipv4Octets(value: bigint) {
+	const ipv4 = Number(value);
+	return [
+		(ipv4 >>> 24) & 255,
+		(ipv4 >>> 16) & 255,
+		(ipv4 >>> 8) & 255,
+		ipv4 & 255,
+	];
 }
 
 function parseIpv6(value: string) {

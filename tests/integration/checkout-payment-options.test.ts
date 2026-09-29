@@ -169,7 +169,8 @@ describe("checkout receiving method selection", () => {
 		});
 	});
 
-	it("keeps payment options available with the latest expired exchange rate", async () => {
+	it("quotes with a catalog default rate but not with an expired observation", async () => {
+		// The seeded USD/CNY row is a never-synchronized catalog default.
 		await expect(
 			listCheckoutPaymentOptions(db, cnyOrderId),
 		).resolves.toMatchObject({
@@ -184,6 +185,25 @@ describe("checkout receiving method selection", () => {
 			]),
 			unavailableReason: null,
 		});
+		await db
+			.prepare(
+				"UPDATE exchange_rates SET observed_at = 1, expires_at = 1 WHERE id = 'rate-usd-cny'",
+			)
+			.run();
+		await expect(
+			listCheckoutPaymentOptions(db, cnyOrderId),
+		).resolves.toMatchObject({
+			selectable: true,
+			options: [],
+			unavailableReason: "rate_unavailable",
+		});
+		await expect(
+			selectCheckoutPaymentOption(db, {
+				orderId: cnyOrderId,
+				receivingMethodId: methodId,
+				paymentMethodId: "asset-usdt-tron",
+			}),
+		).rejects.toMatchObject({ code: "rate_unavailable", status: 409 });
 	});
 
 	it("stops checkout option loading after one order miss", async () => {
@@ -295,7 +315,7 @@ async function seed(db: D1Database) {
 			)
 			.bind(cnyOrderId, now + 900_000, now, now),
 		db.prepare(
-			"INSERT INTO exchange_rates (id, category, base, quote, raw_rate, rate, source, adjustment_bps, observed_at, expires_at, created_at, updated_at) VALUES ('rate-usd-cny', 'fiat', 'USD', 'CNY', '6.78025', '6.78025', 'test', 0, 1, 1, 1, 1)",
+			"INSERT INTO exchange_rates (id, category, base, quote, raw_rate, rate, source, adjustment_bps, observed_at, expires_at, created_at, updated_at) VALUES ('rate-usd-cny', 'fiat', 'USD', 'CNY', '6.78025', '6.78025', 'exchangerate_host', 0, 0, 0, 1, 1)",
 		),
 	]);
 }

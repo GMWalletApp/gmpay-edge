@@ -60,18 +60,7 @@ export async function resolveLatePayment(
 	const row = displayOrderAmounts(storedRow);
 	if (row.paymentAmount === null || row.expected_amount_units === null)
 		throw new Error("Order payment snapshot is incomplete");
-	if (!["expired", "cancelled"].includes(row.order_status))
-		throw new DomainError(
-			"payment_decision_not_available",
-			409,
-			"Payment is not awaiting a late-payment decision",
-		);
-	if (row.payment_status !== "detected")
-		throw new DomainError(
-			"payment_decision_already_resolved",
-			409,
-			"Late payment has already been resolved",
-		);
+	assertLateDecisionAvailable(row);
 	const now = Date.now();
 	const { hash, eventIndex } = parsePaymentTransactionId(row.transaction_id);
 	if (decision === "reject") {
@@ -111,7 +100,7 @@ export async function resolveLatePayment(
 		try {
 			await env.DB.batch([
 				env.DB.prepare(
-					"UPDATE order_payments SET status = 'rejected', updated_at = ? WHERE id = ? AND status = 'detected'",
+					"UPDATE order_payments SET status = 'rejected', updated_at = ? WHERE id = ? AND status = 'pending_review'",
 				).bind(now, row.id),
 				env.DB.prepare(
 					`SELECT CASE WHEN changes() = 1 THEN 1
@@ -209,7 +198,7 @@ export async function resolveLatePayment(
 	try {
 		await env.DB.batch([
 			env.DB.prepare(
-				"UPDATE order_payments SET status = ?, confirmed_at = ?, updated_at = ? WHERE id = ? AND status = 'detected'",
+				"UPDATE order_payments SET status = ?, confirmed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending_review'",
 			).bind(
 				acceptedStatus,
 				acceptedStatus === "confirmed" ? now : null,
@@ -230,13 +219,15 @@ export async function resolveLatePayment(
 				eventIndex,
 			),
 			env.DB.prepare(
-				`UPDATE orders SET status = ?, received_amount_units = ?, paid_at = ?,
+				`UPDATE orders SET status = ?, received_amount_units = ?,
+			 paid_at = CASE WHEN ? THEN COALESCE(paid_at, ?) ELSE NULL END,
 			 version = version + 1, updated_at = ? WHERE id = ? AND version = ?
 			 AND EXISTS (SELECT 1 FROM order_payments WHERE id = ? AND status = ? AND updated_at = ?)`,
 			).bind(
 				aggregate.status,
 				aggregate.receivedUnits.toString(),
-				["paid", "overpaid"].includes(aggregate.status) ? now : null,
+				["paid", "overpaid"].includes(aggregate.status) ? 1 : 0,
+				now,
 				now,
 				row.order_id,
 				row.version,
@@ -337,17 +328,28 @@ async function rethrowLatePaymentDecision(
 		.first<{ payment_status: string; order_status: string }>();
 	if (!current)
 		throw new DomainError("payment_not_found", 404, "Late payment not found");
-	if (current.payment_status !== "detected")
+	assertLateDecisionAvailable(current);
+	throw error;
+}
+
+/**
+ * Only a `pending_review` row awaits a decision. The order may already have left
+ * its terminal status through an earlier acceptance, so the row status decides.
+ */
+export function assertLateDecisionAvailable(payment: {
+	payment_status: string;
+	order_status: string;
+}) {
+	if (payment.payment_status === "pending_review") return;
+	if (["expired", "cancelled"].includes(payment.order_status))
 		throw new DomainError(
 			"payment_decision_already_resolved",
 			409,
 			"Late payment has already been resolved",
 		);
-	if (!["expired", "cancelled"].includes(current.order_status))
-		throw new DomainError(
-			"payment_decision_not_available",
-			409,
-			"Payment is not awaiting a late-payment decision",
-		);
-	throw error;
+	throw new DomainError(
+		"payment_decision_not_available",
+		409,
+		"Payment is not awaiting a late-payment decision",
+	);
 }

@@ -3,10 +3,7 @@ import {
 	authenticateEpayParameters,
 	GmpayRateLimitError,
 } from "#/features/api-keys/server/gmpay-signature";
-import {
-	type CreateOrderInput,
-	createOrderSchema,
-} from "#/features/orders/schema";
+import type { CreateOrderInput } from "#/features/orders/schema";
 import {
 	createOrder,
 	type OrderCreationContext,
@@ -19,6 +16,7 @@ import {
 	gmpayOrderMessage,
 	logMerchantApiFailure,
 	merchantRequestBodyLimitBytes,
+	parseMerchantOrderInput,
 } from "#/features/orders/server/gmpay-api";
 import { type ApiOrder, getOrder } from "#/features/orders/server/query";
 import { requestId as getRequestId } from "#/server/http";
@@ -93,13 +91,17 @@ export function parseEpayInput(value: unknown) {
 	return epayInputSchema.safeParse(value);
 }
 
-export async function authenticateEpayInput(db: D1Database, input: EpayInput) {
-	return authenticateEpayParameters(db, input, "orders:create");
+export async function authenticateEpayInput(
+	db: D1Database,
+	input: EpayInput,
+	requestId?: string,
+) {
+	return authenticateEpayParameters(db, input, "orders:create", { requestId });
 }
 
 export function toEpayOrderInput(input: EpayInput): CreateOrderInput {
 	const selection = epaySelection(input.type);
-	return createOrderSchema.parse({
+	return parseMerchantOrderInput({
 		externalOrderId: input.out_trade_no,
 		amount: input.money,
 		currency: "CNY",
@@ -155,7 +157,11 @@ export async function handleEpayCreateRequest(
 				400,
 				responseMode,
 			);
-		const principal = await authenticateEpayInput(env.DB, parsed.data);
+		const principal = await authenticateEpayInput(
+			env.DB,
+			parsed.data,
+			requestId,
+		);
 		if (!principal)
 			return epayErrorResponse(
 				gmpayError(requestId, 401, "signature verification failed"),
@@ -220,6 +226,7 @@ export async function handleEpayQueryRequest(
 			env.DB,
 			parsed.data,
 			"orders:read",
+			{ requestId },
 		);
 		if (!principal)
 			return epayJson(

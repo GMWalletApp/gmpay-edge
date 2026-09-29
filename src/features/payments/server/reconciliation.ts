@@ -3,11 +3,26 @@ import { statusFromPayment } from "#/features/orders/state-machine";
 import type { NormalizedTransaction } from "#/integrations/chains/types";
 import { DomainError } from "#/lib/domain-error";
 
+export type PaymentStatus =
+	| "detected"
+	| "confirming"
+	| "confirmed"
+	| "pending_review"
+	| "reorged"
+	| "rejected";
+
 export interface PaymentAggregate {
 	amountUnits: bigint;
 	confirmations: number;
-	status: "detected" | "confirming" | "confirmed" | "reorged" | "rejected";
+	status: PaymentStatus;
 }
+
+/** Only these payment rows contribute to an order balance. */
+const countedPaymentStatuses = new Set<PaymentStatus>([
+	"detected",
+	"confirming",
+	"confirmed",
+]);
 
 export function reconcileOrderPayment(input: {
 	expectedUnits: bigint;
@@ -17,7 +32,7 @@ export function reconcileOrderPayment(input: {
 	let receivedUnits = 0n;
 	let confirmedUnits = 0n;
 	for (const payment of input.payments) {
-		if (payment.status === "reorged" || payment.status === "rejected") continue;
+		if (!countedPaymentStatuses.has(payment.status)) continue;
 		receivedUnits += payment.amountUnits;
 		if (
 			payment.status === "confirmed" ||

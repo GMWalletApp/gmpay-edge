@@ -80,6 +80,54 @@ describe("EPay compatibility HTTP handler", () => {
 		).toEqual({ count: 0 });
 	});
 
+	it.each([
+		{
+			name: "a malformed money value",
+			overrides: { money: "abc" },
+			code: 10004,
+		},
+		{ name: "a negative money value", overrides: { money: "-5" }, code: 10004 },
+		{
+			name: "a non-HTTPS notify_url",
+			overrides: { notify_url: "http://merchant.example/notify" },
+			code: 10009,
+		},
+	])("rejects $name with a documented 400-class code", async ({
+		name,
+		overrides,
+		code,
+	}) => {
+		const parameters = {
+			pid,
+			money: "12.50",
+			out_trade_no: `EPAY-INVALID-${name.replaceAll(/\W+/g, "-")}`,
+			notify_url: "https://merchant.example/notify",
+			...overrides,
+		};
+		const response = await handleEpayCreateRequest(
+			new Request("https://pay.example/submit.php", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					...parameters,
+					sign: signEpayParameters(parameters, secret),
+					sign_type: "MD5",
+				}),
+			}),
+			{ DB: db } as Env,
+		);
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ status_code: code });
+		await expect(
+			db
+				.prepare(
+					"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
+				)
+				.bind(parameters.out_trade_no)
+				.first(),
+		).resolves.toEqual({ count: 0 });
+	});
+
 	it("rejects an oversized POST body before authentication", async () => {
 		const response = await handleEpayCreateRequest(
 			new Request(

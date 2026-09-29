@@ -1,6 +1,7 @@
 import { Miniflare } from "miniflare";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+	AUTH_FAILURE_LIMIT,
 	authenticateGmpayParameters,
 	GmpayRateLimitError,
 	signGmpayParameters,
@@ -119,6 +120,67 @@ describe("GMPay API authentication", () => {
 		).resolves.toBeNull();
 	});
 
+	it("counts rejected credentials in a separate failure bucket and refuses exhausted PIDs", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		const input = { pid: "gmp_merchant", order_id: "ORDER-FAIL", amount: "1" };
+		const successBefore = await bucketCount(db, "api-key:key");
+		const failuresBefore = await bucketCount(
+			db,
+			"api-key-auth-fail:gmp_merchant",
+		);
+		try {
+			await expect(
+				authenticateGmpayParameters(
+					db,
+					{ ...input, signature: "f".repeat(64) },
+					"orders:create",
+					{ requestId: "auth-fail-1" },
+				),
+			).resolves.toBeNull();
+			await expect(
+				authenticateGmpayParameters(
+					db,
+					{ ...input, pid: "unknown-pid", signature: "f".repeat(64) },
+					"orders:create",
+				),
+			).resolves.toBeNull();
+			expect(warn).toHaveBeenNthCalledWith(1, "merchant_auth_failed", {
+				pid: "gmp_merchant",
+				requestId: "auth-fail-1",
+			});
+			expect(warn).toHaveBeenNthCalledWith(2, "merchant_auth_failed", {
+				pid: "unknown-pid",
+				requestId: null,
+			});
+			expect(await bucketCount(db, "api-key-auth-fail:gmp_merchant")).toBe(
+				failuresBefore + 1,
+			);
+			expect(await bucketCount(db, "api-key-auth-fail:unknown-pid")).toBe(1);
+			expect(await bucketCount(db, "api-key:key")).toBe(successBefore);
+
+			await db
+				.prepare(
+					"UPDATE rate_limit_counters SET count = ? WHERE bucket_key = 'api-key-auth-fail:gmp_merchant'",
+				)
+				.bind(AUTH_FAILURE_LIMIT)
+				.run();
+			await expect(
+				authenticateGmpayParameters(
+					db,
+					{ ...input, signature: signGmpayParameters(input, secret) },
+					"orders:create",
+				),
+			).rejects.toBeInstanceOf(GmpayRateLimitError);
+		} finally {
+			warn.mockRestore();
+			await db
+				.prepare(
+					"DELETE FROM rate_limit_counters WHERE bucket_key LIKE 'api-key-auth-fail:%'",
+				)
+				.run();
+		}
+	});
+
 	it("enforces the D1 rate window after signature and scope verification", async () => {
 		await db
 			.prepare("UPDATE api_keys SET revoked_at = NULL WHERE id = 'key'")
@@ -147,3 +209,13 @@ describe("GMPay API authentication", () => {
 			.run();
 	});
 });
+
+async function bucketCount(db: D1Database, bucketKey: string) {
+	const row = await db
+		.prepare(
+			"SELECT COALESCE(SUM(count), 0) AS count FROM rate_limit_counters WHERE bucket_key = ?",
+		)
+		.bind(bucketKey)
+		.first<{ count: number }>();
+	return row?.count ?? 0;
+}

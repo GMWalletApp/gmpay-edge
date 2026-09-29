@@ -26,6 +26,20 @@ describe("order state machine", () => {
 			assertTransition("partially_paid", "pending", "chain_reorg"),
 		).not.toThrow();
 	});
+	it("never expires a confirming order and lets administrators refund partial payments", () => {
+		expect(() =>
+			assertTransition("confirming", "expired", "expired"),
+		).toThrow();
+		expect(() =>
+			assertTransition("partially_paid", "expired", "expired"),
+		).not.toThrow();
+		expect(() =>
+			assertTransition("partially_paid", "refunded", "admin_refund"),
+		).not.toThrow();
+		expect(() =>
+			assertTransition("expired", "refunded", "admin_refund"),
+		).toThrow();
+	});
 	it("requires administrator intent for refunds", () =>
 		expect(() =>
 			assertTransition("paid", "refunded", "payment_detected"),
