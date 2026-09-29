@@ -2,8 +2,9 @@ services:
   gmpay-edge:
     image: ghcr.io/gmwalletapp/gmpay-edge:latest
     restart: unless-stopped
+    # Plain HTTP for a reverse proxy on this host; see docs/en-US/DEPLOYMENT.md.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GMPAY_DATA_DIR: /var/lib/gmpay
     volumes:

@@ -19,6 +19,5 @@ lefthook.yml
 .dev.vars
 .env
 .env.*
-!.env.example
 gmpay-data
 backups

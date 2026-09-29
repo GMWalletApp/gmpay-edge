@@ -3,7 +3,11 @@ node_modules
 dist
 dist-ssr
 *.local
+.dev.vars
 .dev.vars.*
+.env
+.env.*
+!.env.example
 .tanstack
 .wrangler
 .output
