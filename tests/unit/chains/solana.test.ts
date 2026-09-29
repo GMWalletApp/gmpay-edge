@@ -220,19 +220,120 @@ describe("Solana adapter", () => {
 		).rejects.toThrow("token account scan exceeded");
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
-	it("rejects a signature scan that reaches its configured limit", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(rpc([signature("bounded-signature", 101)]));
+	it("returns the newest signatures as a truncated scan when the budget is spent", async () => {
+		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+			const request = JSON.parse(String((init as RequestInit).body)) as {
+				method: string;
+			};
+			return request.method === "getSignaturesForAddress"
+				? rpc([signature("bounded-signature", 101)])
+				: rpc(null);
+		});
 		vi.stubGlobal("fetch", fetchMock);
+		const transactions = await new SolanaAdapter({
+			rpcUrl: "https://api.mainnet-beta.solana.com",
+			signaturePageSize: 1,
+			maxScanSignatures: 1,
+		}).findTransactions({ address: owner, assetCode: "SOL" });
+		expect(transactions).toHaveLength(0);
+		expect(transactions.truncated).toEqual({});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+	it("stops at the block-time lower bound without paging further", async () => {
+		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+			const request = JSON.parse(String((init as RequestInit).body)) as {
+				method: string;
+			};
+			return request.method === "getSignaturesForAddress"
+				? rpc([
+						signature("recent", 103),
+						{ ...signature("too-old", 102), blockTime: 1_600_000_000 },
+					])
+				: rpc(null);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const transactions = await new SolanaAdapter({
+			rpcUrl: "https://api.mainnet-beta.solana.com",
+			signaturePageSize: 2,
+		}).findTransactions({
+			address: owner,
+			assetCode: "SOL",
+			sinceTimestampMs: 1_650_000_000_000,
+		});
+		expect(transactions).toHaveLength(0);
+		expect(transactions.truncated).toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const lookups = fetchMock.mock.calls.map(
+			([, init]) =>
+				(JSON.parse(String((init as RequestInit).body)) as { params: [string] })
+					.params[0],
+		);
+		expect(lookups).toEqual([owner, "recent"]);
+	});
+	it("rejects a transaction without execution metadata as an invalid response", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				rpc({
+					blockTime: 1_700_000_000,
+					slot: 100,
+					transaction: {
+						message: {
+							accountKeys: [sourceAccount, tokenAccount],
+							recentBlockhash: "blockhash",
+							instructions: [transferInstruction(tokenAccount, "1")],
+						},
+					},
+					meta: null,
+				}),
+			),
+		);
+		const instance = adapter();
+		const error = await instance
+			.getTransaction("no-meta", { address: owner, assetCode: "USDT" })
+			.catch((cause) => cause);
+		expect(instance.classifyError(error)).toBe("invalid_response");
+	});
+	it("skips instructions whose parsed payload is not a transfer shape", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				rpc({
+					blockTime: 1_700_000_000,
+					slot: 100,
+					transaction: {
+						message: {
+							accountKeys: [sourceAccount, tokenAccount],
+							recentBlockhash: "blockhash",
+							instructions: [
+								{ parsed: { type: "transferChecked", info: { mint } } },
+								{ parsed: "not-an-object" },
+								{ programId: "11111111111111111111111111111111", data: "raw" },
+								{
+									parsed: {
+										type: "transferChecked",
+										info: {
+											source: sourceAccount,
+											destination: tokenAccount,
+											mint,
+											tokenAmount: { amount: "not-a-number" },
+										},
+									},
+								},
+							],
+						},
+					},
+					meta: {
+						err: null,
+						innerInstructions: [],
+						postTokenBalances: [{ accountIndex: 1, mint, owner }],
+					},
+				}),
+			),
+		);
 		await expect(
-			new SolanaAdapter({
-				rpcUrl: "https://api.mainnet-beta.solana.com",
-				signaturePageSize: 1,
-				maxScanSignatures: 1,
-			}).findTransactions({ address: owner, assetCode: "SOL" }),
-		).rejects.toThrow("signature scan exceeded");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+			adapter().getTransaction("shapes", { address: owner, assetCode: "USDT" }),
+		).resolves.toBeNull();
 	});
 	it("shares one deadline between signature and transaction requests", async () => {
 		let now = 0;

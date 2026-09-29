@@ -13,6 +13,7 @@ import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "#/integrations/provider-observability";
+import { readProviderJson } from "#/integrations/provider-response";
 import { constantTimeEqual } from "#/lib/crypto";
 import { decimalPlaces, decimalToUnits } from "#/lib/money";
 
@@ -300,7 +301,7 @@ export class OkPayAdapter implements PaymentAdapter<OkPayConfig> {
 		if (!response.ok) throw new OkPayHttpError(response.status);
 		let decoded: unknown;
 		try {
-			decoded = await response.json();
+			decoded = await readProviderJson(response);
 		} catch {
 			throw new OkPayInvalidResponseError();
 		}

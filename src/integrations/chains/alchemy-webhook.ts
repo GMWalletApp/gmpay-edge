@@ -9,7 +9,7 @@ const hexEventIndexSchema = hexQuantitySchema
 	.refine(Number.isSafeInteger);
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const managementDeadlineMs = 25_000;
-const maximumActivitiesPerDelivery = 2_000;
+export const maximumActivitiesPerDelivery = 2_000;
 
 export const alchemyEventSourceConfigSchema = z.object({
 	signingKey: z.string().min(16).max(512),

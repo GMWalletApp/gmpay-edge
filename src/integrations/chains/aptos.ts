@@ -3,7 +3,12 @@ import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "../provider-observability";
+import {
+	ProviderResponseTooLargeError,
+	readProviderJson,
+} from "../provider-response";
 import { operationDeadline, operationSignal } from "./operation-deadline";
+import { truncatedScan } from "./transaction-scan";
 import type {
 	AdapterErrorKind,
 	AdapterHealth,
@@ -11,6 +16,8 @@ import type {
 	PaymentAdapter,
 	PaymentTarget,
 	TransactionLookup,
+	TransactionScan,
+	TransactionScanInput,
 } from "./types";
 
 const configSchema = z.object({
@@ -96,7 +103,7 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 	) {
 		if (!/^\d+$/.test(hash))
 			throw new Error("Aptos transaction hash must be a transaction version");
-		const rows = await this.activities(
+		const { rows } = await this.activities(
 			{ version: hash },
 			operationDeadline(this.config.timeoutMs),
 			counters,
@@ -116,11 +123,7 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 		}
 		return null;
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (!this.validateAddress(input.address))
 			throw new Error("Invalid Aptos address");
 		return observeProviderOperation(
@@ -133,30 +136,30 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 		);
 	}
 	private async findTransactionsObserved(
-		input: {
-			address: string;
-			assetCode: string;
-			sinceBlock?: bigint;
-		},
+		input: TransactionScanInput,
 		counters: ProviderOperationCounters,
-	) {
+	): Promise<TransactionScan> {
 		const assetType =
 			input.assetCode.toUpperCase() === this.config.nativeAsset.toUpperCase()
 				? this.config.nativeAssetType
 				: this.token(input.assetCode)?.assetType;
 		if (!assetType) return [];
-		const rows = await this.activities(
+		const scan = await this.activities(
 			{
 				owner: normalizeAddress(input.address),
 				assetType,
 				...(input.sinceBlock === undefined
 					? {}
 					: { sinceVersion: input.sinceBlock.toString() }),
+				...(input.sinceTimestampMs === undefined
+					? {}
+					: { sinceTimestamp: new Date(input.sinceTimestampMs).toISOString() }),
 			},
 			operationDeadline(this.config.timeoutMs),
 			counters,
 		);
-		return rows.map((row) => this.normalize(row));
+		const transactions = scan.rows.map((row) => this.normalize(row));
+		return scan.truncated ? truncatedScan(transactions) : transactions;
 	}
 	async getConfirmations(transaction: NormalizedTransaction) {
 		return transaction.success ? 1 : 0;
@@ -199,7 +202,11 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 			if (error.status >= 500) return "network";
 			return "permanent";
 		}
-		if (error instanceof z.ZodError || error instanceof AptosGraphqlError)
+		if (
+			error instanceof z.ZodError ||
+			error instanceof AptosGraphqlError ||
+			error instanceof ProviderResponseTooLargeError
+		)
 			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
@@ -225,11 +232,17 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 			)?.[0] ?? assetType
 		);
 	}
+	/**
+	 * Pages newest-first with the bounds applied by the Indexer. Spending the
+	 * page budget yields the newest rows as a truncated scan instead of a
+	 * permanent failure.
+	 */
 	private async activities(
 		filter: {
 			owner?: string;
 			assetType?: string;
 			sinceVersion?: string;
+			sinceTimestamp?: string;
 			version?: string;
 		},
 		deadlineAt = operationDeadline(this.config.timeoutMs),
@@ -239,13 +252,16 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 			filter.owner ? "owner_address: { _eq: $owner }" : "",
 			filter.assetType ? "asset_type: { _eq: $asset }" : "",
 			filter.sinceVersion ? "transaction_version: { _gte: $since }" : "",
+			filter.sinceTimestamp
+				? "transaction_timestamp: { _gte: $sinceTimestamp }"
+				: "",
 			filter.version ? "transaction_version: { _eq: $version }" : "",
 			'type: { _eq: "deposit" }',
 			"is_transaction_success: { _eq: true }",
 		]
 			.filter(Boolean)
 			.join("\n");
-		const query = `query($owner: String, $asset: String, $since: bigint, $version: bigint, $offset: Int!) {
+		const query = `query($owner: String, $asset: String, $since: bigint, $sinceTimestamp: timestamp, $version: bigint, $offset: Int!) {
 			fungible_asset_activities(where: { ${where} }, order_by: { transaction_version: desc }, limit: 100, offset: $offset) {
 				amount asset_type event_index is_transaction_success owner_address transaction_timestamp transaction_version type
 			}
@@ -259,6 +275,7 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 					owner: filter.owner,
 					asset: filter.assetType,
 					since: filter.sinceVersion,
+					sinceTimestamp: filter.sinceTimestamp,
 					version: filter.version,
 					offset: page * 100,
 				},
@@ -269,9 +286,10 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 				.array(activitySchema)
 				.parse(data.fungible_asset_activities ?? []);
 			rows.push(...batch);
-			if (batch.length < 100 || filter.version) return rows;
+			if (batch.length < 100 || filter.version)
+				return { rows, truncated: false };
 		}
-		throw new Error("Aptos activity pagination exceeded the configured limit");
+		return { rows, truncated: true };
 	}
 	private normalize(
 		row: z.infer<typeof activitySchema>,
@@ -320,7 +338,7 @@ export class AptosAdapter implements PaymentAdapter<AptosConfig> {
 				data: z.record(z.string(), z.unknown()).optional(),
 				errors: z.array(z.object({ message: z.string() })).optional(),
 			})
-			.parse(await response.json());
+			.parse(await readProviderJson(response));
 		if (payload.errors?.length || !payload.data)
 			throw new AptosGraphqlError("Aptos Indexer returned a GraphQL error");
 		return payload.data;

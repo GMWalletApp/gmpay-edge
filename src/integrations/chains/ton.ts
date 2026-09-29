@@ -3,7 +3,12 @@ import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "../provider-observability";
+import {
+	ProviderResponseTooLargeError,
+	readProviderJson,
+} from "../provider-response";
 import { operationDeadline, operationSignal } from "./operation-deadline";
+import { truncatedScan } from "./transaction-scan";
 import type {
 	AdapterErrorKind,
 	AdapterHealth,
@@ -11,8 +16,19 @@ import type {
 	PaymentAdapter,
 	PaymentTarget,
 	TransactionLookup,
+	TransactionScan,
+	TransactionScanInput,
 } from "./types";
 
+/** Canonical `workchain:hex` form for configured Jetton masters. */
+const tonAddressSchema = z.string().transform((value, context) => {
+	const address = tonAddress(value);
+	if (address === null) {
+		context.addIssue({ code: "custom", message: "Invalid TON address" });
+		return z.NEVER;
+	}
+	return address;
+});
 const configSchema = z.object({
 	apiUrl: z.url().default("https://toncenter.com/api/v3"),
 	nativeAsset: z.string().default("GRAM"),
@@ -20,7 +36,7 @@ const configSchema = z.object({
 		.record(
 			z.string(),
 			z.object({
-				master: z.string(),
+				master: tonAddressSchema,
 				decimals: z.number().int().min(0).max(30),
 			}),
 		)
@@ -30,30 +46,57 @@ const configSchema = z.object({
 	maxPages: z.number().int().min(1).max(500).default(50),
 });
 export type TonConfig = z.infer<typeof configSchema>;
+type ScanBounds = Pick<TransactionScanInput, "sinceBlock" | "sinceTimestampMs">;
 
-const messageSchema = z.object({
-	source: z.string().optional(),
-	destination: z.string().optional(),
-	value: z.string().optional(),
-});
+const optionalString = z.string().nullable().optional();
+const phaseSchema = z
+	.object({
+		success: z.boolean().nullable().optional(),
+		skipped: z.boolean().nullable().optional(),
+	})
+	.nullable()
+	.optional();
 const transactionSchema = z.object({
 	hash: z.string(),
-	lt: z.string(),
+	lt: z.string().regex(/^\d+$/),
 	now: z.number(),
-	in_msg: messageSchema.optional(),
-	success: z.boolean().optional(),
+	in_msg: z
+		.object({
+			source: optionalString,
+			destination: optionalString,
+			value: z.string().regex(/^\d+$/).nullable().optional(),
+			bounced: z.boolean().nullable().optional(),
+		})
+		.nullable()
+		.optional(),
+	description: z
+		.object({
+			aborted: z.boolean().nullable().optional(),
+			compute_ph: phaseSchema,
+			action: phaseSchema,
+		})
+		.nullable()
+		.optional(),
 });
 const jettonSchema = z.object({
 	// TON amounts are atomic values and must remain strings until BigInt.
-	amount: z.string(),
-	destination: z.string().optional(),
+	amount: z.string().regex(/^\d+$/),
+	destination: optionalString,
 	jetton_master: z.string(),
-	query_id: z.union([z.string(), z.number()]).optional(),
-	source: z.string().optional(),
+	query_id: z.union([z.string(), z.number()]).nullable().optional(),
+	source: optionalString,
 	transaction_hash: z.string(),
-	transaction_lt: z.string().optional(),
+	transaction_lt: z.string().regex(/^\d+$/).nullable().optional(),
 	transaction_now: z.number(),
+	transaction_aborted: z.boolean().nullable().optional(),
 });
+const addressBookSchema = z
+	.record(
+		z.string(),
+		z.object({ user_friendly: z.string().nullable().optional() }).nullable(),
+	)
+	.optional();
+type AddressBook = z.infer<typeof addressBookSchema>;
 
 export class TonAdapter implements PaymentAdapter<TonConfig> {
 	readonly id = "ton";
@@ -72,7 +115,9 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		return input;
 	}
 	validateAddress(address: string) {
-		return /^(EQ|UQ)[A-Za-z0-9_-]{46}$/.test(address);
+		return (
+			/^(EQ|UQ)[A-Za-z0-9_-]{46}$/.test(address) && tonAddress(address) !== null
+		);
 	}
 	validatePayment(
 		transaction: NormalizedTransaction,
@@ -102,50 +147,62 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		counters: ProviderOperationCounters,
 	) {
 		const deadlineAt = operationDeadline(this.config.timeoutMs);
-		const jettons = await this.jettons(
-			`/jetton/transfers?transaction_hash=${encodeURIComponent(hash)}&limit=100`,
-			deadlineAt,
-			counters,
-		);
-		const jetton = jettons.find((row) => {
-			const assetCode = this.symbol(row.jetton_master);
-			return (
-				(lookup?.address == null || row.destination === lookup.address) &&
-				(lookup?.assetCode == null ||
-					assetCode.toUpperCase() === lookup.assetCode.toUpperCase()) &&
-				(lookup?.eventIndex == null ||
-					safeEventIndex(row.query_id) === lookup.eventIndex)
+		const wanted =
+			lookup?.address === undefined ? null : tonAddress(lookup.address);
+		if (lookup?.address !== undefined && wanted === null) return null;
+		const wantsNative =
+			lookup?.assetCode?.toUpperCase() ===
+			this.config.nativeAsset.toUpperCase();
+		if (!wantsNative) {
+			const jettons = await this.jettons(
+				`/jetton/transfers?transaction_hash=${encodeURIComponent(hash)}&limit=100`,
+				deadlineAt,
+				counters,
 			);
-		});
-		if (jetton)
-			return this.normalizeJetton(
-				jetton,
-				jetton.destination ?? "",
-				lookup?.assetCode,
-			);
-		const rows = await this.transactions(
+			for (const row of jettons.rows) {
+				const token = this.tokenByMaster(row.jetton_master);
+				if (
+					token &&
+					(wanted === null || tonAddress(row.destination ?? "") === wanted) &&
+					(lookup?.assetCode === undefined ||
+						token.assetCode === lookup.assetCode.toUpperCase()) &&
+					(lookup?.eventIndex === undefined ||
+						safeEventIndex(row.query_id) === lookup.eventIndex)
+				)
+					return this.normalizeJetton(
+						row,
+						lookup?.address ??
+							displayAddress(row.destination ?? "", jettons.addressBook),
+						token.assetCode,
+						jettons.addressBook,
+					);
+			}
+			if (lookup?.assetCode !== undefined) return null;
+		}
+		const transactions = await this.transactions(
 			`/transactions?hash=${encodeURIComponent(hash)}&limit=1`,
 			deadlineAt,
 			counters,
 		);
-		const native = rows.find(
+		const native = transactions.rows.find(
 			(row) =>
-				(lookup?.address == null ||
-					row.in_msg?.destination === lookup.address) &&
-				(lookup?.assetCode == null ||
-					lookup.assetCode.toUpperCase() ===
-						this.config.nativeAsset.toUpperCase()) &&
-				(lookup?.eventIndex == null || lookup.eventIndex === 0),
+				(wanted === null ||
+					tonAddress(row.in_msg?.destination ?? "") === wanted) &&
+				(lookup?.eventIndex === undefined || lookup.eventIndex === 0),
 		);
 		return native
-			? this.normalizeNative(native, native.in_msg?.destination ?? "")
+			? this.normalizeNative(
+					native,
+					lookup?.address ??
+						displayAddress(
+							native.in_msg?.destination ?? "",
+							transactions.addressBook,
+						),
+					transactions.addressBook,
+				)
 			: null;
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (!this.validateAddress(input.address))
 			throw new Error("Invalid TON address");
 		return observeProviderOperation(
@@ -158,48 +215,77 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		);
 	}
 	private async findTransactionsObserved(
-		input: {
-			address: string;
-			assetCode: string;
-			sinceBlock?: bigint;
-		},
+		input: TransactionScanInput,
 		counters: ProviderOperationCounters,
-	) {
+	): Promise<TransactionScan> {
 		const deadlineAt = operationDeadline(this.config.timeoutMs);
+		const account = tonAddress(input.address);
+		if (account === null) throw new Error("Invalid TON address");
+		const bounds = `${
+			input.sinceBlock === undefined ? "" : `&start_lt=${input.sinceBlock}`
+		}${
+			input.sinceTimestampMs === undefined
+				? ""
+				: `&start_utime=${Math.floor(input.sinceTimestampMs / 1000)}`
+		}`;
 		const token = this.token(input.assetCode);
 		if (token) {
-			const rows = await this.paginatedJettons(
-				`/jetton/transfers?owner_address=${encodeURIComponent(input.address)}&direction=in&limit=100`,
-				input.sinceBlock,
-				deadlineAt,
+			const scan = await this.paginate(
+				(offset) =>
+					this.jettons(
+						`/jetton/transfers?owner_address=${encodeURIComponent(account)}&jetton_master=${encodeURIComponent(token.master)}&direction=in&limit=100&sort=desc${bounds}&offset=${offset}`,
+						deadlineAt,
+						counters,
+					),
+				(row) =>
+					withinBounds(
+						BigInt(row.transaction_lt ?? 0),
+						row.transaction_now,
+						input,
+					),
 				counters,
 			);
-			return rows
+			const transactions = scan.rows
 				.filter(
 					(row) =>
-						row.jetton_master === token.master &&
-						(input.sinceBlock == null ||
-							BigInt(row.transaction_lt ?? 0) >= input.sinceBlock),
+						tonAddress(row.jetton_master) === token.master &&
+						tonAddress(row.destination ?? "") === account &&
+						withinBounds(
+							BigInt(row.transaction_lt ?? 0),
+							row.transaction_now,
+							input,
+						),
 				)
 				.map((row) =>
-					this.normalizeJetton(row, input.address, input.assetCode),
+					this.normalizeJetton(
+						row,
+						input.address,
+						token.assetCode,
+						scan.addressBook,
+					),
 				);
+			return scan.truncated ? truncatedScan(transactions) : transactions;
 		}
 		if (input.assetCode.toUpperCase() !== this.config.nativeAsset.toUpperCase())
 			return [];
-		const rows = await this.paginatedTransactions(
-			`/transactions?account=${encodeURIComponent(input.address)}&limit=100&sort=desc`,
-			input.sinceBlock,
-			deadlineAt,
+		const scan = await this.paginate(
+			(offset) =>
+				this.transactions(
+					`/transactions?account=${encodeURIComponent(account)}&limit=100&sort=desc${bounds}&offset=${offset}`,
+					deadlineAt,
+					counters,
+				),
+			(row) => withinBounds(BigInt(row.lt), row.now, input),
 			counters,
 		);
-		return rows
+		const transactions = scan.rows
 			.filter(
 				(row) =>
-					row.in_msg?.destination === input.address &&
-					(input.sinceBlock == null || BigInt(row.lt) >= input.sinceBlock),
+					tonAddress(row.in_msg?.destination ?? "") === account &&
+					withinBounds(BigInt(row.lt), row.now, input),
 			)
-			.map((row) => this.normalizeNative(row, input.address));
+			.map((row) => this.normalizeNative(row, input.address, scan.addressBook));
+		return scan.truncated ? truncatedScan(transactions) : transactions;
 	}
 	async getConfirmations(transaction: NormalizedTransaction) {
 		return transaction.success ? 1 : 0;
@@ -236,7 +322,11 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 			if (error.status >= 500) return "network";
 			return "permanent";
 		}
-		if (error instanceof z.ZodError) return "invalid_response";
+		if (
+			error instanceof z.ZodError ||
+			error instanceof ProviderResponseTooLargeError
+		)
+			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
 		return "permanent";
@@ -247,15 +337,20 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		);
 	}
 	private token(assetCode: string) {
-		return Object.entries(this.config.tokens).find(
+		const entry = Object.entries(this.config.tokens).find(
 			([symbol]) => symbol.toUpperCase() === assetCode.toUpperCase(),
-		)?.[1];
-	}
-	private symbol(master: string) {
+		);
 		return (
-			Object.entries(this.config.tokens).find(
-				([, token]) => token.master === master,
-			)?.[0] ?? master
+			entry && { assetCode: entry[0].toUpperCase(), master: entry[1].master }
+		);
+	}
+	private tokenByMaster(master: string) {
+		const canonical = tonAddress(master);
+		const entry = Object.entries(this.config.tokens).find(
+			([, token]) => token.master === canonical,
+		);
+		return (
+			entry && { assetCode: entry[0].toUpperCase(), master: entry[1].master }
 		);
 	}
 	private async transactions(
@@ -264,9 +359,12 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		counters?: ProviderOperationCounters,
 	) {
 		const payload = z
-			.object({ transactions: z.array(transactionSchema).default([]) })
+			.object({
+				transactions: z.array(transactionSchema).default([]),
+				address_book: addressBookSchema,
+			})
 			.parse(await this.request(path, deadlineAt, counters));
-		return payload.transactions;
+		return { rows: payload.transactions, addressBook: payload.address_book };
 	}
 	private async jettons(
 		path: string,
@@ -274,95 +372,84 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		counters?: ProviderOperationCounters,
 	) {
 		const payload = z
-			.object({ jetton_transfers: z.array(jettonSchema).default([]) })
+			.object({
+				jetton_transfers: z.array(jettonSchema).default([]),
+				address_book: addressBookSchema,
+			})
 			.parse(await this.request(path, deadlineAt, counters));
-		return payload.jetton_transfers;
+		return {
+			rows: payload.jetton_transfers,
+			addressBook: payload.address_book,
+		};
 	}
-	private async paginatedTransactions(
-		path: string,
-		sinceBlock: bigint | undefined,
-		deadlineAt: number,
+	/**
+	 * Offset pagination newest-first that stops at the first page reaching the
+	 * caller's bounds. Spending the page budget yields the newest rows as a
+	 * truncated scan instead of a permanent failure.
+	 */
+	private async paginate<T>(
+		fetchPage: (
+			offset: number,
+		) => Promise<{ rows: T[]; addressBook: AddressBook }>,
+		withinBounds: (row: T) => boolean,
 		counters: ProviderOperationCounters,
 	) {
-		const rows: z.infer<typeof transactionSchema>[] = [];
+		const rows: T[] = [];
+		let addressBook: AddressBook;
 		for (let page = 0; page < this.config.maxPages; page += 1) {
 			counters.page();
-			const batch = await this.transactions(
-				`${path}&offset=${page * 100}`,
-				deadlineAt,
-				counters,
-			);
-			rows.push(...batch);
-			if (
-				batch.length < 100 ||
-				(sinceBlock != null && batch.some((row) => BigInt(row.lt) < sinceBlock))
-			)
-				return rows;
+			const batch = await fetchPage(page * 100);
+			rows.push(...batch.rows);
+			addressBook = { ...addressBook, ...batch.addressBook };
+			if (batch.rows.length < 100 || !batch.rows.every(withinBounds))
+				return { rows, addressBook, truncated: false };
 		}
-		throw new Error("TON transaction pagination exceeded the configured limit");
-	}
-	private async paginatedJettons(
-		path: string,
-		sinceBlock: bigint | undefined,
-		deadlineAt: number,
-		counters: ProviderOperationCounters,
-	) {
-		const rows: z.infer<typeof jettonSchema>[] = [];
-		for (let page = 0; page < this.config.maxPages; page += 1) {
-			counters.page();
-			const batch = await this.jettons(
-				`${path}&offset=${page * 100}`,
-				deadlineAt,
-				counters,
-			);
-			rows.push(...batch);
-			if (
-				batch.length < 100 ||
-				(sinceBlock != null &&
-					batch.some((row) => BigInt(row.transaction_lt ?? 0) < sinceBlock))
-			)
-				return rows;
-		}
-		throw new Error("TON Jetton pagination exceeded the configured limit");
+		return { rows, addressBook, truncated: true };
 	}
 	private normalizeNative(
 		row: z.infer<typeof transactionSchema>,
 		address: string,
+		addressBook: AddressBook,
 	): NormalizedTransaction {
+		const success = nativeTransferSucceeded(row);
 		return {
 			network: "ton",
 			hash: row.hash,
 			eventIndex: 0,
-			from: row.in_msg?.source ?? "",
+			from: displayAddress(row.in_msg?.source ?? "", addressBook),
 			to: address,
 			assetCode: this.config.nativeAsset.toUpperCase(),
 			amountUnits: BigInt(row.in_msg?.value ?? 0),
 			blockNumber: BigInt(row.lt),
 			blockHash: row.hash,
-			confirmations: row.success === false ? 0 : 1,
+			confirmations: success ? 1 : 0,
 			timestamp: new Date(row.now * 1000),
-			success: row.success !== false,
+			success,
 			canonical: true,
 		};
 	}
 	private normalizeJetton(
 		row: z.infer<typeof jettonSchema>,
 		address: string,
-		assetCode = this.symbol(row.jetton_master),
+		assetCode: string,
+		addressBook: AddressBook,
 	): NormalizedTransaction {
+		// toncenter v3 attests execution through `transaction_aborted`; a missing
+		// flag cannot prove success and fails closed.
+		const success = row.transaction_aborted === false;
 		return {
 			network: "ton",
 			hash: row.transaction_hash,
 			eventIndex: safeEventIndex(row.query_id),
-			from: row.source ?? "",
+			from: displayAddress(row.source ?? "", addressBook),
 			to: address,
-			assetCode: assetCode.toUpperCase(),
+			assetCode,
 			amountUnits: BigInt(row.amount),
 			blockNumber: BigInt(row.transaction_lt ?? 0),
 			blockHash: row.transaction_hash,
-			confirmations: 1,
+			confirmations: success ? 1 : 0,
 			timestamp: new Date(row.transaction_now * 1000),
-			success: true,
+			success,
 			canonical: true,
 		};
 	}
@@ -370,7 +457,7 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 		path: string,
 		deadlineAt = operationDeadline(this.config.timeoutMs),
 		counters?: ProviderOperationCounters,
-	) {
+	): Promise<unknown> {
 		counters?.request();
 		const response = await fetch(
 			`${this.config.apiUrl.replace(/\/$/, "")}${path}`,
@@ -383,7 +470,7 @@ export class TonAdapter implements PaymentAdapter<TonConfig> {
 			},
 		);
 		if (!response.ok) throw new TonHttpError(response.status);
-		return response.json();
+		return readProviderJson(response);
 	}
 }
 
@@ -392,7 +479,81 @@ class TonHttpError extends Error {
 		super(`TON Center returned HTTP ${status}`);
 	}
 }
-function safeEventIndex(value: string | number | undefined) {
+/**
+ * toncenter v3 reports execution per phase. Every present phase must attest
+ * success and a bounced or aborted transaction never credits the account; a
+ * missing description cannot prove success and fails closed. A skipped compute
+ * phase (uninitialised account) still credits a non-bounceable transfer.
+ */
+function nativeTransferSucceeded(row: z.infer<typeof transactionSchema>) {
+	const description = row.description;
+	if (!description || description.aborted !== false) return false;
+	if (row.in_msg?.bounced === true) return false;
+	const compute = description.compute_ph;
+	if (!compute || (compute.skipped !== true && compute.success !== true))
+		return false;
+	return description.action == null
+		? compute.skipped === true
+		: description.action.success === true;
+}
+function withinBounds(lt: bigint, unixSeconds: number, bounds: ScanBounds) {
+	return (
+		(bounds.sinceBlock === undefined || lt >= bounds.sinceBlock) &&
+		(bounds.sinceTimestampMs === undefined ||
+			unixSeconds * 1000 >= bounds.sinceTimestampMs)
+	);
+}
+function displayAddress(value: string, addressBook: AddressBook) {
+	return addressBook?.[value]?.user_friendly ?? value;
+}
+function safeEventIndex(value: string | number | null | undefined) {
 	const parsed = Number(value ?? 0);
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+/**
+ * Normalises raw `workchain:hex` and user-friendly (base64 or base64url,
+ * bounceable or not) addresses to one canonical raw form so provider fields
+ * encoded differently compare equal. Invalid checksums yield null.
+ */
+function tonAddress(value: string) {
+	const raw = /^(-?\d+):([0-9a-fA-F]{64})$/.exec(value);
+	if (raw?.[1] !== undefined && raw[2] !== undefined)
+		return `${Number(raw[1])}:${raw[2].toLowerCase()}`;
+	if (!/^[A-Za-z0-9_+/-]{48}$/.test(value)) return null;
+	let bytes: Uint8Array;
+	try {
+		bytes = Uint8Array.from(
+			atob(value.replace(/-/g, "+").replace(/_/g, "/")),
+			(character) => character.charCodeAt(0),
+		);
+	} catch {
+		return null;
+	}
+	const tag = bytes[0];
+	const workchain = bytes[1];
+	const checksum = bytes[34];
+	const checksumLow = bytes[35];
+	if (
+		bytes.length !== 36 ||
+		(tag !== 0x11 && tag !== 0x51) ||
+		workchain === undefined ||
+		checksum === undefined ||
+		checksumLow === undefined ||
+		crc16(bytes.subarray(0, 34)) !== ((checksum << 8) | checksumLow)
+	)
+		return null;
+	const hex = Array.from(bytes.subarray(2, 34), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+	return `${workchain === 0xff ? -1 : workchain}:${hex}`;
+}
+/** CRC-16/XMODEM as used by TON user-friendly addresses. */
+function crc16(bytes: Uint8Array) {
+	let crc = 0;
+	for (const byte of bytes) {
+		crc ^= byte << 8;
+		for (let bit = 0; bit < 8; bit += 1)
+			crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+	}
+	return crc;
 }

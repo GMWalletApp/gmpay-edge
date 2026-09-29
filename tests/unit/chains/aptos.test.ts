@@ -139,6 +139,35 @@ describe("Aptos adapter", () => {
 			}),
 		);
 	});
+	it("passes the time lower bound to the Indexer and truncates at the page budget", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				graphql(
+					Array.from({ length: 100 }, (_, index) => activity(1_000 - index)),
+				),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+		const transactions = await new AptosAdapter({
+			indexerUrl: "https://api.mainnet.aptoslabs.com/v1/graphql",
+			maxPages: 1,
+			tokens: { USDT: { assetType, decimals: 6 } },
+		}).findTransactions({
+			address: owner,
+			assetCode: "USDT",
+			sinceTimestampMs: Date.UTC(2025, 5, 1),
+		});
+		expect(transactions).toHaveLength(100);
+		expect(transactions.truncated).toEqual({});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+		) as { query: string; variables: { sinceTimestamp: string } };
+		expect(body.variables.sinceTimestamp).toBe("2025-06-01T00:00:00.000Z");
+		expect(body.query).toContain(
+			"transaction_timestamp: { _gte: $sinceTimestamp }",
+		);
+	});
 	it("shares one deadline across all activity pages", async () => {
 		let now = 0;
 		vi.spyOn(Date, "now").mockImplementation(() => now);

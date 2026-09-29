@@ -135,6 +135,37 @@ describe("Binance Pay adapter", () => {
 		});
 	});
 
+	it("bounds a direct lookup around the observed payment time", async () => {
+		const observedAtMs = 1_700_000_000_000;
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(payResponse([payRow("pay-1", observedAtMs)]));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(
+			adapter().getTransaction("pay-1", { observedAtMs }),
+		).resolves.toMatchObject({ hash: "pay-1" });
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+		expect(url.searchParams.get("startTime")).toBe(
+			String(observedAtMs - 3_600_000),
+		);
+		expect(url.searchParams.get("endTime")).toBe(
+			String(observedAtMs + 3_600_000),
+		);
+	});
+
+	it("starts a first scan at the order lower bound instead of the lookback", async () => {
+		const sinceTimestampMs = 1_700_000_000_000;
+		const fetchMock = vi.fn().mockResolvedValue(payResponse([]));
+		vi.stubGlobal("fetch", fetchMock);
+		await adapter().findTransactions({
+			address: "123456",
+			assetCode: "USDT",
+			sinceTimestampMs,
+		});
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+		expect(url.searchParams.get("startTime")).toBe(String(sinceTimestampMs));
+	});
+
 	it("splits full Pay-history windows instead of accepting 100-row truncation", async () => {
 		const full = Array.from({ length: 100 }, (_, index) =>
 			payRow(`full-${index}`, 1_700_000_000_000 + index),

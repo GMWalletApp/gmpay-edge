@@ -3,9 +3,11 @@ import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "../provider-observability";
+import { ProviderResponseTooLargeError } from "../provider-response";
 import { JsonRpcRequestError, requestJsonRpc } from "./json-rpc";
 import { consumeJsonRpcSubscription } from "./json-rpc-subscription";
 import { operationDeadline, remainingOperationMs } from "./operation-deadline";
+import { truncatedScan } from "./transaction-scan";
 import type {
 	AdapterErrorKind,
 	AdapterHealth,
@@ -14,6 +16,8 @@ import type {
 	PaymentAdapter,
 	PaymentTarget,
 	TransactionLookup,
+	TransactionScan,
+	TransactionScanInput,
 } from "./types";
 
 const evmNetworks = ["ethereum", "base", "bsc", "polygon"] as const;
@@ -34,9 +38,19 @@ const configSchema = z.object({
 	timeoutMs: z.number().int().min(1000).max(30_000).default(30_000),
 	blockLookback: z.number().int().min(1).max(20_000).default(3000),
 	logBlockRange: z.number().int().min(1).max(20_000).default(500),
+	/**
+	 * Native transfers need one full block read per block, so their window is
+	 * far smaller than the log lookback; older native payments are recovered
+	 * through payer-submitted hashes, Alchemy, or WSS rather than polling.
+	 */
+	nativeBlockWindow: z.number().int().min(1).max(2000).default(120),
 	maxScanTransactions: z.number().int().min(1).max(10_000).default(1000),
 });
 export type EvmConfig = z.infer<typeof configSchema>;
+type BoundedScan = {
+	transactions: NormalizedTransaction[];
+	scannedThroughBlock?: number;
+};
 
 const transferTopic =
 	"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -154,14 +168,11 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 		if (rawTransaction == null || rawReceipt == null) return null;
 		const transaction = transactionSchema.parse(rawTransaction);
 		const receipt = receiptSchema.parse(rawReceipt);
-		const block = blockSchema.parse(
-			await this.rpc(
-				"eth_getBlockByHash",
-				[receipt.blockHash, false],
-				deadlineAt,
-				undefined,
-				counters,
-			),
+		const block = await this.blockByHash(
+			receipt.blockHash,
+			deadlineAt,
+			undefined,
+			counters,
 		);
 		const requestedToken = lookup?.assetCode
 			? this.token(lookup.assetCode)
@@ -190,11 +201,7 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 						receipt.status,
 					);
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (!this.validateAddress(input.address))
 			throw new Error("Invalid EVM address");
 		return observeProviderOperation(
@@ -207,13 +214,9 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 		);
 	}
 	private async findTransactionsObserved(
-		input: {
-			address: string;
-			assetCode: string;
-			sinceBlock?: bigint;
-		},
+		input: TransactionScanInput,
 		counters: ProviderOperationCounters,
-	) {
+	): Promise<TransactionScan> {
 		const deadlineAt = operationDeadline(this.config.timeoutMs);
 		const latest = fromHex(
 			await this.rpc<string>(
@@ -224,33 +227,46 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 				counters,
 			),
 		);
-		const earliest = Math.max(0, latest - this.config.blockLookback + 1);
-		if (input.sinceBlock != null) {
-			if (input.sinceBlock > BigInt(latest)) return [];
-			if (input.sinceBlock < BigInt(earliest))
-				throw new Error("EVM scan exceeds the configured block lookback");
-		}
-		const from = input.sinceBlock == null ? earliest : Number(input.sinceBlock);
-		const token = this.token(input.assetCode);
-		if (token)
-			return this.findTokenTransfers(
-				input.address,
-				input.assetCode,
-				token.address,
-				from,
-				latest,
-				deadlineAt,
-				counters,
-			);
-		if (input.assetCode.toUpperCase() !== this.config.nativeAsset.toUpperCase())
+		if (input.sinceBlock != null && input.sinceBlock > BigInt(latest))
 			return [];
-		return this.findNativeTransfers(
-			input.address,
-			from,
-			latest,
-			deadlineAt,
-			counters,
-		);
+		const token = this.token(input.assetCode);
+		if (
+			!token &&
+			input.assetCode.toUpperCase() !== this.config.nativeAsset.toUpperCase()
+		)
+			return [];
+		// A cursor that fell behind the provider window resumes at the window
+		// edge: the skipped blocks can no longer be polled and must not stall
+		// detection of newer transfers.
+		const window = token
+			? this.config.blockLookback
+			: this.config.nativeBlockWindow;
+		const earliest = Math.max(0, latest - window + 1);
+		const requested =
+			input.sinceBlock == null ? earliest : Number(input.sinceBlock);
+		const from = Math.max(requested, earliest);
+		const scan = token
+			? await this.findTokenTransfers(
+					input.address,
+					input.assetCode,
+					token.address,
+					from,
+					latest,
+					deadlineAt,
+					counters,
+				)
+			: await this.findNativeTransfers(
+					input.address,
+					from,
+					latest,
+					deadlineAt,
+					counters,
+				);
+		if (scan.scannedThroughBlock !== undefined)
+			return truncatedScan(scan.transactions, BigInt(scan.scannedThroughBlock));
+		return from > requested
+			? truncatedScan(scan.transactions, BigInt(latest))
+			: scan.transactions;
 	}
 	async getConfirmations(transaction: NormalizedTransaction) {
 		return observeProviderOperation(
@@ -304,14 +320,11 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 				if (token) {
 					const deadlineAt = operationDeadline(this.config.timeoutMs);
 					const log = logSchema.parse(value);
-					const block = blockSchema.parse(
-						await this.rpc(
-							"eth_getBlockByHash",
-							[log.blockHash, false],
-							deadlineAt,
-							input.signal,
-						),
-					);
+					if (
+						checksumInsensitive(log.address) !==
+						checksumInsensitive(token.address)
+					)
+						return;
 					const receipt = receiptSchema.parse(
 						await this.rpc(
 							"eth_getTransactionReceipt",
@@ -319,6 +332,18 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 							deadlineAt,
 							input.signal,
 						),
+					);
+					// A pushed log counts only when the transaction receipt carries
+					// the identical log for the configured contract.
+					if (
+						receipt.blockHash !== log.blockHash ||
+						!receipt.logs.some((candidate) => sameLog(candidate, log))
+					)
+						return;
+					const block = await this.blockByHash(
+						log.blockHash,
+						deadlineAt,
+						input.signal,
 					);
 					const latest = fromHex(
 						await this.rpc<string>(
@@ -408,7 +433,11 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 			if (error.status >= 500) return "network";
 			return error.rpcCode === -32602 ? "configuration" : "permanent";
 		}
-		if (error instanceof z.ZodError) return "invalid_response";
+		if (
+			error instanceof z.ZodError ||
+			error instanceof ProviderResponseTooLargeError
+		)
+			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
 		return "permanent";
@@ -431,6 +460,11 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 				checksumInsensitive(token.address) === checksumInsensitive(contract),
 		)?.[0];
 	}
+	/**
+	 * Scans ascending log ranges. Provider rejections and the event budget both
+	 * narrow the range on block boundaries; when the budget is spent the scan
+	 * reports the last fully covered block instead of failing.
+	 */
 	private async findTokenTransfers(
 		address: string,
 		assetCode: string,
@@ -439,13 +473,15 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 		latest: number,
 		deadlineAt: number,
 		counters: ProviderOperationCounters,
-	) {
+	): Promise<BoundedScan> {
 		const rows: z.infer<typeof logSchema>[] = [];
 		let rangeStart = from;
 		let blockRange = this.config.logBlockRange;
+		let scannedThroughBlock: number | undefined;
 		while (rangeStart <= latest) {
 			counters.page();
 			const rangeEnd = Math.min(latest, rangeStart + blockRange - 1);
+			const width = rangeEnd - rangeStart + 1;
 			let rawBatch: unknown;
 			try {
 				rawBatch = await this.rpc(
@@ -464,72 +500,89 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 				);
 			} catch (error) {
 				if (
-					blockRange > 1 &&
+					width > 1 &&
 					error instanceof JsonRpcRequestError &&
 					error.rpcCode != null
 				) {
-					blockRange = Math.max(1, Math.floor(blockRange / 2));
+					blockRange = Math.max(1, Math.floor(width / 2));
 					continue;
 				}
 				throw error;
 			}
 			const batch = z.array(logSchema).parse(rawBatch);
-			if (rows.length + batch.length > this.config.maxScanTransactions)
-				throw new Error("EVM scan exceeded the configured transaction limit");
+			if (
+				width > 1 &&
+				rows.length + batch.length > this.config.maxScanTransactions
+			) {
+				blockRange = Math.max(1, Math.floor(width / 2));
+				continue;
+			}
 			rows.push(...batch);
 			rangeStart = rangeEnd + 1;
+			if (
+				rows.length >= this.config.maxScanTransactions &&
+				rangeStart <= latest
+			) {
+				scannedThroughBlock = rangeEnd;
+				break;
+			}
 		}
 		const blocks = new Map<string, z.infer<typeof blockSchema>>();
-		const normalized: NormalizedTransaction[] = [];
+		const transactions: NormalizedTransaction[] = [];
 		for (const row of rows) {
 			let block = blocks.get(row.blockHash);
 			if (!block) {
-				block = blockSchema.parse(
-					await this.rpc(
-						"eth_getBlockByHash",
-						[row.blockHash, false],
-						deadlineAt,
-						undefined,
-						counters,
-					),
+				block = await this.blockByHash(
+					row.blockHash,
+					deadlineAt,
+					undefined,
+					counters,
 				);
 				blocks.set(row.blockHash, block);
 			}
-			normalized.push(this.normalizeLog(row, block, latest, "0x1", assetCode));
+			transactions.push(
+				this.normalizeLog(row, block, latest, "0x1", assetCode),
+			);
 		}
-		return normalized;
+		return {
+			transactions,
+			...(scannedThroughBlock === undefined ? {} : { scannedThroughBlock }),
+		};
 	}
+	/**
+	 * Reads full blocks in order. The match budget and the shared deadline end
+	 * the walk on a block boundary and report the covered range so the caller
+	 * resumes from it instead of re-reading or failing.
+	 */
 	private async findNativeTransfers(
 		address: string,
 		from: number,
 		latest: number,
 		deadlineAt: number,
 		counters: ProviderOperationCounters,
-	) {
-		const normalized: NormalizedTransaction[] = [];
-		let matches = 0;
+	): Promise<BoundedScan> {
+		const transactions: NormalizedTransaction[] = [];
 		for (let number = from; number <= latest; number += 1) {
+			if (transactions.length >= this.config.maxScanTransactions)
+				return { transactions, scannedThroughBlock: number - 1 };
 			counters.page();
-			const block = blockSchema.parse(
-				await this.rpc(
-					"eth_getBlockByNumber",
-					[toHex(number), true],
-					deadlineAt,
-					undefined,
-					counters,
-				),
-			);
-			for (const raw of block.transactions) {
-				const transaction = transactionSchema.parse(raw);
-				if (
-					transaction.to &&
-					checksumInsensitive(transaction.to) === checksumInsensitive(address)
-				) {
-					matches += 1;
-					if (matches > this.config.maxScanTransactions)
-						throw new Error(
-							"EVM scan exceeded the configured transaction limit",
-						);
+			try {
+				const block = blockSchema.parse(
+					await this.rpc(
+						"eth_getBlockByNumber",
+						[toHex(number), true],
+						deadlineAt,
+						undefined,
+						counters,
+					),
+				);
+				for (const raw of block.transactions) {
+					const transaction = transactionSchema.parse(raw);
+					if (
+						!transaction.to ||
+						checksumInsensitive(transaction.to) !== checksumInsensitive(address)
+					)
+						continue;
 					const receipt = receiptSchema.parse(
 						await this.rpc(
 							"eth_getTransactionReceipt",
@@ -539,13 +592,40 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 							counters,
 						),
 					);
-					normalized.push(
+					transactions.push(
 						this.normalizeNative(transaction, block, latest, receipt.status),
 					);
 				}
+			} catch (error) {
+				if (number > from && isTimeoutError(error))
+					return { transactions, scannedThroughBlock: number - 1 };
+				throw error;
 			}
 		}
-		return normalized;
+		return { transactions };
+	}
+	private async blockByHash(
+		hash: string,
+		deadlineAt: number,
+		signal?: AbortSignal,
+		counters?: ProviderOperationCounters,
+	) {
+		const block = blockSchema.parse(
+			await this.rpc(
+				"eth_getBlockByHash",
+				[hash, false],
+				deadlineAt,
+				signal,
+				counters,
+			),
+		);
+		if (block.hash !== hash)
+			throw new JsonRpcRequestError(
+				502,
+				undefined,
+				"JSON-RPC provider returned the wrong block",
+			);
+		return block;
 	}
 	private normalizeLog(
 		log: z.infer<typeof logSchema>,
@@ -567,7 +647,7 @@ export class EvmAdapter implements PaymentAdapter<EvmConfig> {
 			confirmations: confirmationCount(latest, fromHex(log.blockNumber)),
 			timestamp: new Date(fromHex(block.timestamp) * 1000),
 			success: status === "0x1",
-			canonical: !log.removed && block.hash === log.blockHash,
+			canonical: !log.removed,
 		};
 	}
 	private normalizeNative(
@@ -623,6 +703,25 @@ function isAddress(value: string) {
 }
 function checksumInsensitive(value: string) {
 	return value.toLowerCase();
+}
+function sameLog(
+	left: z.infer<typeof logSchema>,
+	right: z.infer<typeof logSchema>,
+) {
+	return (
+		checksumInsensitive(left.address) === checksumInsensitive(right.address) &&
+		left.transactionHash === right.transactionHash &&
+		fromHex(left.logIndex) === fromHex(right.logIndex) &&
+		left.data.toLowerCase() === right.data.toLowerCase() &&
+		left.topics.length === right.topics.length &&
+		left.topics.every(
+			(topic, index) =>
+				topic.toLowerCase() === right.topics[index]?.toLowerCase(),
+		)
+	);
+}
+function isTimeoutError(error: unknown) {
+	return error instanceof DOMException && error.name === "TimeoutError";
 }
 function fromHex(value: string) {
 	if (!/^0x[0-9a-f]+$/i.test(value))

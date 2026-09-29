@@ -85,6 +85,69 @@ describe("JSON-RPC subscriptions", () => {
 		);
 	});
 
+	it("ignores notifications that arrive before the subscription is acknowledged", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		globalThis.WebSocket = class {
+			private readonly listeners = new Map<
+				string,
+				Array<(event: { data?: string }) => void>
+			>();
+			constructor(_url: string) {
+				queueMicrotask(() => this.emit("open", {}));
+			}
+			addEventListener(
+				type: string,
+				listener: (event: { data?: string }) => void,
+			) {
+				this.listeners.set(type, [
+					...(this.listeners.get(type) ?? []),
+					listener,
+				]);
+			}
+			send(value: string) {
+				const request = JSON.parse(value) as { id: string };
+				queueMicrotask(() => {
+					// Unsolicited notification without a subscription id before the ack.
+					this.emit("message", {
+						data: JSON.stringify({
+							method: "eth_subscription",
+							params: { result: "unsolicited" },
+						}),
+					});
+					this.emit("message", {
+						data: JSON.stringify({ id: request.id, result: "sub-1" }),
+					});
+					this.emit("message", {
+						data: JSON.stringify({
+							method: "eth_subscription",
+							params: { subscription: "sub-1", result: "acknowledged" },
+						}),
+					});
+				});
+			}
+			close() {}
+			private emit(type: string, event: { data?: string }) {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		} as unknown as typeof WebSocket;
+
+		const controller = new AbortController();
+		const values: string[] = [];
+		await consumeJsonRpcSubscription<string>({
+			adapter: "evm",
+			url: "wss://rpc.example",
+			method: "eth_subscribe",
+			params: ["newHeads"],
+			timeoutMs: 1_000,
+			signal: controller.signal,
+			onNotification(value) {
+				values.push(value);
+				controller.abort();
+			},
+		});
+		expect(values).toEqual(["acknowledged"]);
+	});
+
 	it("fails closed for non-WebSocket endpoints", async () => {
 		await expect(
 			consumeJsonRpcSubscription({

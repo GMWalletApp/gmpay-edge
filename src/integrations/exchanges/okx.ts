@@ -8,11 +8,16 @@ import type {
 	NormalizedTransaction,
 	PaymentAdapter,
 	PaymentTarget,
+	TransactionScanInput,
 } from "#/integrations/chains/types";
 import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "#/integrations/provider-observability";
+import {
+	ProviderResponseTooLargeError,
+	readProviderJson,
+} from "#/integrations/provider-response";
 import { decimalPlaces, decimalToUnits } from "#/lib/money";
 
 const configSchema = z.object({
@@ -118,11 +123,7 @@ export class OkxPayAdapter implements PaymentAdapter<OkxConfig> {
 			},
 		);
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (input.address !== this.config.accountId)
 			throw new Error("OKX account ID does not match channel credentials");
 		return observeProviderOperation(
@@ -134,7 +135,7 @@ export class OkxPayAdapter implements PaymentAdapter<OkxConfig> {
 			async (counters) => {
 				const minimum =
 					input.sinceBlock == null
-						? Date.now() - this.config.lookbackMs
+						? (input.sinceTimestampMs ?? Date.now() - this.config.lookbackMs)
 						: Number(input.sinceBlock);
 				return (await this.bills(input.assetCode, minimum, undefined, counters))
 					.filter(
@@ -187,7 +188,11 @@ export class OkxPayAdapter implements PaymentAdapter<OkxConfig> {
 			if (error.status >= 500) return "network";
 			return "permanent";
 		}
-		if (error instanceof z.ZodError) return "invalid_response";
+		if (
+			error instanceof z.ZodError ||
+			error instanceof ProviderResponseTooLargeError
+		)
+			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
 		return "permanent";
@@ -297,7 +302,7 @@ export class OkxPayAdapter implements PaymentAdapter<OkxConfig> {
 				code: z.string().optional(),
 				data: z.array(z.unknown()).default([]),
 			})
-			.parse(await response.json());
+			.parse(await readProviderJson(response));
 		if (payload.code === "50102" && budget.clockRetryAvailable) {
 			budget.clockRetryAvailable = false;
 			counters?.retry();
@@ -324,7 +329,7 @@ export class OkxPayAdapter implements PaymentAdapter<OkxConfig> {
 				code: z.literal("0"),
 				data: z.array(z.object({ ts: z.string().regex(/^\d+$/) })).min(1),
 			})
-			.parse(await response.json());
+			.parse(await readProviderJson(response));
 		const completedAt = Date.now();
 		this.clockOffsetMs =
 			Number(payload.data[0]?.ts) - Math.floor((startedAt + completedAt) / 2);

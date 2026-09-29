@@ -26,7 +26,7 @@ describe("payment method adapter routing", () => {
 		["base", "evm", "ETH", "0x1111111111111111111111111111111111111111"],
 		["bsc", "evm", "BNB", "0x1111111111111111111111111111111111111111"],
 		["polygon", "evm", "POL", "0x1111111111111111111111111111111111111111"],
-		["ton", "ton", "GRAM", `UQ${"a".repeat(46)}`],
+		["ton", "ton", "GRAM", "UQCrq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq5jh"],
 		["aptos", "aptos", "APT", "0x1"],
 		["solana", "solana", "SOL", "11111111111111111111111111111111"],
 	] as const)("constructs and validates the %s chain adapter from a payment-method query", async (railCode, adapterId, assetCode, address) => {

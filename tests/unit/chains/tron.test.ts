@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TronAdapter } from "#/integrations/chains/tron";
 import nowBlockFixture from "../../fixtures/chains/tron-now-block.json";
-import tokenInfoFixture from "../../fixtures/chains/tron-token-info.json";
 import transactionInfoFixture from "../../fixtures/chains/tron-transaction-info.json";
 import eventFixture from "../../fixtures/chains/tron-transfer-event.json";
 import { MockTronAdapter } from "../../fixtures/mock-tron-adapter";
 
 const address = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj";
 const zeroAddress = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
+const usdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+const lookalikeContract = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj";
+const apiUrl = "https://api.trongrid.io";
+
 describe("TRON adapters", () => {
 	beforeEach(() => vi.spyOn(Math, "random").mockReturnValue(0));
 	afterEach(() => {
@@ -15,13 +18,12 @@ describe("TRON adapters", () => {
 		vi.unstubAllGlobals();
 	});
 	it("validates base58check-shaped addresses", () => {
-		const adapter = new TronAdapter({ apiUrl: "https://api.trongrid.io" });
-		expect(adapter.validateAddress(address)).toBe(true);
-		expect(adapter.validateAddress("0x1234")).toBe(false);
+		expect(adapter().validateAddress(address)).toBe(true);
+		expect(adapter().validateAddress("0x1234")).toBe(false);
 	});
 	it("provides deterministic simulated payments", async () => {
-		const adapter = new MockTronAdapter();
-		adapter.record({
+		const mock = new MockTronAdapter();
+		mock.record({
 			network: "tron",
 			hash: "abc",
 			eventIndex: 0,
@@ -35,48 +37,80 @@ describe("TRON adapters", () => {
 			timestamp: new Date(),
 			success: true,
 		});
-		expect(await adapter.getTransaction("abc")).toMatchObject({
+		expect(await mock.getTransaction("abc")).toMatchObject({
 			assetCode: "USDT",
 			amountUnits: 1_000_000n,
 		});
 	});
-	it("normalizes confirmed TRC20 transfers from TronGrid", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(jsonResponse(nowBlock(100)))
-				.mockResolvedValueOnce(
-					jsonResponse({
-						success: true,
-						data: [
-							{
-								transaction_id: "trc20-hash",
-								block_timestamp: 1_700_000_000_000,
-								block_number: 90,
-								from: zeroAddress,
-								to: address,
-								value: "1250000",
-								type: "Transfer",
-								token_info: { symbol: "USDT" },
-							},
-						],
-					}),
-				)
-				.mockResolvedValueOnce(jsonResponse(block(90, "block-90"))),
-		);
-		const [transaction] = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).findTransactions({ address, assetCode: "USDT", sinceBlock: 80n });
+	it("normalizes confirmed TRC20 transfers with their real event identity", async () => {
+		const fetchMock = tronGrid({
+			head: 100,
+			pages: [{ data: [trc20("trc20-hash", 90, "1250000")] }],
+			events: { "trc20-hash": [tronEvent(3, address, "1250000")] },
+		});
+		const [transaction] = await adapter().findTransactions({
+			address,
+			assetCode: "USDT",
+			sinceBlock: 80n,
+			sinceTimestampMs: 1_699_999_000_000,
+		});
 		expect(transaction).toMatchObject({
 			hash: "trc20-hash",
+			eventIndex: 3,
+			from: zeroAddress,
 			to: address,
 			assetCode: "USDT",
 			amountUnits: 1_250_000n,
 			blockNumber: 90n,
+			blockHash: "block-90",
 			confirmations: 11,
 			success: true,
 		});
+		const listUrl = requestedUrls(fetchMock).find((url) =>
+			url.includes("/transactions/trc20?"),
+		);
+		expect(listUrl).toContain(`contract_address=${usdtContract}`);
+		expect(listUrl).toContain("min_timestamp=1699999000000");
+	});
+	it("ignores a look-alike token that only shares the USDT symbol", async () => {
+		const fetchMock = tronGrid({
+			head: 100,
+			pages: [
+				{
+					data: [
+						{
+							...trc20("fake-hash", 95, "1250000"),
+							token_info: { symbol: "USDT", address: lookalikeContract },
+						},
+					],
+				},
+			],
+			events: {
+				"fake-hash": [tronEvent(0, address, "1250000", lookalikeContract)],
+			},
+		});
+		await expect(
+			adapter().findTransactions({ address, assetCode: "USDT" }),
+		).resolves.toEqual([]);
+		expect(
+			requestedUrls(fetchMock).some((url) => url.includes("/events")),
+		).toBe(false);
+	});
+	it("rejects a payer-submitted hash whose Transfer event belongs to another contract", async () => {
+		tronGrid({
+			head: 100,
+			info: {
+				id: "fake-direct",
+				blockNumber: 90,
+				receipt: { result: "SUCCESS" },
+			},
+			events: {
+				"fake-direct": [tronEvent(0, address, "1250000", lookalikeContract)],
+			},
+		});
+		await expect(
+			adapter().getTransaction("fake-direct", { address, assetCode: "USDT" }),
+		).resolves.toBeNull();
 	});
 	it("preserves event identity and converts TVM event addresses", async () => {
 		vi.stubGlobal(
@@ -86,12 +120,9 @@ describe("TRON adapters", () => {
 				.mockResolvedValueOnce(jsonResponse(transactionInfoFixture))
 				.mockResolvedValueOnce(jsonResponse(nowBlockFixture))
 				.mockResolvedValueOnce(jsonResponse(block(90, "transaction-block")))
-				.mockResolvedValueOnce(jsonResponse(eventFixture))
-				.mockResolvedValueOnce(jsonResponse(tokenInfoFixture)),
+				.mockResolvedValueOnce(jsonResponse(eventFixture)),
 		);
-		const transaction = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).getTransaction("trc20-event-hash");
+		const transaction = await adapter().getTransaction("trc20-event-hash");
 		expect(transaction).toMatchObject({
 			hash: "trc20-event-hash",
 			eventIndex: 3,
@@ -101,33 +132,26 @@ describe("TRON adapters", () => {
 			amountUnits: 1_250_000n,
 			blockHash: "transaction-block",
 			confirmations: 11,
+			success: true,
 		});
 	});
 	it("selects the requested TRC20 event from a multi-event transaction", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(
-					jsonResponse({ id: "multi-event", blockNumber: 90 }),
-				)
-				.mockResolvedValueOnce(jsonResponse(nowBlock(100)))
-				.mockResolvedValueOnce(jsonResponse(block(90, "block-90")))
-				.mockResolvedValueOnce(
-					jsonResponse({
-						data: [
-							tronEvent(1, address, "1"),
-							tronEvent(4, zeroAddress, "2500000"),
-						],
-					}),
-				)
-				.mockResolvedValueOnce(jsonResponse({ data: [{ symbol: "USDT" }] })),
-		);
+		tronGrid({
+			head: 100,
+			info: { id: "multi-event", blockNumber: 90 },
+			events: {
+				"multi-event": [
+					tronEvent(1, address, "1"),
+					tronEvent(4, zeroAddress, "2500000"),
+				],
+			},
+		});
 		await expect(
-			new TronAdapter({ apiUrl: "https://api.trongrid.io" }).getTransaction(
-				"multi-event",
-				{ address: zeroAddress, assetCode: "USDT", eventIndex: 4 },
-			),
+			adapter().getTransaction("multi-event", {
+				address: zeroAddress,
+				assetCode: "USDT",
+				eventIndex: 4,
+			}),
 		).resolves.toMatchObject({
 			to: zeroAddress,
 			eventIndex: 4,
@@ -135,103 +159,185 @@ describe("TRON adapters", () => {
 			blockHash: "block-90",
 		});
 	});
+	it("reports a reverted TRC20 execution from the transaction receipt", async () => {
+		tronGrid({
+			head: 100,
+			info: { id: "reverted", blockNumber: 90, receipt: { result: "REVERT" } },
+			events: { reverted: [tronEvent(0, address, "1250000")] },
+		});
+		await expect(
+			adapter().getTransaction("reverted", { address, assetCode: "USDT" }),
+		).resolves.toMatchObject({ success: false });
+	});
+	it("does not fall back to native parsing for a token lookup", async () => {
+		const fetchMock = tronGrid({
+			head: 100,
+			info: { id: "no-event", blockNumber: 90 },
+			events: { "no-event": [] },
+		});
+		await expect(
+			adapter().getTransaction("no-event", { address, assetCode: "USDT" }),
+		).resolves.toBeNull();
+		expect(
+			requestedUrls(fetchMock).some((url) =>
+				url.endsWith("/wallet/gettransactionbyid"),
+			),
+		).toBe(false);
+	});
+	it("returns null for a TRX lookup of a non-transfer transaction", async () => {
+		tronGrid({
+			head: 100,
+			info: { id: "contract-call", blockNumber: 90 },
+			transaction: {
+				txID: "contract-call",
+				blockNumber: 90,
+				block_timestamp: 1_700_000_000_000,
+				ret: [{ contractRet: "SUCCESS" }],
+				raw_data: {
+					contract: [
+						{
+							type: "TriggerSmartContract",
+							parameter: {
+								value: {
+									data: "a9059cbb",
+									owner_address: `41${"00".repeat(20)}`,
+								},
+							},
+						},
+					],
+				},
+			},
+		});
+		await expect(
+			adapter().getTransaction("contract-call", { address, assetCode: "TRX" }),
+		).resolves.toBeNull();
+	});
 	it("follows TronGrid fingerprints without dropping later pages", async () => {
 		const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(jsonResponse(nowBlock(100)))
-			.mockResolvedValueOnce(
-				jsonResponse({
+		const fetchMock = tronGrid({
+			head: 100,
+			pages: [
+				{
 					data: [trc20("page-1", 99, "1")],
 					meta: { fingerprint: "next page" },
-				}),
-			)
-			.mockResolvedValueOnce(
-				jsonResponse({ data: [trc20("page-2", 98, "2")], meta: {} }),
-			)
-			.mockResolvedValueOnce(jsonResponse(block(99, "block-99")))
-			.mockResolvedValueOnce(jsonResponse(block(98, "block-98")));
-		vi.stubGlobal("fetch", fetchMock);
-		const transactions = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).findTransactions({ address, assetCode: "USDT" });
+				},
+				{ data: [trc20("page-2", 98, "2")], meta: {} },
+			],
+		});
+		const transactions = await adapter().findTransactions({
+			address,
+			assetCode: "USDT",
+		});
 		expect(transactions.map((transaction) => transaction.hash)).toEqual([
 			"page-1",
 			"page-2",
 		]);
-		expect(String(fetchMock.mock.calls[2]?.[0])).toContain(
-			"fingerprint=next%20page",
-		);
+		expect(transactions.truncated).toBeUndefined();
+		expect(requestedUrls(fetchMock)[2]).toContain("fingerprint=next%20page");
 		expect(info).toHaveBeenCalledWith(
 			expect.objectContaining({
 				event: "provider_operation",
 				adapter: "tron",
 				operation: "find_transactions",
-				requestCount: 5,
+				requestCount: 7,
 				paginationRequestCount: 2,
 			}),
 		);
 	});
+	it("stops paging once a page reaches the time lower bound", async () => {
+		const fetchMock = tronGrid({
+			head: 100,
+			pages: [
+				{
+					data: [
+						trc20("recent", 99, "1"),
+						{ ...trc20("old", 60, "2"), block_timestamp: 1_600_000_000_000 },
+					],
+					meta: { fingerprint: "older page" },
+				},
+				{ data: [trc20("older", 50, "3")] },
+			],
+		});
+		const transactions = await adapter().findTransactions({
+			address,
+			assetCode: "USDT",
+			sinceTimestampMs: 1_650_000_000_000,
+		});
+		expect(transactions.map((transaction) => transaction.hash)).toEqual([
+			"recent",
+		]);
+		expect(transactions.truncated).toBeUndefined();
+		expect(
+			requestedUrls(fetchMock).some((url) => url.includes("fingerprint=")),
+		).toBe(false);
+	});
 	it("rejects repeated TronGrid cursors instead of looping forever", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(jsonResponse(nowBlock(100)))
-				.mockResolvedValueOnce(
-					jsonResponse({ data: [], meta: { fingerprint: "same" } }),
-				)
-				.mockResolvedValueOnce(
-					jsonResponse({ data: [], meta: { fingerprint: "same" } }),
-				),
-		);
+		tronGrid({
+			head: 100,
+			pages: [
+				{ data: [], meta: { fingerprint: "same" } },
+				{ data: [], meta: { fingerprint: "same" } },
+			],
+		});
 		await expect(
-			new TronAdapter({ apiUrl: "https://api.trongrid.io" }).findTransactions({
-				address,
-				assetCode: "USDT",
-			}),
+			adapter().findTransactions({ address, assetCode: "USDT" }),
 		).rejects.toThrow("repeated");
 	});
+	it("returns the newest rows as a truncated scan when the row budget is exhausted", async () => {
+		const fetchMock = tronGrid({
+			head: 110,
+			pages: [
+				{
+					data: [trc20("first", 100, "1"), trc20("second", 99, "2")],
+					meta: { fingerprint: "more" },
+				},
+			],
+		});
+		const transactions = await adapter({
+			maxScanTransactions: 1,
+		}).findTransactions({ address, assetCode: "USDT" });
+		expect(transactions.map((transaction) => transaction.hash)).toEqual([
+			"first",
+		]);
+		expect(transactions.truncated).toEqual({});
+		expect(
+			requestedUrls(fetchMock).filter((url) => url.includes("/trc20?")),
+		).toHaveLength(1);
+	});
 	it("normalizes successful native TRX transfers and Base58Check addresses", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(jsonResponse(nowBlock(25)))
-				.mockResolvedValueOnce(
-					jsonResponse({
-						success: true,
-						data: [
-							{
-								txID: "trx-hash",
-								blockNumber: 24,
-								block_timestamp: 1_700_000_000_000,
-								ret: [{ contractRet: "SUCCESS" }],
-								raw_data: {
-									contract: [
-										{
-											type: "TransferContract",
-											parameter: {
-												value: {
-													amount: 2_000_000,
-													owner_address:
-														"410000000000000000000000000000000000000000",
-													to_address:
-														"410000000000000000000000000000000000000000",
-												},
+		tronGrid({
+			head: 25,
+			pages: [
+				{
+					data: [
+						{
+							txID: "trx-hash",
+							blockNumber: 24,
+							block_timestamp: 1_700_000_000_000,
+							ret: [{ contractRet: "SUCCESS" }],
+							raw_data: {
+								contract: [
+									{
+										type: "TransferContract",
+										parameter: {
+											value: {
+												amount: 2_000_000,
+												owner_address: `41${"00".repeat(20)}`,
+												to_address: `41${"00".repeat(20)}`,
 											},
 										},
-									],
-								},
+									},
+								],
 							},
-						],
-					}),
-				)
-				.mockResolvedValueOnce(jsonResponse(block(24, "block-24"))),
-		);
-		const [transaction] = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).findTransactions({ address: zeroAddress, assetCode: "TRX" });
+						},
+					],
+				},
+			],
+		});
+		const [transaction] = await adapter().findTransactions({
+			address: zeroAddress,
+			assetCode: "TRX",
+		});
 		expect(transaction).toMatchObject({
 			from: zeroAddress,
 			to: zeroAddress,
@@ -241,68 +347,57 @@ describe("TRON adapters", () => {
 		});
 	});
 	it("rejects unsafe numeric native amounts before BigInt conversion", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(jsonResponse(nowBlock(25)))
-				.mockResolvedValueOnce(
-					jsonResponse({
-						success: true,
-						data: [
-							{
-								txID: "unsafe-trx",
-								blockNumber: 24,
-								block_timestamp: 1_700_000_000_000,
-								ret: [{ contractRet: "SUCCESS" }],
-								raw_data: {
-									contract: [
-										{
-											type: "TransferContract",
-											parameter: {
-												value: {
-													amount: Number.MAX_SAFE_INTEGER + 1,
-													owner_address: `41${"00".repeat(20)}`,
-													to_address: `41${"00".repeat(20)}`,
-												},
+		tronGrid({
+			head: 25,
+			pages: [
+				{
+					data: [
+						{
+							txID: "unsafe-trx",
+							blockNumber: 24,
+							block_timestamp: 1_700_000_000_000,
+							ret: [{ contractRet: "SUCCESS" }],
+							raw_data: {
+								contract: [
+									{
+										type: "TransferContract",
+										parameter: {
+											value: {
+												amount: Number.MAX_SAFE_INTEGER + 1,
+												owner_address: `41${"00".repeat(20)}`,
+												to_address: `41${"00".repeat(20)}`,
 											},
 										},
-									],
-								},
+									},
+								],
 							},
-						],
-					}),
-				),
-		);
+						},
+					],
+				},
+			],
+		});
 		await expect(
-			new TronAdapter({ apiUrl: "https://api.trongrid.io" }).findTransactions({
-				address: zeroAddress,
-				assetCode: "TRX",
-			}),
+			adapter().findTransactions({ address: zeroAddress, assetCode: "TRX" }),
 		).rejects.toThrow();
 	});
-	it("keeps canonical block identity stable while the chain head advances", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(jsonResponse(nowBlock(100)))
-				.mockResolvedValueOnce(
-					jsonResponse({ data: [trc20("stable", 90, "1")] }),
-				)
-				.mockResolvedValueOnce(jsonResponse(block(90, "canonical-90")))
-				.mockResolvedValueOnce(jsonResponse(nowBlock(101)))
-				.mockResolvedValueOnce(
-					jsonResponse({ data: [trc20("stable", 90, "1")] }),
-				)
-				.mockResolvedValueOnce(jsonResponse(block(90, "canonical-90"))),
-		);
-		const adapter = new TronAdapter({ apiUrl: "https://api.trongrid.io" });
-		const [first] = await adapter.findTransactions({
+	it("keeps canonical block identity stable while the solidified head advances", async () => {
+		let head = 100;
+		tronGrid({
+			head: () => head,
+			pages: [
+				{ data: [trc20("stable", 90, "1")] },
+				{ data: [trc20("stable", 90, "1")] },
+			],
+			events: { stable: [tronEvent(0, address, "1")] },
+			blockId: (number) => `canonical-${number}`,
+		});
+		const instance = adapter();
+		const [first] = await instance.findTransactions({
 			address,
 			assetCode: "USDT",
 		});
-		const [second] = await adapter.findTransactions({
+		head = 101;
+		const [second] = await instance.findTransactions({
 			address,
 			assetCode: "USDT",
 		});
@@ -316,27 +411,17 @@ describe("TRON adapters", () => {
 		const rows = Array.from({ length: 8 }, (_, index) =>
 			trc20(`tx-${index}`, 90 + index, String(index + 1)),
 		);
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-				const url = String(input);
-				if (url.endsWith("/wallet/getnowblock"))
-					return jsonResponse(nowBlock(110));
-				if (url.includes("/transactions/trc20?"))
-					return jsonResponse({ data: rows });
-				if (url.endsWith("/wallet/getblockbynum")) {
-					active += 1;
-					maximum = Math.max(maximum, active);
-					await new Promise((resolve) => setTimeout(resolve, 1));
-					const request = JSON.parse(String(init?.body)) as { num: number };
-					active -= 1;
-					return jsonResponse(block(request.num, `block-${request.num}`));
-				}
-				throw new Error(`Unexpected TRON request ${url}`);
-			}),
-		);
-		const transactions = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
+		tronGrid({
+			head: 110,
+			pages: [{ data: rows }],
+			onBlock: async () => {
+				active += 1;
+				maximum = Math.max(maximum, active);
+				await new Promise((resolve) => setTimeout(resolve, 1));
+				active -= 1;
+			},
+		});
+		const transactions = await adapter({
 			maxConcurrentRequests: 3,
 		}).findTransactions({ address, assetCode: "USDT" });
 		expect(maximum).toBe(3);
@@ -344,46 +429,23 @@ describe("TRON adapters", () => {
 			rows.map((row) => row.transaction_id),
 		);
 	});
-	it("rejects transaction rows above the configured scan limit", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(jsonResponse(nowBlock(110)))
-			.mockResolvedValueOnce(
-				jsonResponse({
-					data: [trc20("first", 100, "1"), trc20("second", 99, "2")],
-				}),
-			);
-		vi.stubGlobal("fetch", fetchMock);
-		await expect(
-			new TronAdapter({
-				apiUrl: "https://api.trongrid.io",
-				maxScanTransactions: 1,
-			}).findTransactions({ address, assetCode: "USDT" }),
-		).rejects.toThrow("configured row limit");
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-	});
 	it("filters old rows before requesting canonical block hashes", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(jsonResponse(nowBlock(110)))
-			.mockResolvedValueOnce(
-				jsonResponse({
-					data: [trc20("old", 90, "1"), trc20("current", 100, "2")],
-				}),
-			)
-			.mockResolvedValueOnce(jsonResponse(block(100, "block-100")));
-		vi.stubGlobal("fetch", fetchMock);
-		const transactions = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).findTransactions({ address, assetCode: "USDT", sinceBlock: 100n });
+		const fetchMock = tronGrid({
+			head: 110,
+			pages: [{ data: [trc20("old", 90, "1"), trc20("current", 100, "2")] }],
+		});
+		const transactions = await adapter().findTransactions({
+			address,
+			assetCode: "USDT",
+			sinceBlock: 100n,
+		});
 		expect(transactions.map((transaction) => transaction.hash)).toEqual([
 			"current",
 		]);
-		expect(fetchMock).toHaveBeenCalledTimes(3);
-		const blockRequest = JSON.parse(
-			String((fetchMock.mock.calls[2]?.[1] as RequestInit).body),
-		) as { num: number };
-		expect(blockRequest.num).toBe(100);
+		const blockRequests = fetchMock.mock.calls
+			.filter(([url]) => String(url).endsWith("/wallet/getblockbynum"))
+			.map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+		expect(blockRequests).toEqual([{ num: 100 }]);
 	});
 	it("shares one deadline between head and transaction requests", async () => {
 		let now = 0;
@@ -394,24 +456,23 @@ describe("TRON adapters", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		await expect(
-			new TronAdapter({
-				apiUrl: "https://api.trongrid.io",
-				timeoutMs: 1000,
-			}).findTransactions({ address, assetCode: "USDT" }),
+			adapter({ timeoutMs: 1000 }).findTransactions({
+				address,
+				assetCode: "USDT",
+			}),
 		).rejects.toMatchObject({ name: "TimeoutError" });
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
-	it("observes confirmation lookups at their provider request owner", async () => {
+	it("observes confirmation lookups against the solidified head", async () => {
 		const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(nowBlock(100))),
-		);
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(nowBlock(100)));
+		vi.stubGlobal("fetch", fetchMock);
 		await expect(
-			new TronAdapter({ apiUrl: "https://api.trongrid.io" }).getConfirmations({
-				blockNumber: 90n,
-			} as never),
+			adapter().getConfirmations({ blockNumber: 90n } as never),
 		).resolves.toBe(11);
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+			"/walletsolidity/getnowblock",
+		);
 		expect(info).toHaveBeenCalledWith(
 			expect.objectContaining({
 				event: "provider_operation",
@@ -427,9 +488,7 @@ describe("TRON adapters", () => {
 			"fetch",
 			vi.fn().mockRejectedValue(new TypeError("provider-secret-and-url")),
 		);
-		const health = await new TronAdapter({
-			apiUrl: "https://api.trongrid.io",
-		}).healthCheck();
+		const health = await adapter().healthCheck();
 		expect(health).toMatchObject({
 			healthy: false,
 			detail: "TRON health check failed: network",
@@ -437,6 +496,78 @@ describe("TRON adapters", () => {
 		expect(health.detail).not.toContain("provider-secret-and-url");
 	});
 });
+
+function adapter(overrides: Record<string, unknown> = {}) {
+	return new TronAdapter({
+		apiUrl,
+		tokens: { USDT: { address: usdtContract, decimals: 6 } },
+		...overrides,
+	});
+}
+
+/** Routes TronGrid requests by URL so concurrent block and event reads stay order-independent. */
+function tronGrid(routes: {
+	head: number | (() => number);
+	pages?: Array<{ data: unknown[]; meta?: { fingerprint?: string } }>;
+	events?: Record<string, unknown[]>;
+	info?: unknown;
+	transaction?: unknown;
+	blockId?: (number: number) => string;
+	onBlock?: () => Promise<void>;
+}) {
+	let page = 0;
+	const fetchMock = vi.fn(
+		async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith("/walletsolidity/getnowblock"))
+				return jsonResponse(
+					nowBlock(
+						typeof routes.head === "function" ? routes.head() : routes.head,
+					),
+				);
+			if (url.endsWith("/wallet/getblockbynum")) {
+				await routes.onBlock?.();
+				const request = JSON.parse(String(init?.body)) as { num: number };
+				return jsonResponse(
+					block(
+						request.num,
+						routes.blockId?.(request.num) ?? `block-${request.num}`,
+					),
+				);
+			}
+			if (url.endsWith("/wallet/gettransactioninfobyid"))
+				return jsonResponse(routes.info ?? {});
+			if (url.endsWith("/wallet/gettransactionbyid"))
+				return jsonResponse(routes.transaction ?? {});
+			const events = /\/v1\/transactions\/([^/]+)\/events/.exec(url);
+			if (events?.[1]) {
+				const hash = decodeURIComponent(events[1]);
+				const row = trc20Rows.get(hash);
+				return jsonResponse({
+					success: true,
+					data:
+						routes.events?.[hash] ??
+						(row
+							? [tronEvent(0, address, row.value, usdtContract, row.block)]
+							: []),
+				});
+			}
+			if (url.includes("/v1/accounts/")) {
+				const current = routes.pages?.[page];
+				page += 1;
+				if (!current) throw new Error(`Unexpected TRON page request ${url}`);
+				return jsonResponse({ success: true, ...current });
+			}
+			throw new Error(`Unexpected TRON request ${url}`);
+		},
+	);
+	vi.stubGlobal("fetch", fetchMock);
+	return fetchMock;
+}
+
+function requestedUrls(fetchMock: ReturnType<typeof vi.fn>) {
+	return fetchMock.mock.calls.map(([url]) => String(url));
+}
 
 function nowBlock(number: number) {
 	return {
@@ -452,25 +583,43 @@ function block(number: number, blockID: string) {
 	};
 }
 
+/** TronGrid TRC20 history rows carry no block number; the mock serves it from the Transfer event. */
+const trc20Rows = new Map<string, { block: number; value: string }>();
+
 function trc20(hash: string, block: number, value: string) {
+	trc20Rows.set(hash, { block, value });
 	return {
 		transaction_id: hash,
 		block_timestamp: 1_700_000_000_000,
-		block_number: block,
 		from: zeroAddress,
 		to: address,
 		value,
 		type: "Transfer",
-		token_info: { symbol: "USDT" },
+		token_info: {
+			symbol: "USDT",
+			address: usdtContract,
+			decimals: 6,
+			name: "Tether USD",
+		},
 	};
 }
 
-function tronEvent(eventIndex: number, to: string, value: string) {
+function tronEvent(
+	eventIndex: number,
+	to: string,
+	value: string,
+	contract = usdtContract,
+	block = 90,
+) {
 	return {
-		contract_address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+		contract_address: contract,
+		block_number: block,
 		block_timestamp: 1_700_000_000_000,
-		event_index: eventIndex,
-		result: { from: address, to, value },
+		event_index: String(eventIndex),
+		event_name: "Transfer",
+		result: { from: zeroAddress, to, value },
+		result_type: { from: "address", to: "address", value: "uint256" },
+		_unconfirmed: false,
 	};
 }
 

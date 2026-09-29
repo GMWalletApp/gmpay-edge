@@ -3,8 +3,10 @@ import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "../provider-observability";
+import { ProviderResponseTooLargeError } from "../provider-response";
 import { JsonRpcRequestError, requestJsonRpc } from "./json-rpc";
 import { operationDeadline, remainingOperationMs } from "./operation-deadline";
+import { truncatedScan } from "./transaction-scan";
 import type {
 	AdapterErrorKind,
 	AdapterHealth,
@@ -12,6 +14,8 @@ import type {
 	PaymentAdapter,
 	PaymentTarget,
 	TransactionLookup,
+	TransactionScan,
+	TransactionScanInput,
 } from "./types";
 
 const configSchema = z.object({
@@ -32,7 +36,8 @@ const configSchema = z.object({
 	maxScanSignatures: z.number().int().min(1).max(10_000).default(1000),
 });
 export type SolanaConfig = z.infer<typeof configSchema>;
-type ScanBudget = { remainingSignatures: number };
+type ScanBudget = { remainingSignatures: number; truncated: boolean };
+type ScanBounds = Pick<TransactionScanInput, "sinceBlock" | "sinceTimestampMs">;
 
 const signatureSchema = z.object({
 	blockTime: z.number().nullable().optional(),
@@ -40,6 +45,59 @@ const signatureSchema = z.object({
 	err: z.unknown().nullable().optional(),
 	signature: z.string(),
 	slot: z.number(),
+});
+const atomicAmountSchema = z.union([
+	z.string().regex(/^\d+$/),
+	z
+		.number()
+		.int()
+		.nonnegative()
+		.refine(Number.isSafeInteger, "Atomic amount number is not safe"),
+]);
+const accountKeySchema = z.union([
+	z.string(),
+	z.object({ pubkey: z.string() }).transform((key) => key.pubkey),
+]);
+/** `getTransaction` with `jsonParsed` encoding; `meta` is required because execution status lives there. */
+const transactionSchema = z.object({
+	blockTime: z.number().nullable().optional(),
+	slot: z.number().int().nonnegative().optional(),
+	transaction: z.object({
+		message: z.object({
+			accountKeys: z.array(accountKeySchema),
+			instructions: z.array(z.unknown()),
+			recentBlockhash: z.string(),
+		}),
+	}),
+	meta: z.object({
+		err: z.unknown().nullable().optional(),
+		innerInstructions: z
+			.array(z.object({ instructions: z.array(z.unknown()) }))
+			.nullable()
+			.optional(),
+		postTokenBalances: z
+			.array(
+				z.object({
+					accountIndex: z.number().int().nonnegative(),
+					mint: z.string(),
+					owner: z.string().optional(),
+				}),
+			)
+			.nullable()
+			.optional(),
+	}),
+});
+const parsedInstructionSchema = z.object({
+	parsed: z.object({
+		type: z.string().startsWith("transfer"),
+		info: z.object({ source: z.string(), destination: z.string() }).loose(),
+	}),
+});
+const systemTransferSchema = z.object({ lamports: atomicAmountSchema });
+const tokenTransferSchema = z.object({
+	mint: z.string().optional(),
+	amount: z.string().regex(/^\d+$/).optional(),
+	tokenAmount: z.object({ amount: z.string().regex(/^\d+$/) }).optional(),
 });
 
 export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
@@ -96,8 +154,6 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 		if (!transaction) return null;
 		const transfer = this.transfers(transaction, hash).find(
 			(item) =>
-				(this.token(item.assetCode) ||
-					item.assetCode === this.config.nativeAsset.toUpperCase()) &&
 				(lookup?.address == null || item.to === lookup.address) &&
 				(lookup?.assetCode == null ||
 					item.assetCode.toUpperCase() === lookup.assetCode.toUpperCase()) &&
@@ -105,11 +161,7 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 		);
 		return transfer ?? null;
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (!this.validateAddress(input.address))
 			throw new Error("Invalid Solana address");
 		return observeProviderOperation(
@@ -122,68 +174,37 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 		);
 	}
 	private async findTransactionsObserved(
-		input: {
-			address: string;
-			assetCode: string;
-			sinceBlock?: bigint;
-		},
+		input: TransactionScanInput,
 		counters: ProviderOperationCounters,
-	) {
+	): Promise<TransactionScan> {
 		const deadlineAt = operationDeadline(this.config.timeoutMs);
-		const budget = { remainingSignatures: this.config.maxScanSignatures };
+		const budget: ScanBudget = {
+			remainingSignatures: this.config.maxScanSignatures,
+			truncated: false,
+		};
 		const token = this.token(input.assetCode);
-		if (!token) {
-			if (
-				input.assetCode.toUpperCase() !== this.config.nativeAsset.toUpperCase()
-			)
-				return [];
-			return this.nativeTransactions(
-				input.address,
-				input.sinceBlock,
-				budget,
-				deadlineAt,
-				counters,
-			);
-		}
-		const accountsResult = z
-			.object({ value: z.array(z.object({ pubkey: z.string() })).default([]) })
-			.parse(
-				await this.rpc(
-					"getTokenAccountsByOwner",
-					[
-						input.address,
-						{ mint: token.mint },
-						{ commitment: this.config.commitment, encoding: "jsonParsed" },
-					],
+		const accounts = token
+			? await this.tokenAccounts(
+					input.address,
+					token.mint,
 					deadlineAt,
 					counters,
-				),
-			);
-		const accounts = [
-			...new Set(accountsResult.value.map((account) => account.pubkey)),
-		];
-		if (accounts.length > this.config.maxTokenAccounts)
-			throw new Error(
-				"Solana token account scan exceeded the configured limit",
-			);
+				)
+			: input.assetCode.toUpperCase() === this.config.nativeAsset.toUpperCase()
+				? [input.address]
+				: [];
 		const transactions: NormalizedTransaction[] = [];
 		const seen = new Set<string>();
 		for (const account of accounts) {
 			const signatures = await this.signatures(
 				account,
-				input.sinceBlock,
+				input,
 				budget,
 				deadlineAt,
 				counters,
 			);
 			for (const signature of signatures) {
-				if (
-					seen.has(signature.signature) ||
-					signature.err != null ||
-					(input.sinceBlock != null &&
-						BigInt(signature.slot) < input.sinceBlock)
-				)
-					continue;
+				if (seen.has(signature.signature) || signature.err != null) continue;
 				seen.add(signature.signature);
 				const raw = await this.transaction(
 					signature.signature,
@@ -204,7 +225,7 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 				);
 			}
 		}
-		return transactions;
+		return budget.truncated ? truncatedScan(transactions) : transactions;
 	}
 	async getConfirmations(transaction: NormalizedTransaction) {
 		return observeProviderOperation(
@@ -275,7 +296,11 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 			if (error.status >= 500) return "network";
 			return "permanent";
 		}
-		if (error instanceof z.ZodError) return "invalid_response";
+		if (
+			error instanceof z.ZodError ||
+			error instanceof ProviderResponseTooLargeError
+		)
+			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
 		return "permanent";
@@ -297,50 +322,43 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 			)?.[0] ?? mint
 		);
 	}
-	private async nativeTransactions(
-		address: string,
-		sinceBlock: bigint | undefined,
-		budget: ScanBudget,
+	private async tokenAccounts(
+		owner: string,
+		mint: string,
 		deadlineAt: number,
 		counters: ProviderOperationCounters,
 	) {
-		const signatures = await this.signatures(
-			address,
-			sinceBlock,
-			budget,
-			deadlineAt,
-			counters,
-		);
-		const transactions: NormalizedTransaction[] = [];
-		for (const signature of signatures) {
-			if (
-				signature.err != null ||
-				(sinceBlock != null && BigInt(signature.slot) < sinceBlock)
-			)
-				continue;
-			const raw = await this.transaction(
-				signature.signature,
-				deadlineAt,
-				counters,
+		const result = z
+			.object({ value: z.array(z.object({ pubkey: z.string() })).default([]) })
+			.parse(
+				await this.rpc(
+					"getTokenAccountsByOwner",
+					[
+						owner,
+						{ mint },
+						{ commitment: this.config.commitment, encoding: "jsonParsed" },
+					],
+					deadlineAt,
+					counters,
+				),
 			);
-			if (!raw) continue;
-			transactions.push(
-				...this.transfers(raw, signature.signature, {
-					account: address,
-					owner: address,
-					assetCode: this.config.nativeAsset,
-					slot: signature.slot,
-					...(signature.confirmationStatus
-						? { confirmationStatus: signature.confirmationStatus }
-						: {}),
-				}),
+		const accounts = [
+			...new Set(result.value.map((account) => account.pubkey)),
+		];
+		if (accounts.length > this.config.maxTokenAccounts)
+			throw new Error(
+				"Solana token account scan exceeded the configured limit",
 			);
-		}
-		return transactions;
+		return accounts;
 	}
+	/**
+	 * Walks signatures newest-first until the slot or block-time bound is
+	 * reached. Spending the shared signature budget marks the scan truncated:
+	 * the newest signatures are returned and the caller keeps its cursor.
+	 */
 	private async signatures(
 		address: string,
-		sinceBlock: bigint | undefined,
+		bounds: ScanBounds,
 		budget: ScanBudget,
 		deadlineAt: number,
 		counters: ProviderOperationCounters,
@@ -348,9 +366,11 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 		const signatures: z.infer<typeof signatureSchema>[] = [];
 		let before: string | undefined;
 		for (let page = 0; page < this.config.maxPages; page += 1) {
+			if (budget.remainingSignatures <= 0) {
+				budget.truncated = true;
+				return signatures;
+			}
 			counters.page();
-			if (budget.remainingSignatures <= 0)
-				throw new Error("Solana signature scan exceeded the configured limit");
 			const pageSize = Math.min(
 				this.config.signaturePageSize,
 				budget.remainingSignatures,
@@ -370,24 +390,24 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 					counters,
 				),
 			);
-			if (batch.length > budget.remainingSignatures)
+			if (batch.length > pageSize)
 				throw new Error("Solana RPC exceeded the requested signature limit");
 			budget.remainingSignatures -= batch.length;
-			signatures.push(...batch);
-			const reachedSince =
-				sinceBlock != null &&
-				batch.some((signature) => BigInt(signature.slot) < sinceBlock);
-			if (batch.length < pageSize || reachedSince) return signatures;
-			if (budget.remainingSignatures === 0)
-				throw new Error("Solana signature scan exceeded the configured limit");
+			signatures.push(
+				...batch.filter((signature) => withinBounds(signature, bounds)),
+			);
+			if (
+				batch.length < pageSize ||
+				batch.some((signature) => !withinBounds(signature, bounds))
+			)
+				return signatures;
 			const next = batch.at(-1)?.signature;
 			if (!next || next === before)
 				throw new Error("Solana RPC repeated its signature cursor");
 			before = next;
 		}
-		throw new Error(
-			"Solana signature pagination exceeded the configured limit",
-		);
+		budget.truncated = true;
+		return signatures;
 	}
 	private async transaction(
 		signature: string,
@@ -407,12 +427,10 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 			deadlineAt,
 			counters,
 		);
-		return value && typeof value === "object"
-			? (value as Record<string, unknown>)
-			: null;
+		return value === null ? null : transactionSchema.parse(value);
 	}
 	private transfers(
-		raw: Record<string, unknown>,
+		raw: z.infer<typeof transactionSchema>,
 		signature: string,
 		override?: {
 			account: string;
@@ -422,111 +440,68 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 			confirmationStatus?: string;
 		},
 	) {
-		const transaction = raw.transaction as
-			| {
-					message?: {
-						accountKeys?: unknown[];
-						instructions?: unknown[];
-						recentBlockhash?: unknown;
-					};
-			  }
-			| undefined;
-		const meta = raw.meta as
-			| {
-					err?: unknown;
-					innerInstructions?: Array<{ instructions?: unknown[] }>;
-					postTokenBalances?: Array<{
-						accountIndex?: number;
-						mint?: string;
-						owner?: string;
-					}>;
-			  }
-			| undefined;
-		const accountKeys = (transaction?.message?.accountKeys ?? []).map(
-			accountKey,
-		);
+		const { message } = raw.transaction;
 		const owners = new Map(
-			(meta?.postTokenBalances ?? []).map((balance) => [
-				accountKeys[balance.accountIndex ?? -1],
-				{
-					mint: String(balance.mint ?? ""),
-					owner: String(balance.owner ?? ""),
-				},
+			(raw.meta.postTokenBalances ?? []).map((balance) => [
+				message.accountKeys[balance.accountIndex],
+				balance,
 			]),
 		);
 		const instructions = [
-			...(transaction?.message?.instructions ?? []),
-			...(meta?.innerInstructions ?? []).flatMap(
-				(group) => group.instructions ?? [],
+			...message.instructions,
+			...(raw.meta.innerInstructions ?? []).flatMap(
+				(group) => group.instructions,
 			),
 		];
+		const common = {
+			network: "solana" as const,
+			hash: signature,
+			blockNumber: BigInt(override?.slot ?? raw.slot ?? 0),
+			blockHash: message.recentBlockhash,
+			confirmations:
+				(override?.confirmationStatus ?? "finalized") === "finalized" ? 1 : 0,
+			timestamp: new Date((raw.blockTime ?? 0) * 1000),
+			success: raw.meta.err == null,
+			canonical: true,
+		};
 		const out: NormalizedTransaction[] = [];
 		for (const [eventIndex, item] of instructions.entries()) {
-			if (!item || typeof item !== "object") continue;
-			const parsed = (
-				item as { parsed?: { info?: Record<string, unknown>; type?: string } }
-			).parsed;
-			if (!parsed?.info || !parsed.type?.startsWith("transfer")) continue;
-			const destination = String(parsed.info.destination ?? "");
-			if (override && destination !== override.account) continue;
-			const lamports = parsed.info.lamports;
+			const instruction = parsedInstructionSchema.safeParse(item);
+			if (!instruction.success) continue;
+			const { info } = instruction.data.parsed;
+			if (override && info.destination !== override.account) continue;
+			const native = systemTransferSchema.safeParse(info);
 			if (
-				lamports != null &&
+				native.success &&
 				(!override ||
 					override.assetCode.toUpperCase() ===
 						this.config.nativeAsset.toUpperCase())
 			) {
-				const amountUnits = safeAtomicAmount(lamports);
-				if (amountUnits == null) continue;
-				const slot = Number(override?.slot ?? raw.slot ?? 0);
 				out.push({
-					network: "solana",
-					hash: signature,
+					...common,
 					eventIndex,
-					from: String(parsed.info.source ?? ""),
-					to: override?.owner ?? destination,
+					from: info.source,
+					to: override?.owner ?? info.destination,
 					assetCode: this.config.nativeAsset.toUpperCase(),
-					amountUnits,
-					blockNumber: BigInt(slot),
-					blockHash: String(transaction?.message?.recentBlockhash ?? signature),
-					confirmations:
-						(override?.confirmationStatus ?? "finalized") === "finalized"
-							? 1
-							: 0,
-					timestamp: new Date(Number(raw.blockTime ?? 0) * 1000),
-					success: meta?.err == null,
-					canonical: true,
+					amountUnits: BigInt(native.data.lamports),
 				});
 				continue;
 			}
-			const balance = owners.get(destination);
-			const mint = String(parsed.info.mint ?? balance?.mint ?? "");
+			const transfer = tokenTransferSchema.safeParse(info);
+			if (!transfer.success) continue;
+			const balance = owners.get(info.destination);
+			const mint = transfer.data.mint ?? balance?.mint ?? "";
 			const assetCode = override?.assetCode ?? this.symbol(mint);
 			const token = this.token(assetCode);
-			if (!token || token.mint !== mint) continue;
-			const tokenAmount = parsed.info.tokenAmount as
-				| { amount?: unknown }
-				| undefined;
-			const amountUnits = safeAtomicAmount(
-				tokenAmount?.amount ?? parsed.info.amount ?? "0",
-			);
-			if (amountUnits == null) continue;
-			const slot = Number(override?.slot ?? raw.slot ?? 0);
+			const amount = transfer.data.tokenAmount?.amount ?? transfer.data.amount;
+			if (!token || token.mint !== mint || amount === undefined) continue;
 			out.push({
-				network: "solana",
-				hash: signature,
+				...common,
 				eventIndex,
-				from: String(parsed.info.source ?? ""),
-				to: override?.owner ?? balance?.owner ?? destination,
+				from: info.source,
+				to: override?.owner ?? balance?.owner ?? info.destination,
 				assetCode: assetCode.toUpperCase(),
-				amountUnits,
-				blockNumber: BigInt(slot),
-				blockHash: String(transaction?.message?.recentBlockhash ?? signature),
-				confirmations:
-					(override?.confirmationStatus ?? "finalized") === "finalized" ? 1 : 0,
-				timestamp: new Date(Number(raw.blockTime ?? 0) * 1000),
-				success: meta?.err == null,
-				canonical: true,
+				amountUnits: BigInt(amount),
 			});
 		}
 		return out;
@@ -550,15 +525,16 @@ export class SolanaAdapter implements PaymentAdapter<SolanaConfig> {
 		});
 	}
 }
-function accountKey(value: unknown) {
-	return typeof value === "string"
-		? value
-		: String((value as { pubkey?: unknown } | null)?.pubkey ?? "");
-}
 
-function safeAtomicAmount(value: unknown): bigint | null {
-	if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
-	if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
-		return BigInt(value);
-	return null;
+function withinBounds(
+	signature: z.infer<typeof signatureSchema>,
+	bounds: ScanBounds,
+) {
+	return (
+		(bounds.sinceBlock === undefined ||
+			BigInt(signature.slot) >= bounds.sinceBlock) &&
+		(bounds.sinceTimestampMs === undefined ||
+			signature.blockTime == null ||
+			signature.blockTime * 1000 >= bounds.sinceTimestampMs)
+	);
 }

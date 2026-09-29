@@ -47,6 +47,31 @@ describe("EVM adapter", () => {
 			amountUnits: 2n,
 		});
 	});
+	it("ignores a pushed log that the transaction receipt does not carry", async () => {
+		vi.stubGlobal(
+			"WebSocket",
+			class extends FakeSubscriptionSocket {
+				constructor(url: string) {
+					super(url, { receiptLogs: [] });
+				}
+			} as unknown as typeof WebSocket,
+		);
+		const transactions: unknown[] = [];
+		await new EvmAdapter({
+			rpcUrl: "wss://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			tokens: { USDT: { address: usdt, decimals: 6 } },
+		}).subscribeTransactions?.({
+			address: recipient,
+			assetCode: "USDT",
+			signal: AbortSignal.timeout(50),
+			onTransaction(transaction) {
+				transactions.push(transaction);
+			},
+		});
+		expect(transactions).toEqual([]);
+	});
 	it("normalizes ERC20 logs with event identity and confirmations", async () => {
 		const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 		const fetchMock = vi
@@ -387,51 +412,195 @@ describe("EVM adapter", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
-	it("rejects a sinceBlock outside the configured scan window", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(rpc("0x1e"));
+	it("resumes at the lookback edge when the cursor fell behind the window", async () => {
+		const ranges: Array<[string, string]> = [];
+		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+			const request = JSON.parse(String((init as RequestInit).body)) as {
+				method: string;
+				params: Array<{ fromBlock: string; toBlock: string }>;
+			};
+			if (request.method === "eth_blockNumber") return rpc("0x1e");
+			const [range] = request.params;
+			if (!range) throw new Error("Expected an eth_getLogs range");
+			ranges.push([range.fromBlock, range.toBlock]);
+			return rpc([]);
+		});
 		vi.stubGlobal("fetch", fetchMock);
-		await expect(
-			new EvmAdapter({
-				rpcUrl: "https://rpc.example",
-				network: "ethereum",
-				nativeAsset: "ETH",
-				blockLookback: 10,
-				tokens: { USDT: { address: usdt, decimals: 6 } },
-			}).findTransactions({
-				address: recipient,
-				assetCode: "USDT",
-				sinceBlock: 20n,
-			}),
-		).rejects.toThrow("configured block lookback");
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const transactions = await new EvmAdapter({
+			rpcUrl: "https://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			blockLookback: 10,
+			tokens: { USDT: { address: usdt, decimals: 6 } },
+		}).findTransactions({
+			address: recipient,
+			assetCode: "USDT",
+			sinceBlock: 5n,
+		});
+		expect(ranges).toEqual([["0x15", "0x1e"]]);
+		expect(transactions).toHaveLength(0);
+		expect(transactions.truncated).toEqual({ scannedThroughBlock: 30n });
 	});
 
-	it("rejects token result fan-out above the configured scan limit", async () => {
+	it("reports the fully scanned range when the event budget is spent", async () => {
+		const logsByBlock = new Map([
+			[5, transferLog(recipient, "0x0", "0x1", "0x5")],
+			[12, transferLog(recipient, "0x0", "0x2", "0xc")],
+			[18, transferLog(recipient, "0x0", "0x3", "0x12")],
+		]);
+		const ranges: Array<[number, number]> = [];
 		vi.stubGlobal(
 			"fetch",
-			vi
-				.fn()
-				.mockResolvedValueOnce(rpc("0xa"))
-				.mockResolvedValueOnce(
-					rpc([
-						transferLog(recipient, "0x0", "0x1"),
-						transferLog(recipient, "0x1", "0x2"),
-					]),
-				),
-		);
-		await expect(
-			new EvmAdapter({
-				rpcUrl: "https://rpc.example",
-				network: "ethereum",
-				nativeAsset: "ETH",
-				blockLookback: 1,
-				maxScanTransactions: 1,
-				tokens: { USDT: { address: usdt, decimals: 6 } },
-			}).findTransactions({
-				address: recipient,
-				assetCode: "USDT",
+			vi.fn().mockImplementation(async (_url, init) => {
+				const request = JSON.parse(String((init as RequestInit).body)) as {
+					method: string;
+					params: Array<{ fromBlock: string; toBlock: string } | string>;
+				};
+				if (request.method === "eth_blockNumber") return rpc("0x1e");
+				if (request.method === "eth_getBlockByHash")
+					return rpc({
+						hash: request.params[0],
+						number: "0x5",
+						timestamp: "0x6553f100",
+						transactions: [],
+					});
+				const [range] = request.params;
+				if (!range || typeof range === "string")
+					throw new Error("Expected an eth_getLogs range");
+				const from = Number.parseInt(range.fromBlock.slice(2), 16);
+				const to = Number.parseInt(range.toBlock.slice(2), 16);
+				ranges.push([from, to]);
+				return rpc(
+					[...logsByBlock]
+						.filter(([block]) => block >= from && block <= to)
+						.map(([, log]) => log),
+				);
 			}),
-		).rejects.toThrow("configured transaction limit");
+		);
+		const transactions = await new EvmAdapter({
+			rpcUrl: "https://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			logBlockRange: 10,
+			maxScanTransactions: 2,
+			tokens: { USDT: { address: usdt, decimals: 6 } },
+		}).findTransactions({
+			address: recipient,
+			assetCode: "USDT",
+			sinceBlock: 1n,
+		});
+		expect(ranges).toEqual([
+			[1, 10],
+			[11, 20],
+			[11, 15],
+		]);
+		expect(transactions.map((transaction) => transaction.amountUnits)).toEqual([
+			1n,
+			2n,
+		]);
+		expect(transactions.truncated).toEqual({ scannedThroughBlock: 15n });
+	});
+
+	it("bounds native scans to the recent block window and reports the covered head", async () => {
+		const blocks: number[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(async (_url, init) => {
+				const request = JSON.parse(String((init as RequestInit).body)) as {
+					method: string;
+					params: [string];
+				};
+				if (request.method === "eth_blockNumber") return rpc("0x64");
+				blocks.push(Number.parseInt(request.params[0].slice(2), 16));
+				return rpc({
+					hash: `0xblock-${request.params[0]}`,
+					number: request.params[0],
+					timestamp: "0x6553f100",
+					transactions: [],
+				});
+			}),
+		);
+		const native = new EvmAdapter({
+			rpcUrl: "https://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			nativeBlockWindow: 5,
+		});
+		const fresh = await native.findTransactions({
+			address: recipient,
+			assetCode: "ETH",
+		});
+		expect(blocks).toEqual([96, 97, 98, 99, 100]);
+		expect(fresh.truncated).toBeUndefined();
+		blocks.length = 0;
+		const resumed = await native.findTransactions({
+			address: recipient,
+			assetCode: "ETH",
+			sinceBlock: 50n,
+		});
+		expect(blocks).toEqual([96, 97, 98, 99, 100]);
+		expect(resumed.truncated).toEqual({ scannedThroughBlock: 100n });
+	});
+
+	it("returns completed native blocks when the deadline expires mid-scan", async () => {
+		let now = 0;
+		vi.spyOn(Date, "now").mockImplementation(() => now);
+		vi.spyOn(AbortSignal, "timeout").mockImplementation(
+			() => new AbortController().signal,
+		);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(async (_url, init) => {
+				const request = JSON.parse(String((init as RequestInit).body)) as {
+					method: string;
+					params: [string, boolean];
+				};
+				if (request.method === "eth_blockNumber") return rpc("0x5");
+				if (request.method === "eth_getTransactionReceipt")
+					return rpc({
+						blockHash: "0xblock-0x3",
+						blockNumber: "0x3",
+						logs: [],
+						status: "0x1",
+						transactionHash: "0xnative-3",
+					});
+				const block = Number.parseInt(request.params[0].slice(2), 16);
+				// Block 4 completes, then the next block read finds the deadline spent.
+				if (block === 4) now = 5_000;
+				return rpc({
+					hash: `0xblock-${request.params[0]}`,
+					number: request.params[0],
+					timestamp: "0x6553f100",
+					transactions:
+						block === 3
+							? [
+									{
+										blockHash: "0xblock-0x3",
+										blockNumber: "0x3",
+										from: sender,
+										hash: "0xnative-3",
+										to: recipient,
+										value: "0x1",
+									},
+								]
+							: [],
+				});
+			}),
+		);
+		const transactions = await new EvmAdapter({
+			rpcUrl: "https://rpc.example",
+			network: "ethereum",
+			nativeAsset: "ETH",
+			timeoutMs: 1_000,
+		}).findTransactions({
+			address: recipient,
+			assetCode: "ETH",
+			sinceBlock: 1n,
+		});
+		expect(transactions.map((transaction) => transaction.hash)).toEqual([
+			"0xnative-3",
+		]);
+		expect(transactions.truncated).toEqual({ scannedThroughBlock: 4n });
 	});
 
 	it("observes confirmation lookups at their provider request owner", async () => {
@@ -515,11 +684,16 @@ function block() {
 	};
 }
 
-function transferLog(to: string, logIndex: string, data: string) {
+function transferLog(
+	to: string,
+	logIndex: string,
+	data: string,
+	blockNumber = "0x5a",
+) {
 	return {
 		address: usdt,
-		blockHash: "0xblock",
-		blockNumber: "0x5a",
+		blockHash: blockNumber === "0x5a" ? "0xblock" : `0xblock-${blockNumber}`,
+		blockNumber,
 		data,
 		logIndex,
 		removed: false,
@@ -532,12 +706,29 @@ function transferLog(to: string, logIndex: string, data: string) {
 	};
 }
 
+const subscriptionLog = {
+	address: usdt,
+	blockHash: "0xblock",
+	blockNumber: "0x5a",
+	data: "0x2",
+	logIndex: "0x1",
+	removed: false,
+	topics: [
+		"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+		topic(sender),
+		topic(recipient),
+	],
+	transactionHash: "0xsubscription-tx",
+};
+
 class FakeSubscriptionSocket {
 	private readonly listeners = new Map<
 		string,
 		Array<(event: { data?: string }) => void>
 	>();
-	constructor(_url: string) {
+	private readonly receiptLogs: unknown[];
+	constructor(_url: string, options: { receiptLogs?: unknown[] } = {}) {
+		this.receiptLogs = options.receiptLogs ?? [subscriptionLog];
 		queueMicrotask(() => this.emit("open", {}));
 	}
 	addEventListener(type: string, listener: (event: { data?: string }) => void) {
@@ -553,23 +744,7 @@ class FakeSubscriptionSocket {
 				this.emit("message", {
 					data: JSON.stringify({
 						method: "eth_subscription",
-						params: {
-							subscription: "sub-1",
-							result: {
-								address: usdt,
-								blockHash: "0xblock",
-								blockNumber: "0x5a",
-								data: "0x2",
-								logIndex: "0x1",
-								removed: false,
-								topics: [
-									"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-									topic(sender),
-									topic(recipient),
-								],
-								transactionHash: "0xsubscription-tx",
-							},
-						},
+						params: { subscription: "sub-1", result: subscriptionLog },
 					}),
 				});
 				return;
@@ -581,7 +756,7 @@ class FakeSubscriptionSocket {
 						? {
 								blockHash: "0xblock",
 								blockNumber: "0x5a",
-								logs: [],
+								logs: this.receiptLogs,
 								status: "0x1",
 								transactionHash: "0xsubscription-tx",
 							}

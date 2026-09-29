@@ -43,7 +43,37 @@ export interface TransactionLookup {
 	address?: string;
 	assetCode?: string;
 	eventIndex?: number;
+	/**
+	 * When the caller last observed the transaction. Providers without a hash
+	 * index bound their history search around it instead of walking everything.
+	 */
+	observedAtMs?: number;
 }
+export interface TransactionScanInput {
+	address: string;
+	assetCode: string;
+	/** Provider block, slot, lt, version, or timestamp cursor; older results are excluded. */
+	sinceBlock?: bigint;
+	/**
+	 * Lower time bound of the history walk, normally the order creation time
+	 * minus a clock-skew margin. It keeps a shared address's lifetime history
+	 * out of every scan.
+	 */
+	sinceTimestampMs?: number;
+}
+/**
+ * Set when an adapter stopped before covering the requested range because a
+ * row, page, or deadline budget ran out. `scannedThroughBlock` is the highest
+ * block whose transfers are all included; it is absent when the unscanned
+ * remainder is older than every returned transfer, so callers keep their cursor.
+ */
+export interface ScanTruncation {
+	scannedThroughBlock?: bigint;
+}
+/** Array-compatible so adapters and test doubles returning a plain array remain complete scans. */
+export type TransactionScan = NormalizedTransaction[] & {
+	truncated?: ScanTruncation;
+};
 export type AdapterErrorKind =
 	| "configuration"
 	| "authentication"
@@ -65,11 +95,7 @@ export interface PaymentAdapter<TConfig> {
 		hash: string,
 		lookup?: TransactionLookup,
 	): Promise<NormalizedTransaction | null>;
-	findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}): Promise<NormalizedTransaction[]>;
+	findTransactions(input: TransactionScanInput): Promise<TransactionScan>;
 	/**
 	 * Optional bounded push path. Adapters expose this only when the provider
 	 * supports a real subscription transport; polling remains the fallback.

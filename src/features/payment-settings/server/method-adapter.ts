@@ -295,6 +295,7 @@ async function createAdapter(
 		return new TronAdapter({
 			apiUrl: endpoint,
 			apiKey,
+			tokens: tokenConfiguration(connection, "address"),
 		}) as PaymentAdapter<unknown>;
 	if (
 		connection.adapter === "evm" &&

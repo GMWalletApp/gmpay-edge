@@ -1,3 +1,8 @@
+import {
+	maxProviderResponseBytes,
+	readProviderJson,
+} from "../provider-response";
+
 export class JsonRpcRequestError extends Error {
 	constructor(
 		readonly status: number,
@@ -74,7 +79,7 @@ async function requestHttp(
 		signal: requestSignal(timeoutMs, signal),
 	});
 	if (!response.ok) throw new JsonRpcRequestError(response.status);
-	return response.json() as Promise<unknown>;
+	return readProviderJson(response);
 }
 
 function requestWebSocket(
@@ -121,8 +126,19 @@ function requestWebSocket(
 		);
 		socket.addEventListener("message", (event) => {
 			finish(() => {
+				const data = String(event.data);
+				if (data.length > maxProviderResponseBytes) {
+					reject(
+						new JsonRpcRequestError(
+							502,
+							undefined,
+							"JSON-RPC response too large",
+						),
+					);
+					return;
+				}
 				try {
-					resolve(JSON.parse(String(event.data)) as unknown);
+					resolve(JSON.parse(data) as unknown);
 				} catch {
 					reject(
 						new JsonRpcRequestError(502, undefined, "Invalid JSON-RPC JSON"),

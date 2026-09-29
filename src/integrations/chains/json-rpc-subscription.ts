@@ -4,6 +4,7 @@ import {
 	providerOperationDurationMs,
 	recordProviderOperation,
 } from "../provider-observability";
+import { maxProviderResponseBytes } from "../provider-response";
 
 type SubscriptionMetric = Omit<
 	Extract<ProviderOperationMetric, { operation: "subscribe_transactions" }>,
@@ -164,7 +165,10 @@ async function consumeConnection<T>(input: {
 				if (settled) return;
 				let message: Record<string, unknown>;
 				try {
-					const parsed: unknown = JSON.parse(String(event.data));
+					const data = String(event.data);
+					if (data.length > maxProviderResponseBytes)
+						throw new Error("JSON-RPC subscription message too large");
+					const parsed: unknown = JSON.parse(data);
 					if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
 						throw new Error("Invalid JSON-RPC subscription message");
 					message = parsed as Record<string, unknown>;
@@ -184,7 +188,13 @@ async function consumeConnection<T>(input: {
 				if (!params || typeof params !== "object" || Array.isArray(params))
 					return;
 				const notification = params as Record<string, unknown>;
-				if (notification.subscription !== subscriptionId) return;
+				// Nothing is trusted before the provider acknowledges our request;
+				// otherwise an unsolicited notification would match the unset id.
+				if (
+					subscriptionId === undefined ||
+					notification.subscription !== subscriptionId
+				)
+					return;
 				await input.onNotification(notification.result as T);
 			})().catch(finish);
 		});

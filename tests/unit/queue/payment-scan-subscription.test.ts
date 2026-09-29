@@ -52,7 +52,7 @@ describe("payment scan WSS consumption", () => {
 				"USDT",
 				adapter as never,
 			),
-		).resolves.toMatchObject([transaction]);
+		).resolves.toMatchObject({ transactions: [transaction] });
 		expect(adapter.findTransactions).toHaveBeenCalledOnce();
 		expect(adapter.subscribeTransactions).toHaveBeenCalledOnce();
 	});
@@ -81,7 +81,7 @@ describe("payment scan WSS consumption", () => {
 				"USDT",
 				adapter as never,
 			),
-		).resolves.toEqual([transaction]);
+		).resolves.toEqual({ transactions: [transaction] });
 		expect(subscriptionSignal?.aborted).toBe(true);
 	});
 
@@ -102,7 +102,7 @@ describe("payment scan WSS consumption", () => {
 				"USDT",
 				adapter as never,
 			),
-		).resolves.toEqual([transaction]);
+		).resolves.toEqual({ transactions: [transaction] });
 	});
 
 	it("records a failed supplemental WSS connection without failing HTTP polling", async () => {
@@ -130,7 +130,7 @@ describe("payment scan WSS consumption", () => {
 					adapter: subscriptionAdapter as never,
 				},
 			),
-		).resolves.toEqual([transaction]);
+		).resolves.toEqual({ transactions: [transaction] });
 		expect(healthWrites).toContainEqual([
 			"unhealthy",
 			expect.any(Number),

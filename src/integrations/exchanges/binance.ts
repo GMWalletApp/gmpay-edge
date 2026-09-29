@@ -8,11 +8,17 @@ import type {
 	NormalizedTransaction,
 	PaymentAdapter,
 	PaymentTarget,
+	TransactionLookup,
+	TransactionScanInput,
 } from "#/integrations/chains/types";
 import {
 	observeProviderOperation,
 	type ProviderOperationCounters,
 } from "#/integrations/provider-observability";
+import {
+	ProviderResponseTooLargeError,
+	readProviderJson,
+} from "#/integrations/provider-response";
 import { decimalPlaces, decimalToUnits } from "#/lib/money";
 
 const configSchema = z.object({
@@ -85,7 +91,7 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 			transaction.assetCode === assetCode.toUpperCase()
 		);
 	}
-	async getTransaction(hash: string) {
+	async getTransaction(hash: string, lookup?: TransactionLookup) {
 		return observeProviderOperation(
 			{
 				adapter: "binance",
@@ -93,11 +99,22 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 				classifyError: (error) => this.classifyError(error),
 			},
 			async (counters) => {
-				const rows = await this.completeHistory(
-					Date.now() - 90 * 86_400_000,
-					Date.now(),
-					counters,
-				);
+				// Pay history has no transaction-id index. A known observation time
+				// bounds the walk to one lookback on either side; only unknown ids
+				// fall back to the provider's full 90-day retention.
+				const observedAtMs = lookup?.observedAtMs;
+				const rows =
+					observedAtMs === undefined
+						? await this.completeHistory(
+								Date.now() - 90 * 86_400_000,
+								Date.now(),
+								counters,
+							)
+						: await this.completeHistory(
+								observedAtMs - this.config.lookbackMs,
+								observedAtMs + this.config.lookbackMs,
+								counters,
+							);
 				const row = rows.find((item) => String(item.transactionId) === hash);
 				return row && hasPositiveFund(row, undefined)
 					? this.normalize(row, undefined)
@@ -105,11 +122,7 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 			},
 		);
 	}
-	async findTransactions(input: {
-		address: string;
-		assetCode: string;
-		sinceBlock?: bigint;
-	}) {
+	async findTransactions(input: TransactionScanInput) {
 		if (!this.validateAddress(input.address))
 			throw new Error("Invalid Binance account ID");
 		return observeProviderOperation(
@@ -122,7 +135,7 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 				const end = Date.now();
 				const start =
 					input.sinceBlock == null
-						? end - this.config.lookbackMs
+						? (input.sinceTimestampMs ?? end - this.config.lookbackMs)
 						: Number(input.sinceBlock);
 				return (await this.completeHistory(start, end, counters)).flatMap(
 					(row) => {
@@ -184,7 +197,11 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 			if (error.status >= 500) return "network";
 			return "permanent";
 		}
-		if (error instanceof z.ZodError) return "invalid_response";
+		if (
+			error instanceof z.ZodError ||
+			error instanceof ProviderResponseTooLargeError
+		)
+			return "invalid_response";
 		if (error instanceof TypeError || error instanceof DOMException)
 			return "network";
 		return "permanent";
@@ -332,7 +349,10 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 				signal: deadlineSignal(budget.deadlineAt),
 			},
 		);
-		const body: unknown = await response.json().catch(() => ({}));
+		// Error bodies are read best-effort for the Binance error code only.
+		const body: unknown = response.ok
+			? await readProviderJson(response)
+			: await readProviderJson(response).catch(() => ({}));
 		const errorEnvelope = z
 			.object({ code: z.number().optional() })
 			.safeParse(body);
@@ -363,7 +383,7 @@ export class BinancePayAdapter implements PaymentAdapter<BinanceConfig> {
 		if (!response.ok) throw new BinanceHttpError(response.status);
 		const { serverTime } = z
 			.object({ serverTime: z.number().int().positive() })
-			.parse(await response.json());
+			.parse(await readProviderJson(response));
 		const completedAt = Date.now();
 		this.clockOffsetMs = serverTime - Math.floor((startedAt + completedAt) / 2);
 	}
