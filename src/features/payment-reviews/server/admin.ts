@@ -11,6 +11,7 @@ import { DomainError } from "#/lib/domain-error";
 import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 
 const paymentReviewsListSchema = z.object({
 	pageIndex: z.number().int().min(0).default(0),
@@ -133,7 +134,7 @@ export const resolvePaymentReviewFn = createServerFn({ method: "POST" })
 			data,
 			{
 				reviewerUserId: user.id,
-				requestId: request.headers.get("x-request-id"),
+				requestId: requestId(request),
 				ipAddress: request.headers.get("cf-connecting-ip"),
 			},
 		);
