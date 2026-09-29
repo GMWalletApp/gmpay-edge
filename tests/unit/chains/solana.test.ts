@@ -191,7 +191,7 @@ describe("Solana adapter", () => {
 			signaturePageSize: 2,
 		}).findTransactions({ address: owner, assetCode: "SOL", sinceBlock: 100n });
 		const secondRequest = JSON.parse(
-			String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[1]?.[1] as RequestInit)?.body),
 		) as { params: [string, { before?: string }] };
 		expect(secondRequest.params[1].before).toBe("sig-2");
 		expect(info).toHaveBeenCalledWith(
@@ -222,7 +222,7 @@ describe("Solana adapter", () => {
 	});
 	it("returns the newest signatures as a truncated scan when the budget is spent", async () => {
 		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
-			const request = JSON.parse(String((init as RequestInit).body)) as {
+			const request = JSON.parse(String((init as RequestInit)?.body)) as {
 				method: string;
 			};
 			return request.method === "getSignaturesForAddress"
@@ -241,7 +241,7 @@ describe("Solana adapter", () => {
 	});
 	it("stops at the block-time lower bound without paging further", async () => {
 		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
-			const request = JSON.parse(String((init as RequestInit).body)) as {
+			const request = JSON.parse(String((init as RequestInit)?.body)) as {
 				method: string;
 			};
 			return request.method === "getSignaturesForAddress"
@@ -265,8 +265,11 @@ describe("Solana adapter", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		const lookups = fetchMock.mock.calls.map(
 			([, init]) =>
-				(JSON.parse(String((init as RequestInit).body)) as { params: [string] })
-					.params[0],
+				(
+					JSON.parse(String((init as RequestInit)?.body)) as {
+						params: [string];
+					}
+				).params[0],
 		);
 		expect(lookups).toEqual([owner, "recent"]);
 	});

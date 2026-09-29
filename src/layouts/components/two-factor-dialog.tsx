@@ -59,7 +59,18 @@ export function TwoFactorDialog({
 				toast.error(twoFactorManagementErrorMessage(result.error));
 				return;
 			}
-			setSetup(result.data);
+			if (result.data.method !== "totp") {
+				toast.error(
+					twoFactorManagementErrorMessage(
+						new Error("Unexpected two-factor method"),
+					),
+				);
+				return;
+			}
+			setSetup({
+				totpURI: result.data.totpURI,
+				backupCodes: result.data.backupCodes,
+			});
 			setPassword("");
 			setBackupCodesSaved(false);
 		} catch (error) {

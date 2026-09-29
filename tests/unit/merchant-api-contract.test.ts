@@ -30,7 +30,7 @@ describe("GMPay and EPay OpenAPI contract", () => {
 			document.paths["/payments/epay/v1/order/create-transaction/submit.php"];
 		expect(epay).toHaveProperty("get");
 		expect(epay).toHaveProperty("post");
-		expect(Object.keys((epay?.get as Operation).responses)).toEqual([
+		expect(Object.keys((epay?.get as Operation)?.responses)).toEqual([
 			"200",
 			"400",
 			"401",
@@ -39,21 +39,21 @@ describe("GMPay and EPay OpenAPI contract", () => {
 			"502",
 			"503",
 		]);
-		expect((epay?.get as Operation).responses["200"]).toMatchObject({
+		expect((epay?.get as Operation)?.responses["200"]).toMatchObject({
 			content: {
 				"application/json": {
 					schema: { $ref: "#/components/schemas/GmpayCreateResponse" },
 				},
 			},
 		});
-		expect((epay?.post as Operation).responses["200"]).toMatchObject({
+		expect((epay?.post as Operation)?.responses["200"]).toMatchObject({
 			content: {
 				"application/json": {
 					schema: { $ref: "#/components/schemas/GmpayCreateResponse" },
 				},
 			},
 		});
-		expect((epay?.post as Operation).requestBody.content).toHaveProperty(
+		expect((epay?.post as Operation)?.requestBody.content).toHaveProperty(
 			"application/x-www-form-urlencoded",
 		);
 
@@ -61,7 +61,7 @@ describe("GMPay and EPay OpenAPI contract", () => {
 			document.paths["/payments/epay/v1/order/create-transaction/mapi.php"];
 		expect(mapi).toHaveProperty("get");
 		expect(mapi).toHaveProperty("post");
-		expect((mapi?.get as Operation).responses["200"]).toMatchObject({
+		expect((mapi?.get as Operation)?.responses["200"]).toMatchObject({
 			content: {
 				"application/json": {
 					schema: { $ref: "#/components/schemas/EpayCreateResponse" },

@@ -767,67 +767,67 @@ describe("Webhook queue consumer on D1", () => {
 		expect(attempt?.request_snapshot).toBeNull();
 	});
 
-	it.each([
-		"gmpay",
-		"epay",
-	] as const)("keeps %s callback status and amounts identical after the order advances", async (protocol) => {
-		const id = `snapshot-${protocol}`;
-		const snapshot = {
-			status: "partially_paid",
-			amount: "10",
-			payment: {
-				amount: "10.25",
-				asset: "USDT",
-				receivedAmountUnits: "5000000",
-			},
-			transaction: { hash: "partial-tx" },
-		};
-		await db.batch([
-			db
-				.prepare(`INSERT INTO orders (id, external_order_id, api_key_id, api_protocol, status, amount_minor, currency, currency_decimals, received_amount_units, notify_url, expires_at, version, created_at, updated_at)
+	it.each(["gmpay", "epay"] as const)(
+		"keeps %s callback status and amounts identical after the order advances",
+		async (protocol) => {
+			const id = `snapshot-${protocol}`;
+			const snapshot = {
+				status: "partially_paid",
+				amount: "10",
+				payment: {
+					amount: "10.25",
+					asset: "USDT",
+					receivedAmountUnits: "5000000",
+				},
+				transaction: { hash: "partial-tx" },
+			};
+			await db.batch([
+				db
+					.prepare(`INSERT INTO orders (id, external_order_id, api_key_id, api_protocol, status, amount_minor, currency, currency_decimals, received_amount_units, notify_url, expires_at, version, created_at, updated_at)
 			 VALUES (?, ?, 'api-key', ?, 'partially_paid', '1000', 'USD', 2, '5000000', 'https://callback.example/snapshot', 9999999999999, 0, 1, 1)`)
-				.bind(id, id, protocol),
-			db
-				.prepare(
-					"INSERT INTO webhook_events (id, order_id, type, deduplication_key, payload, created_at, updated_at) VALUES (?, ?, 'order.partially_paid', ?, ?, 1, 1)",
-				)
-				.bind(id, id, id, JSON.stringify(snapshot)),
-			db
-				.prepare(
-					"INSERT INTO webhook_deliveries (id, event_id, order_id, api_key_id, status, attempt_count, created_at, updated_at) VALUES (?, ?, ?, 'api-key', 'queued', 0, 1, 1)",
-				)
-				.bind(id, id, id),
-		]);
-		const requests: Array<Record<string, string | number>> = [];
-		const fetcher = vi.fn<typeof fetch>(async (url, init) => {
-			requests.push(
-				protocol === "gmpay"
-					? JSON.parse(String(init?.body))
-					: Object.fromEntries(new URL(String(url)).searchParams),
-			);
-			return new Response(requests.length === 1 ? "no" : "ok", {
-				status: requests.length === 1 ? 500 : 200,
+					.bind(id, id, protocol),
+				db
+					.prepare(
+						"INSERT INTO webhook_events (id, order_id, type, deduplication_key, payload, created_at, updated_at) VALUES (?, ?, 'order.partially_paid', ?, ?, 1, 1)",
+					)
+					.bind(id, id, id, JSON.stringify(snapshot)),
+				db
+					.prepare(
+						"INSERT INTO webhook_deliveries (id, event_id, order_id, api_key_id, status, attempt_count, created_at, updated_at) VALUES (?, ?, ?, 'api-key', 'queued', 0, 1, 1)",
+					)
+					.bind(id, id, id),
+			]);
+			const requests: Array<Record<string, string | number>> = [];
+			const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+				requests.push(
+					protocol === "gmpay"
+						? JSON.parse(String(init?.body))
+						: Object.fromEntries(new URL(String(url)).searchParams),
+				);
+				return new Response(requests.length === 1 ? "no" : "ok", {
+					status: requests.length === 1 ? 500 : 200,
+				});
 			});
-		});
-		for (const attempt of [1, 2]) {
-			const message = fakeMessage(id, attempt).message;
-			message.body.eventId = id;
-			await processWebhookMessage(db, message, fetcher);
-			await db
-				.prepare(
-					"UPDATE orders SET status = 'paid', received_amount_units = '10250000' WHERE id = ?",
-				)
-				.bind(id)
-				.run();
-		}
-		expect(requests).toHaveLength(2);
-		expect(requests[1]).toEqual(requests[0]);
-		expect(requests[0]).toMatchObject(
-			protocol === "gmpay"
-				? { status: 1, amount: "10", actual_amount: "10.25", token: "USDT" }
-				: { trade_status: "WAIT_BUYER_PAY", money: "10" },
-		);
-	});
+			for (const attempt of [1, 2]) {
+				const message = fakeMessage(id, attempt).message;
+				message.body.eventId = id;
+				await processWebhookMessage(db, message, fetcher);
+				await db
+					.prepare(
+						"UPDATE orders SET status = 'paid', received_amount_units = '10250000' WHERE id = ?",
+					)
+					.bind(id)
+					.run();
+			}
+			expect(requests).toHaveLength(2);
+			expect(requests[1]).toEqual(requests[0]);
+			expect(requests[0]).toMatchObject(
+				protocol === "gmpay"
+					? { status: 1, amount: "10", actual_amount: "10.25", token: "USDT" }
+					: { trade_status: "WAIT_BUYER_PAY", money: "10" },
+			);
+		},
+	);
 });
 
 function fakeMessage(deliveryId: string, attempts: number) {

@@ -39,20 +39,23 @@ describe("Webhook Server Function error contract", () => {
 			"webhook_delivery_retry_in_progress",
 			409,
 		],
-	] as const)("maps retry state to %s without exposing persistence errors", (delivery, code, status) => {
-		let error: unknown;
-		try {
-			requireRetryableWebhookDelivery(delivery, now);
-		} catch (caught) {
-			error = caught;
-		}
+	] as const)(
+		"maps retry state to %s without exposing persistence errors",
+		(delivery, code, status) => {
+			let error: unknown;
+			try {
+				requireRetryableWebhookDelivery(delivery, now);
+			} catch (caught) {
+				error = caught;
+			}
 
-		expect(error).toBeInstanceOf(DomainError);
-		expect(normalizeServerFunctionError(error, request)).toMatchObject({
-			code,
-			status,
-		});
-	});
+			expect(error).toBeInstanceOf(DomainError);
+			expect(normalizeServerFunctionError(error, request)).toMatchObject({
+				code,
+				status,
+			});
+		},
+	);
 
 	it.each([
 		{ status: "failed", next_attempt_at: null },

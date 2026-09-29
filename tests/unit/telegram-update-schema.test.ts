@@ -53,7 +53,10 @@ describe("Telegram update boundary", () => {
 		{ update_id: 1 },
 		{ update_id: 1, message: { chat: {}, text: "/start" } },
 		{ update_id: 1, inline_query: { id: "inline", from: {}, query: "" } },
-	])("rejects malformed or unsupported updates without unsafe casts", (update) => {
-		expect(parseTelegramUpdate(update).success).toBe(false);
-	});
+	])(
+		"rejects malformed or unsupported updates without unsafe casts",
+		(update) => {
+			expect(parseTelegramUpdate(update).success).toBe(false);
+		},
+	);
 });

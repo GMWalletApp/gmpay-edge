@@ -124,7 +124,7 @@ describe("EVM adapter", () => {
 			canonical: true,
 		});
 		const logRequest = JSON.parse(
-			String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[1]?.[1] as RequestInit)?.body),
 		) as { method: string; params: Array<{ topics: unknown[] }> };
 		expect(logRequest.method).toBe("eth_getLogs");
 		expect(logRequest.params[0]?.topics[2]).toBe(topic(recipient));
@@ -318,7 +318,7 @@ describe("EVM adapter", () => {
 	it("scans ERC20 logs in contiguous provider-safe block ranges", async () => {
 		const ranges: Array<[string, string]> = [];
 		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
-			const request = JSON.parse(String((init as RequestInit).body)) as {
+			const request = JSON.parse(String((init as RequestInit)?.body)) as {
 				method: string;
 				params: Array<{ fromBlock: string; toBlock: string }>;
 			};
@@ -359,7 +359,7 @@ describe("EVM adapter", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockImplementation(async (_url, init) => {
-				const request = JSON.parse(String((init as RequestInit).body)) as {
+				const request = JSON.parse(String((init as RequestInit)?.body)) as {
 					method: string;
 					params: Array<{ fromBlock: string; toBlock: string }>;
 				};
@@ -415,7 +415,7 @@ describe("EVM adapter", () => {
 	it("resumes at the lookback edge when the cursor fell behind the window", async () => {
 		const ranges: Array<[string, string]> = [];
 		const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
-			const request = JSON.parse(String((init as RequestInit).body)) as {
+			const request = JSON.parse(String((init as RequestInit)?.body)) as {
 				method: string;
 				params: Array<{ fromBlock: string; toBlock: string }>;
 			};
@@ -452,7 +452,7 @@ describe("EVM adapter", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockImplementation(async (_url, init) => {
-				const request = JSON.parse(String((init as RequestInit).body)) as {
+				const request = JSON.parse(String((init as RequestInit)?.body)) as {
 					method: string;
 					params: Array<{ fromBlock: string; toBlock: string } | string>;
 				};
@@ -506,7 +506,7 @@ describe("EVM adapter", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockImplementation(async (_url, init) => {
-				const request = JSON.parse(String((init as RequestInit).body)) as {
+				const request = JSON.parse(String((init as RequestInit)?.body)) as {
 					method: string;
 					params: [string];
 				};
@@ -551,7 +551,7 @@ describe("EVM adapter", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockImplementation(async (_url, init) => {
-				const request = JSON.parse(String((init as RequestInit).body)) as {
+				const request = JSON.parse(String((init as RequestInit)?.body)) as {
 					method: string;
 					params: [string, boolean];
 				};

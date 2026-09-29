@@ -22,21 +22,24 @@ describe.skip("live chain RPC smoke", () => {
 		["base", "ETH", "https://base-rpc.publicnode.com"],
 		["bsc", "BNB", "https://bsc-rpc.publicnode.com"],
 		["polygon", "MATIC", "https://polygon-bor-rpc.publicnode.com"],
-	] as const)("checks the %s EVM RPC", async (network, nativeAsset, fallback) => {
-		const prefix = network.toUpperCase();
-		const adapter = new EvmAdapter({
-			rpcUrl: process.env[`${prefix}_SMOKE_RPC_URL`] ?? fallback,
-			network,
-			nativeAsset,
-		});
-		await expect(adapter.healthCheck()).resolves.toMatchObject({
-			healthy: true,
-		});
-		await expectKnownTransaction(
-			adapter,
-			process.env[`${prefix}_SMOKE_TX_HASH`],
-		);
-	});
+	] as const)(
+		"checks the %s EVM RPC",
+		async (network, nativeAsset, fallback) => {
+			const prefix = network.toUpperCase();
+			const adapter = new EvmAdapter({
+				rpcUrl: process.env[`${prefix}_SMOKE_RPC_URL`] ?? fallback,
+				network,
+				nativeAsset,
+			});
+			await expect(adapter.healthCheck()).resolves.toMatchObject({
+				healthy: true,
+			});
+			await expectKnownTransaction(
+				adapter,
+				process.env[`${prefix}_SMOKE_TX_HASH`],
+			);
+		},
+	);
 
 	it("checks TON Center and an optional known transaction", async () => {
 		const adapter = new TonAdapter({

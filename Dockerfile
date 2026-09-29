@@ -31,6 +31,7 @@ COPY --link --from=build --chown=10001:10001 /app/.output ./.output
 COPY --link --from=build --chown=10001:10001 /app/drizzle ./drizzle
 COPY --link --from=build --chown=10001:10001 /app/package.json /app/tsconfig.json ./
 COPY --link --from=build --chown=10001:10001 /app/scripts/data.ts ./scripts/data.ts
+COPY --link --from=build --chown=10001:10001 /app/src/lib/is-record.ts ./src/lib/is-record.ts
 COPY --link --from=build --chown=10001:10001 /app/src/server/runtime/types.ts ./src/server/runtime/types.ts
 COPY --link --from=build --chown=10001:10001 /app/src/server/runtime/node/data-layout.ts /app/src/server/runtime/node/migrations.ts /app/src/server/runtime/node/object-storage.ts ./src/server/runtime/node/
 

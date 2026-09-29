@@ -682,68 +682,67 @@ describe("provider payment event consumer", () => {
 		});
 	});
 
-	it.each([
-		"payment",
-		"mismatch",
-		"error",
-	] as const)("fences a stale consumer's %s result after a new owner claims the event", async (result) => {
-		await resetOrder(db);
-		await db
-			.prepare(
-				"UPDATE payment_ingresses SET mode = 'active', health_status = 'healthy', last_error_code = NULL WHERE id = ?",
-			)
-			.bind(sourceId)
-			.run();
-		const id = `event-stale-${result}`;
-		await insertEvent(db, id, `tx-stale-${result}`);
-		mocks.createPaymentMethodAdapters.mockResolvedValue([
-			{
-				adapter: {
-					...adapter(transaction),
-					getTransaction: async (hash: string) => {
-						await db
-							.prepare(
-								"UPDATE inbound_provider_events SET lease_token = 'new-owner', attempt_count = attempt_count + 1, lease_until = ? WHERE id = ?",
-							)
-							.bind(Date.now() + 300_000, id)
-							.run();
-						if (result === "error") throw new Error("Old provider failure");
-						const tx = transaction(hash);
-						return result === "mismatch"
-							? { ...tx, to: "0x1111111111111111111111111111111111111111" }
-							: tx;
-					},
-				},
-			},
-		]);
-		const message = queueMessage(id);
-		await handlePaymentProviderEvent(message, { DB: db } as Env);
-		expect(message.ack).toHaveBeenCalledOnce();
-		expect(
+	it.each(["payment", "mismatch", "error"] as const)(
+		"fences a stale consumer's %s result after a new owner claims the event",
+		async (result) => {
+			await resetOrder(db);
 			await db
 				.prepare(
-					"SELECT status, lease_token, attempt_count FROM inbound_provider_events WHERE id = ?",
-				)
-				.bind(id)
-				.first(),
-		).toEqual({
-			status: "processing",
-			lease_token: "new-owner",
-			attempt_count: 2,
-		});
-		expect(await providerState(db, id)).toMatchObject({
-			order_status: "pending",
-			payments: 0,
-		});
-		expect(
-			await db
-				.prepare(
-					"SELECT health_status, last_error_code FROM payment_ingresses WHERE id = ?",
+					"UPDATE payment_ingresses SET mode = 'active', health_status = 'healthy', last_error_code = NULL WHERE id = ?",
 				)
 				.bind(sourceId)
-				.first(),
-		).toEqual({ health_status: "healthy", last_error_code: null });
-	});
+				.run();
+			const id = `event-stale-${result}`;
+			await insertEvent(db, id, `tx-stale-${result}`);
+			mocks.createPaymentMethodAdapters.mockResolvedValue([
+				{
+					adapter: {
+						...adapter(transaction),
+						getTransaction: async (hash: string) => {
+							await db
+								.prepare(
+									"UPDATE inbound_provider_events SET lease_token = 'new-owner', attempt_count = attempt_count + 1, lease_until = ? WHERE id = ?",
+								)
+								.bind(Date.now() + 300_000, id)
+								.run();
+							if (result === "error") throw new Error("Old provider failure");
+							const tx = transaction(hash);
+							return result === "mismatch"
+								? { ...tx, to: "0x1111111111111111111111111111111111111111" }
+								: tx;
+						},
+					},
+				},
+			]);
+			const message = queueMessage(id);
+			await handlePaymentProviderEvent(message, { DB: db } as Env);
+			expect(message.ack).toHaveBeenCalledOnce();
+			expect(
+				await db
+					.prepare(
+						"SELECT status, lease_token, attempt_count FROM inbound_provider_events WHERE id = ?",
+					)
+					.bind(id)
+					.first(),
+			).toEqual({
+				status: "processing",
+				lease_token: "new-owner",
+				attempt_count: 2,
+			});
+			expect(await providerState(db, id)).toMatchObject({
+				order_status: "pending",
+				payments: 0,
+			});
+			expect(
+				await db
+					.prepare(
+						"SELECT health_status, last_error_code FROM payment_ingresses WHERE id = ?",
+					)
+					.bind(sourceId)
+					.first(),
+			).toEqual({ health_status: "healthy", last_error_code: null });
+		},
+	);
 });
 
 function adapter(

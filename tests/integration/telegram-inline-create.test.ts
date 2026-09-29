@@ -99,7 +99,7 @@ describe("Telegram Inline payment creation", () => {
 		});
 		expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/editMessageText$/);
 		const telegramBody = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(telegramBody.inline_message_id).toBe("inline-message-10");
 		expect(telegramBody.chat_id).toBeUndefined();
@@ -276,7 +276,7 @@ describe("Telegram Inline payment creation", () => {
 		});
 
 		const bodies = fetchMock.mock.calls.map(([, init]) =>
-			JSON.parse(String((init as RequestInit).body)),
+			JSON.parse(String((init as RequestInit)?.body)),
 		);
 		expect(bodies).toHaveLength(2);
 		expect(bodies[0]).toMatchObject({ chat_id: 60003, parse_mode: "Markdown" });
@@ -436,7 +436,7 @@ describe("Telegram Inline payment creation", () => {
 			}),
 		);
 		const calls = fetchMock.mock.calls.map(([, init]) =>
-			JSON.parse(String((init as RequestInit).body)),
+			JSON.parse(String((init as RequestInit)?.body)),
 		);
 		expect(
 			calls.some((body) => String(body.text).includes("付款校验已加入队列")),
@@ -548,7 +548,7 @@ describe("Telegram Inline payment creation", () => {
 		expect(after?.count).toBe(before?.count);
 		expect(fetchMock).toHaveBeenCalledOnce();
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.text).toContain("not bound");
 		const replay = await db
@@ -590,7 +590,7 @@ describe("Telegram Inline payment creation", () => {
 				},
 			});
 		const bodies = fetchMock.mock.calls.map(([, init]) =>
-			JSON.parse(String((init as RequestInit).body)),
+			JSON.parse(String((init as RequestInit)?.body)),
 		);
 		expect(bodies).toHaveLength(4);
 		expect(bodies.every((body) => body.parse_mode === "Markdown")).toBe(true);

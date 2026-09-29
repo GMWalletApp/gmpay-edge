@@ -2,7 +2,7 @@ import { APIError, type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import {
 	createAuthMiddleware,
-	getIp,
+	getIP,
 	getSessionFromCtx,
 } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
@@ -110,7 +110,7 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 				if (!ctx.request || !authRateLimitPolicies.has(ctx.path)) return;
 				const denied = await claimAuthRateLimit(db.$client, {
 					path: ctx.path,
-					ip: getIp(ctx.request, ctx.context.options),
+					ip: getIP(ctx.request, ctx.context.options),
 					email:
 						ctx.path === "/sign-in/email" ? signInEmail(ctx.body) : undefined,
 				});

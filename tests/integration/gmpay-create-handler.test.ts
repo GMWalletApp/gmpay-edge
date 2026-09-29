@@ -68,78 +68,80 @@ describe("GMPay create transaction HTTP handler", () => {
 		expect(response.status).toBe(413);
 	});
 
-	it.each([
-		"json",
-		"form",
-	] as const)("authenticates and creates a selectable order from %s", async (encoding) => {
-		const parameters = {
-			pid,
-			order_id: `ORDER-${encoding.toUpperCase()}`,
-			currency: "usd",
-			amount: "12.50",
-			notify_url: "https://merchant.example/notify",
-		};
-		const signed = {
-			...parameters,
-			signature: signGmpayParameters(parameters, secret),
-		};
-		const request = new Request(
-			"https://pay.example/payments/gmpay/v1/order/create-transaction",
-			{
-				method: "POST",
-				headers: {
-					"content-type":
-						encoding === "json"
-							? "application/json"
-							: "application/x-www-form-urlencoded",
-					"x-request-id": `request-${encoding}`,
-				},
-				body:
-					encoding === "json"
-						? JSON.stringify(signed)
-						: new URLSearchParams(signed).toString(),
-			},
-		);
-		const response = await handleGmpayCreateRequest(request, { DB: db } as Env);
-		expect(response.status).toBe(200);
-		expect(response.headers.get("x-request-id")).toBe(`request-${encoding}`);
-		const body = (await response.json()) as {
-			status_code: number;
-			request_id: string;
-			data: {
-				trade_id: string;
-				status: number;
-				status_detail: string;
-				token: string;
-				network: string;
+	it.each(["json", "form"] as const)(
+		"authenticates and creates a selectable order from %s",
+		async (encoding) => {
+			const parameters = {
+				pid,
+				order_id: `ORDER-${encoding.toUpperCase()}`,
+				currency: "usd",
+				amount: "12.50",
+				notify_url: "https://merchant.example/notify",
 			};
-		};
-		expect(body).toMatchObject({
-			status_code: 200,
-			request_id: `request-${encoding}`,
-			data: {
-				status: 4,
-				status_detail: "pending",
-				token: "",
-				network: "",
-			},
-		});
-		const order = await db
-			.prepare(
-				"SELECT api_key_id, api_protocol, payment_asset_id FROM orders WHERE id = ?",
-			)
-			.bind(body.data.trade_id)
-			.first<{
-				api_key_id: string;
-				api_protocol: string;
-				payment_asset_id: string | null;
-			}>();
-		expect(order).toEqual({
-			api_key_id: "key",
-			api_protocol: "gmpay",
-			payment_asset_id: null,
-		});
-	});
+			const signed = {
+				...parameters,
+				signature: signGmpayParameters(parameters, secret),
+			};
+			const request = new Request(
+				"https://pay.example/payments/gmpay/v1/order/create-transaction",
+				{
+					method: "POST",
+					headers: {
+						"content-type":
+							encoding === "json"
+								? "application/json"
+								: "application/x-www-form-urlencoded",
+						"x-request-id": `request-${encoding}`,
+					},
+					body:
+						encoding === "json"
+							? JSON.stringify(signed)
+							: new URLSearchParams(signed).toString(),
+				},
+			);
+			const response = await handleGmpayCreateRequest(request, {
+				DB: db,
+			} as Env);
+			expect(response.status).toBe(200);
+			expect(response.headers.get("x-request-id")).toBe(`request-${encoding}`);
+			const body = (await response.json()) as {
+				status_code: number;
+				request_id: string;
+				data: {
+					trade_id: string;
+					status: number;
+					status_detail: string;
+					token: string;
+					network: string;
+				};
+			};
+			expect(body).toMatchObject({
+				status_code: 200,
+				request_id: `request-${encoding}`,
+				data: {
+					status: 4,
+					status_detail: "pending",
+					token: "",
+					network: "",
+				},
+			});
+			const order = await db
+				.prepare(
+					"SELECT api_key_id, api_protocol, payment_asset_id FROM orders WHERE id = ?",
+				)
+				.bind(body.data.trade_id)
+				.first<{
+					api_key_id: string;
+					api_protocol: string;
+					payment_asset_id: string | null;
+				}>();
+			expect(order).toEqual({
+				api_key_id: "key",
+				api_protocol: "gmpay",
+				payment_asset_id: null,
+			});
+		},
+	);
 
 	it("accepts and authenticates a JSON number amount", async () => {
 		const parameters = {
@@ -369,49 +371,47 @@ describe("GMPay create transaction HTTP handler", () => {
 			code: 10004,
 			message: "Invalid order amount",
 		},
-	])("rejects $name with a documented 400-class code", async ({
-		name,
-		overrides,
-		code,
-		message,
-	}) => {
-		const parameters = {
-			pid,
-			order_id: `ORDER-INVALID-${name.replaceAll(/\W+/g, "-")}`,
-			currency: "USD",
-			amount: "10.00",
-			notify_url: "https://merchant.example/notify",
-			...overrides,
-		};
-		const response = await handleGmpayCreateRequest(
-			new Request(
-				"https://pay.example/payments/gmpay/v1/order/create-transaction",
-				{
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({
-						...parameters,
-						signature: signGmpayParameters(parameters, secret),
-					}),
-				},
-			),
-			{ DB: db } as Env,
-		);
-		expect(response.status).toBe(400);
-		expect(await response.json()).toMatchObject({
-			status_code: code,
-			message,
-			data: null,
-		});
-		await expect(
-			db
-				.prepare(
-					"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
-				)
-				.bind(parameters.order_id)
-				.first(),
-		).resolves.toEqual({ count: 0 });
-	});
+	])(
+		"rejects $name with a documented 400-class code",
+		async ({ name, overrides, code, message }) => {
+			const parameters = {
+				pid,
+				order_id: `ORDER-INVALID-${name.replaceAll(/\W+/g, "-")}`,
+				currency: "USD",
+				amount: "10.00",
+				notify_url: "https://merchant.example/notify",
+				...overrides,
+			};
+			const response = await handleGmpayCreateRequest(
+				new Request(
+					"https://pay.example/payments/gmpay/v1/order/create-transaction",
+					{
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({
+							...parameters,
+							signature: signGmpayParameters(parameters, secret),
+						}),
+					},
+				),
+				{ DB: db } as Env,
+			);
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({
+				status_code: code,
+				message,
+				data: null,
+			});
+			await expect(
+				db
+					.prepare(
+						"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
+					)
+					.bind(parameters.order_id)
+					.first(),
+			).resolves.toEqual({ count: 0 });
+		},
+	);
 
 	it("bounds repeated authentication failures per PID and logs a structured line", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

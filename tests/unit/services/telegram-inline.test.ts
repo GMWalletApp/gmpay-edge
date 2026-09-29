@@ -89,7 +89,7 @@ describe("Telegram inline integration", () => {
 		});
 
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.text).toContain("No matching order");
 	});
@@ -167,7 +167,7 @@ describe("Telegram inline integration", () => {
 			},
 		});
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.results.map((result: { id: string }) => result.id)).toEqual([
 			"create-payment:11111111-1111-4111-8111-111111111111",
@@ -233,7 +233,7 @@ describe("Telegram inline integration", () => {
 			},
 		});
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(
 			body.results.map((result: { description: string }) => result.description),
@@ -260,7 +260,7 @@ describe("Telegram inline integration", () => {
 		});
 
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.results).toHaveLength(1);
 		expect(body.results[0]).toMatchObject({
@@ -297,7 +297,7 @@ describe("Telegram inline integration", () => {
 			},
 		});
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.results).toHaveLength(1);
 		expect(body.results[0].id).toBe("payment-options-unavailable");
@@ -324,7 +324,7 @@ describe("Telegram inline integration", () => {
 		});
 
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body.results).toHaveLength(1);
 		expect(body.results[0]).toMatchObject({
@@ -371,7 +371,7 @@ describe("Telegram inline integration", () => {
 			/\/answerCallbackQuery$/,
 		);
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
 		expect(body).toMatchObject({
 			callback_query_id: "inline-pending",

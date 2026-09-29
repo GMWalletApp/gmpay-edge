@@ -55,12 +55,15 @@ describe("admin navigation", () => {
 			],
 		],
 		[systemPermission("audit", "read"), ["/admin/operations/audit-logs"]],
-	] as const)("projects only permitted destinations into the command menu for %j", (permission, expected) => {
-		const urls = commandMenuGroups(systemSidebarData([permission])).flatMap(
-			(group) => group.items.map((item) => String(item.url)),
-		);
-		expect(urls).toEqual(expected);
-	});
+	] as const)(
+		"projects only permitted destinations into the command menu for %j",
+		(permission, expected) => {
+			const urls = commandMenuGroups(systemSidebarData([permission])).flatMap(
+				(group) => group.items.map((item) => String(item.url)),
+			);
+			expect(urls).toEqual(expected);
+		},
+	);
 
 	it.each([
 		[
@@ -87,10 +90,15 @@ describe("admin navigation", () => {
 				"/admin/access/permission-bits",
 			],
 		],
-	] as const)("chooses the first allowed user-access page for %j", (permissions, expected, visible) => {
-		expect(visibleModuleEntries("access", permissions)[0]?.url).toBe(expected);
-		expect(urls(permissions)).toEqual(visible);
-	});
+	] as const)(
+		"chooses the first allowed user-access page for %j",
+		(permissions, expected, visible) => {
+			expect(visibleModuleEntries("access", permissions)[0]?.url).toBe(
+				expected,
+			);
+			expect(urls(permissions)).toEqual(visible);
+		},
+	);
 
 	it("filters operations children independently and removes empty groups", () => {
 		expect(

@@ -92,41 +92,40 @@ describe("EPay compatibility HTTP handler", () => {
 			overrides: { notify_url: "http://merchant.example/notify" },
 			code: 10009,
 		},
-	])("rejects $name with a documented 400-class code", async ({
-		name,
-		overrides,
-		code,
-	}) => {
-		const parameters = {
-			pid,
-			money: "12.50",
-			out_trade_no: `EPAY-INVALID-${name.replaceAll(/\W+/g, "-")}`,
-			notify_url: "https://merchant.example/notify",
-			...overrides,
-		};
-		const response = await handleEpayCreateRequest(
-			new Request("https://pay.example/submit.php", {
-				method: "POST",
-				headers: { "content-type": "application/x-www-form-urlencoded" },
-				body: new URLSearchParams({
-					...parameters,
-					sign: signEpayParameters(parameters, secret),
-					sign_type: "MD5",
+	])(
+		"rejects $name with a documented 400-class code",
+		async ({ name, overrides, code }) => {
+			const parameters = {
+				pid,
+				money: "12.50",
+				out_trade_no: `EPAY-INVALID-${name.replaceAll(/\W+/g, "-")}`,
+				notify_url: "https://merchant.example/notify",
+				...overrides,
+			};
+			const response = await handleEpayCreateRequest(
+				new Request("https://pay.example/submit.php", {
+					method: "POST",
+					headers: { "content-type": "application/x-www-form-urlencoded" },
+					body: new URLSearchParams({
+						...parameters,
+						sign: signEpayParameters(parameters, secret),
+						sign_type: "MD5",
+					}),
 				}),
-			}),
-			{ DB: db } as Env,
-		);
-		expect(response.status).toBe(400);
-		expect(await response.json()).toMatchObject({ status_code: code });
-		await expect(
-			db
-				.prepare(
-					"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
-				)
-				.bind(parameters.out_trade_no)
-				.first(),
-		).resolves.toEqual({ count: 0 });
-	});
+				{ DB: db } as Env,
+			);
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ status_code: code });
+			await expect(
+				db
+					.prepare(
+						"SELECT COUNT(*) AS count FROM orders WHERE external_order_id = ?",
+					)
+					.bind(parameters.out_trade_no)
+					.first(),
+			).resolves.toEqual({ count: 0 });
+		},
+	);
 
 	it("rejects an oversized POST body before authentication", async () => {
 		const response = await handleEpayCreateRequest(
@@ -147,87 +146,87 @@ describe("EPay compatibility HTTP handler", () => {
 		expect(response.status).toBe(413);
 	});
 
-	it.each([
-		"GET",
-		"POST",
-	] as const)("adapts a signed %s request into the shared selectable order service", async (method) => {
-		const counters = createDatastoreCounters();
-		const countedDb = instrumentD1(db, counters);
-		const parameters = {
-			pid,
-			money: "20.00",
-			out_trade_no: `EPAY-${method}`,
-			notify_url: "https://merchant.example/epay-notify",
-			return_url: "https://merchant.example/return",
-			type: "alipay",
-			param: `context-${method.toLowerCase()}`,
-			clientip: "203.0.113.10",
-			device: "mobile",
-		};
-		const signed = {
-			...parameters,
-			sign: signEpayParameters(parameters, secret),
-			sign_type: "MD5",
-		};
-		const encoded = new URLSearchParams(signed).toString();
-		const request = new Request(
-			`https://pay.example/payments/epay/v1/order/create-transaction/submit.php${
-				method === "GET" ? `?${encoded}` : ""
-			}`,
-			{
-				method,
-				headers: {
-					"x-request-id": `epay-${method.toLowerCase()}`,
-					...(method === "POST"
-						? { "content-type": "application/x-www-form-urlencoded" }
-						: {}),
+	it.each(["GET", "POST"] as const)(
+		"adapts a signed %s request into the shared selectable order service",
+		async (method) => {
+			const counters = createDatastoreCounters();
+			const countedDb = instrumentD1(db, counters);
+			const parameters = {
+				pid,
+				money: "20.00",
+				out_trade_no: `EPAY-${method}`,
+				notify_url: "https://merchant.example/epay-notify",
+				return_url: "https://merchant.example/return",
+				type: "alipay",
+				param: `context-${method.toLowerCase()}`,
+				clientip: "203.0.113.10",
+				device: "mobile",
+			};
+			const signed = {
+				...parameters,
+				sign: signEpayParameters(parameters, secret),
+				sign_type: "MD5",
+			};
+			const encoded = new URLSearchParams(signed).toString();
+			const request = new Request(
+				`https://pay.example/payments/epay/v1/order/create-transaction/submit.php${
+					method === "GET" ? `?${encoded}` : ""
+				}`,
+				{
+					method,
+					headers: {
+						"x-request-id": `epay-${method.toLowerCase()}`,
+						...(method === "POST"
+							? { "content-type": "application/x-www-form-urlencoded" }
+							: {}),
+					},
+					body: method === "POST" ? encoded : undefined,
 				},
-				body: method === "POST" ? encoded : undefined,
-			},
-		);
-		const response = await handleEpayCreateRequest(request, {
-			DB: countedDb,
-		} as Env);
-		expect(response.status).toBe(200);
-		expect(counters).toMatchObject({
-			d1Prepare: 6,
-			d1StatementFirst: 2,
-			d1StatementAll: 2,
-			d1StatementRun: 2,
-			d1Batch: 0,
-		});
-		expect(response.headers.get("x-request-id")).toBe(
-			`epay-${method.toLowerCase()}`,
-		);
-		const body = await response.json<{
-			data: { trade_id: string; payment_url: string };
-		}>();
-		expect(body.data.payment_url).toBe(
-			`https://pay.example/checkout/${body.data.trade_id}`,
-		);
-		const orderId = body.data.trade_id;
-		const order = await db
-			.prepare(
-				"SELECT api_protocol, payment_asset_id, return_url, metadata FROM orders WHERE id = ?",
-			)
-			.bind(orderId)
-			.first<{
-				api_protocol: string;
-				payment_asset_id: string | null;
-				metadata: string;
-				return_url: string;
+			);
+			const response = await handleEpayCreateRequest(request, {
+				DB: countedDb,
+			} as Env);
+			expect(response.status).toBe(200);
+			expect(counters).toMatchObject({
+				d1Prepare: 6,
+				d1StatementFirst: 2,
+				d1StatementAll: 2,
+				d1StatementRun: 2,
+				d1Batch: 0,
+			});
+			expect(response.headers.get("x-request-id")).toBe(
+				`epay-${method.toLowerCase()}`,
+			);
+			const body = await response.json<{
+				data: { trade_id: string; payment_url: string };
 			}>();
-		expect(order?.api_protocol).toBe("epay");
-		expect(order?.payment_asset_id).toBeNull();
-		expect(order?.return_url).toBe(
-			`https://merchant.example/return?param=context-${method.toLowerCase()}`,
-		);
-		expect(JSON.parse(order?.metadata ?? "{}")).toEqual({
-			integration: "epay",
-			epayType: "alipay",
-			epayParam: `context-${method.toLowerCase()}`,
-		});
-	});
+			expect(body.data.payment_url).toBe(
+				`https://pay.example/checkout/${body.data.trade_id}`,
+			);
+			const orderId = body.data.trade_id;
+			const order = await db
+				.prepare(
+					"SELECT api_protocol, payment_asset_id, return_url, metadata FROM orders WHERE id = ?",
+				)
+				.bind(orderId)
+				.first<{
+					api_protocol: string;
+					payment_asset_id: string | null;
+					metadata: string;
+					return_url: string;
+				}>();
+			expect(order?.api_protocol).toBe("epay");
+			expect(order?.payment_asset_id).toBeNull();
+			expect(order?.return_url).toBe(
+				`https://merchant.example/return?param=context-${method.toLowerCase()}`,
+			);
+			expect(JSON.parse(order?.metadata ?? "{}")).toEqual({
+				integration: "epay",
+				epayType: "alipay",
+				epayParam: `context-${method.toLowerCase()}`,
+			});
+		},
+	);
 
 	it("returns Pro-compatible mapi data and returns param from order queries", async () => {
 		const parameters = {

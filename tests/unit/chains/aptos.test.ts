@@ -126,7 +126,7 @@ describe("Aptos adapter", () => {
 		});
 		expect(transactions).toHaveLength(101);
 		const secondBody = JSON.parse(
-			String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[1]?.[1] as RequestInit)?.body),
 		) as { variables: { offset: number } };
 		expect(secondBody.variables.offset).toBe(100);
 		expect(info).toHaveBeenCalledWith(
@@ -161,7 +161,7 @@ describe("Aptos adapter", () => {
 		expect(transactions.truncated).toEqual({});
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		const body = JSON.parse(
-			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body),
 		) as { query: string; variables: { sinceTimestamp: string } };
 		expect(body.variables.sinceTimestamp).toBe("2025-06-01T00:00:00.000Z");
 		expect(body.query).toContain(

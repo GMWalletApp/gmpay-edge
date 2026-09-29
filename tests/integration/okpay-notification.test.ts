@@ -332,39 +332,39 @@ describe("OKPay notification flow", () => {
 				}),
 			requestId: "request-malformed-form",
 		},
-	])("rejects $name with an audited structured response", async ({
-		request,
-		requestId,
-	}) => {
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
+	])(
+		"rejects $name with an audited structured response",
+		async ({ request, requestId }) => {
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
 
-		const response = await handleOkPayNotification(request(), env);
+			const response = await handleOkPayNotification(request(), env);
 
-		expect(response.status).toBe(400);
-		expect(response.headers.get("content-type")).toBe(
-			"application/json; charset=utf-8",
-		);
-		expect(response.headers.get("x-request-id")).toBe(requestId);
-		await expect(response.json()).resolves.toEqual({
-			error: "invalid_notification",
-		});
-		expect(fetchMock).not.toHaveBeenCalled();
-		await expect(
-			db
-				.prepare(
-					`SELECT signature_status, processing_status, response_status, error_code
+			expect(response.status).toBe(400);
+			expect(response.headers.get("content-type")).toBe(
+				"application/json; charset=utf-8",
+			);
+			expect(response.headers.get("x-request-id")).toBe(requestId);
+			await expect(response.json()).resolves.toEqual({
+				error: "invalid_notification",
+			});
+			expect(fetchMock).not.toHaveBeenCalled();
+			await expect(
+				db
+					.prepare(
+						`SELECT signature_status, processing_status, response_status, error_code
 					 FROM inbound_webhook_receipts WHERE external_request_id = ?`,
-				)
-				.bind(requestId)
-				.first(),
-		).resolves.toEqual({
-			signature_status: "unknown",
-			processing_status: "rejected",
-			response_status: 400,
-			error_code: "invalid_notification",
-		});
-	});
+					)
+					.bind(requestId)
+					.first(),
+			).resolves.toEqual({
+				signature_status: "unknown",
+				processing_status: "rejected",
+				response_status: 400,
+				error_code: "invalid_notification",
+			});
+		},
+	);
 
 	it("records every attempt even when the provider reuses its request ID", async () => {
 		const repeatedExternalId = "provider-reused-request-id";

@@ -29,22 +29,25 @@ describe("payment method adapter routing", () => {
 		["ton", "ton", "GRAM", "UQCrq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq5jh"],
 		["aptos", "aptos", "APT", "0x1"],
 		["solana", "solana", "SOL", "11111111111111111111111111111111"],
-	] as const)("constructs and validates the %s chain adapter from a payment-method query", async (railCode, adapterId, assetCode, address) => {
-		const [candidate] = await createPaymentMethodAdapters(
-			db([chainRow(railCode, adapterId, assetCode)]),
-			`method-${railCode}`,
-		);
-		if (!candidate) throw new Error(`Missing ${railCode} adapter`);
-		expect(candidate.adapter).toMatchObject({
-			id: adapterId,
-			network: railCode,
-		});
-		const target = await candidate.adapter.createPaymentTarget({
-			address,
-			expiresAt: new Date(1),
-		});
-		expect(candidate.adapter.validateAddress(target.address)).toBe(true);
-	});
+	] as const)(
+		"constructs and validates the %s chain adapter from a payment-method query",
+		async (railCode, adapterId, assetCode, address) => {
+			const [candidate] = await createPaymentMethodAdapters(
+				db([chainRow(railCode, adapterId, assetCode)]),
+				`method-${railCode}`,
+			);
+			if (!candidate) throw new Error(`Missing ${railCode} adapter`);
+			expect(candidate.adapter).toMatchObject({
+				id: adapterId,
+				network: railCode,
+			});
+			const target = await candidate.adapter.createPaymentTarget({
+				address,
+				expiresAt: new Date(1),
+			});
+			expect(candidate.adapter.validateAddress(target.address)).toBe(true);
+		},
+	);
 
 	it.each([
 		["binance", "12345", { apiKey: "read-key", secretKey: "secret" }],
@@ -54,25 +57,28 @@ describe("payment method adapter routing", () => {
 			{ apiKey: "read-key", secretKey: "secret", passphrase: "pass" },
 		],
 		["okpay", "34567", { apiKey: "api-key" }],
-	] as const)("constructs the %s receiving adapter only with its receiving credentials", async (railCode, target, credentials) => {
-		const [candidate] = await createPaymentMethodAdapters(
-			db([providerRow(railCode)]),
-			`method-${railCode}`,
-			target,
-			credentials,
-		);
-		if (!candidate) throw new Error(`Missing ${railCode} adapter`);
-		expect(candidate.adapter).toMatchObject({
-			id: railCode,
-			network: railCode,
-		});
-		await expect(
-			candidate.adapter.createPaymentTarget({
-				address: target,
-				expiresAt: new Date(1),
-			}),
-		).resolves.toMatchObject({ address: target });
-	});
+	] as const)(
+		"constructs the %s receiving adapter only with its receiving credentials",
+		async (railCode, target, credentials) => {
+			const [candidate] = await createPaymentMethodAdapters(
+				db([providerRow(railCode)]),
+				`method-${railCode}`,
+				target,
+				credentials,
+			);
+			if (!candidate) throw new Error(`Missing ${railCode} adapter`);
+			expect(candidate.adapter).toMatchObject({
+				id: railCode,
+				network: railCode,
+			});
+			await expect(
+				candidate.adapter.createPaymentTarget({
+					address: target,
+					expiresAt: new Date(1),
+				}),
+			).resolves.toMatchObject({ address: target });
+		},
+	);
 
 	it("pairs an enabled EVM WSS connection with the authoritative HTTP candidate", async () => {
 		const http = chainRow("ethereum", "evm", "ETH");
@@ -115,7 +121,7 @@ describe("payment method adapter routing", () => {
 			},
 		);
 		expect(
-			(candidate?.adapter as unknown as { config: { apiUrl: string } }).config
+			(candidate?.adapter as unknown as { config: { apiUrl: string } })?.config
 				.apiUrl,
 		).toBe("https://api-gcp.binance.com");
 	});

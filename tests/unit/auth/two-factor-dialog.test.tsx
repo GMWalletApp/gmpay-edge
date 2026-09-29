@@ -60,6 +60,7 @@ describe("two-factor recovery code acknowledgement", () => {
 		clipboard.writeText.mockResolvedValue(undefined);
 		auth.enable.mockResolvedValue({
 			data: {
+				method: "totp",
 				totpURI:
 					"otpauth://totp/GMPay%20Edge:root%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=GMPay%20Edge",
 				backupCodes,

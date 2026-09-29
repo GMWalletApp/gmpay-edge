@@ -65,11 +65,11 @@ describe("dashboard Query hydration budget", () => {
 		});
 		await Promise.resolve();
 		const { state, finish } = await dehydrateRouter(router);
-		const dehydrated = state.dehydratedQueryClient;
-		const query = dehydrated?.queries[0];
+		const dehydrated = state.query.initial;
+		const query = dehydrated?.[0];
 		const serialized = JSON.stringify(dehydrated);
 
-		expect(dehydrated?.queries).toHaveLength(1);
+		expect(dehydrated).toHaveLength(1);
 		expect(query?.state.status).toBe("pending");
 		expect(query?.promise).toBeInstanceOf(Promise);
 		expect(new TextEncoder().encode(serialized).byteLength).toBeLessThanOrEqual(
@@ -114,9 +114,7 @@ describe("dashboard Query hydration budget", () => {
 		});
 		expect(failingQuery).toHaveBeenCalledOnce();
 		const failedDehydration = await dehydrateRouter(failedRouter);
-		expect(
-			failedDehydration.state.dehydratedQueryClient?.queries ?? [],
-		).toHaveLength(0);
+		expect(failedDehydration.state.query.initial ?? []).toHaveLength(0);
 		failedDehydration.finish();
 
 		const { queryClient: cancelled, router: cancelledRouter } =
@@ -135,7 +133,7 @@ describe("dashboard Query hydration budget", () => {
 		await Promise.resolve();
 		const cancelledDehydration = await dehydrateRouter(cancelledRouter);
 		const streamedPromise =
-			cancelledDehydration.state.dehydratedQueryClient?.queries[0]?.promise;
+			cancelledDehydration.state.query.initial?.[0]?.promise;
 		expect(streamedPromise).toBeInstanceOf(Promise);
 		const consoleError = vi
 			.spyOn(console, "error")
@@ -153,8 +151,10 @@ describe("dashboard Query hydration budget", () => {
 });
 
 type RouterDehydratedState = {
-	dehydratedQueryClient?: ReturnType<typeof dehydrate>;
-	queryStream: ReadableStream<ReturnType<typeof dehydrate>>;
+	query: {
+		initial?: ReturnType<typeof dehydrate>["queries"];
+		stream: ReadableStream<ReturnType<typeof dehydrate>["queries"]>;
+	};
 };
 
 type TestRouter = {

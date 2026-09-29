@@ -215,170 +215,170 @@ describe("payment connection failover", () => {
 		{ firstAsset: "USDT", paidAsset: "USDT" },
 		{ firstAsset: "USDT", paidAsset: "ETH" },
 		{ firstAsset: "ETH", paidAsset: "USDT" },
-	])("keeps $paidAsset payments isolated when scanning $firstAsset first with a shared cache", async ({
-		firstAsset,
-		paidAsset,
-	}) => {
-		const multiAssetRuntime = new Miniflare({
-			modules: true,
-			script: "export default { fetch() { return new Response('ok') } }",
-			d1Databases: { DB: "multi-asset-scan" },
-		});
-		try {
-			const db = await multiAssetRuntime.getD1Database("DB");
-			await applyMigrations(db);
-			await seed(db);
-			const target = "0x1111111111111111111111111111111111111111";
-			const contract = "0xdac17f958d2ee523a2206206994597c13d831ec7";
-			await db.batch([
-				db
-					.prepare(
-						"INSERT INTO payment_assets (id, rail_code, code, symbol, kind, contract_address, decimals, created_at, updated_at) VALUES ('asset-usdt', 'ethereum', 'USDT', 'USDT', 'token', ?, 6, 1, 1)",
-					)
-					.bind(contract),
-				db.prepare(
-					"INSERT INTO receiving_method_assets (id, receiving_method_id, payment_asset_id, created_at, updated_at) VALUES ('link-usdt', 'asset-eth', 'asset-usdt', 1, 1)",
-				),
-				db.prepare(`INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, payment_asset_id, received_amount_units, expires_at, version, created_at, updated_at)
-			 VALUES ('order-usdt', 'merchant-usdt', 'pending', '100', 'USD', 2, 'asset-usdt', '0', 9999999999999, 0, 1, 1)`),
-				db
-					.prepare(`INSERT INTO order_payment_snapshots (order_id, receiving_method_id, receiving_method_name, rail_code, rail_kind, asset_id, asset_code, decimals, target_value, connection_id, adapter, required_confirmations, expected_amount_units, created_at)
-			 VALUES ('order-usdt', 'asset-eth', 'Primary ETH', 'ethereum', 'chain', 'asset-usdt', 'USDT', 6, ?, 'connection-primary', 'evm', 2, '1000000', 1)`)
-					.bind(target),
-			]);
-			expect(
-				(
-					await db
+	])(
+		"keeps $paidAsset payments isolated when scanning $firstAsset first with a shared cache",
+		async ({ firstAsset, paidAsset }) => {
+			const multiAssetRuntime = new Miniflare({
+				modules: true,
+				script: "export default { fetch() { return new Response('ok') } }",
+				d1Databases: { DB: "multi-asset-scan" },
+			});
+			try {
+				const db = await multiAssetRuntime.getD1Database("DB");
+				await applyMigrations(db);
+				await seed(db);
+				const target = "0x1111111111111111111111111111111111111111";
+				const contract = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+				await db.batch([
+					db
 						.prepare(
-							"SELECT payment_asset_id FROM receiving_method_assets WHERE receiving_method_id = 'asset-eth' ORDER BY payment_asset_id",
+							"INSERT INTO payment_assets (id, rail_code, code, symbol, kind, contract_address, decimals, created_at, updated_at) VALUES ('asset-usdt', 'ethereum', 'USDT', 'USDT', 'token', ?, 6, 1, 1)",
 						)
-						.all()
-				).results,
-			).toEqual([
-				{ payment_asset_id: "asset-eth" },
-				{ payment_asset_id: "asset-usdt" },
-			]);
-			const methods: string[] = [];
-			vi.spyOn(console, "info").mockImplementation(() => undefined);
-			vi.stubGlobal(
-				"fetch",
-				vi.fn(async (_input: unknown, init?: RequestInit) => {
-					const request = JSON.parse(String(init?.body)) as {
-						method: string;
-						params: Array<{ address?: string }>;
-					};
-					methods.push(request.method);
-					if (request.method === "eth_blockNumber") return rpc("0xa");
-					if (request.method === "eth_getLogs") {
-						expect(request.params[0]?.address).toBe(contract);
-						if (paidAsset !== "USDT") return rpc([]);
-						return rpc([
-							{
-								address: contract,
+						.bind(contract),
+					db.prepare(
+						"INSERT INTO receiving_method_assets (id, receiving_method_id, payment_asset_id, created_at, updated_at) VALUES ('link-usdt', 'asset-eth', 'asset-usdt', 1, 1)",
+					),
+					db.prepare(`INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, payment_asset_id, received_amount_units, expires_at, version, created_at, updated_at)
+			 VALUES ('order-usdt', 'merchant-usdt', 'pending', '100', 'USD', 2, 'asset-usdt', '0', 9999999999999, 0, 1, 1)`),
+					db
+						.prepare(`INSERT INTO order_payment_snapshots (order_id, receiving_method_id, receiving_method_name, rail_code, rail_kind, asset_id, asset_code, decimals, target_value, connection_id, adapter, required_confirmations, expected_amount_units, created_at)
+			 VALUES ('order-usdt', 'asset-eth', 'Primary ETH', 'ethereum', 'chain', 'asset-usdt', 'USDT', 6, ?, 'connection-primary', 'evm', 2, '1000000', 1)`)
+						.bind(target),
+				]);
+				expect(
+					(
+						await db
+							.prepare(
+								"SELECT payment_asset_id FROM receiving_method_assets WHERE receiving_method_id = 'asset-eth' ORDER BY payment_asset_id",
+							)
+							.all()
+					).results,
+				).toEqual([
+					{ payment_asset_id: "asset-eth" },
+					{ payment_asset_id: "asset-usdt" },
+				]);
+				const methods: string[] = [];
+				vi.spyOn(console, "info").mockImplementation(() => undefined);
+				vi.stubGlobal(
+					"fetch",
+					vi.fn(async (_input: unknown, init?: RequestInit) => {
+						const request = JSON.parse(String(init?.body)) as {
+							method: string;
+							params: Array<{ address?: string }>;
+						};
+						methods.push(request.method);
+						if (request.method === "eth_blockNumber") return rpc("0xa");
+						if (request.method === "eth_getLogs") {
+							expect(request.params[0]?.address).toBe(contract);
+							if (paidAsset !== "USDT") return rpc([]);
+							return rpc([
+								{
+									address: contract,
+									blockHash: "0xblock",
+									blockNumber: "0x9",
+									data: "0xf4240",
+									logIndex: "0x0",
+									removed: false,
+									topics: [
+										"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+										`0x${"2".repeat(64)}`,
+										`0x${target.slice(2).padStart(64, "0")}`,
+									],
+									transactionHash: "0xmultiasset",
+								},
+							]);
+						}
+						if (
+							["eth_getBlockByNumber", "eth_getBlockByHash"].includes(
+								request.method,
+							)
+						)
+							return rpc({
+								hash: "0xblock",
+								number: "0x9",
+								timestamp: "0x6553f100",
+								transactions:
+									paidAsset === "ETH"
+										? [
+												{
+													blockHash: "0xblock",
+													blockNumber: "0x9",
+													from: `0x${"2".repeat(40)}`,
+													hash: "0xmultiasset-native",
+													to: target,
+													value: "0xde0b6b3a7640000",
+												},
+											]
+										: [],
+							});
+						if (request.method === "eth_getTransactionReceipt")
+							return rpc({
 								blockHash: "0xblock",
 								blockNumber: "0x9",
-								data: "0xf4240",
-								logIndex: "0x0",
-								removed: false,
-								topics: [
-									"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-									`0x${"2".repeat(64)}`,
-									`0x${target.slice(2).padStart(64, "0")}`,
-								],
-								transactionHash: "0xmultiasset",
-							},
-						]);
-					}
-					if (
-						["eth_getBlockByNumber", "eth_getBlockByHash"].includes(
-							request.method,
-						)
-					)
-						return rpc({
-							hash: "0xblock",
-							number: "0x9",
-							timestamp: "0x6553f100",
-							transactions:
-								paidAsset === "ETH"
-									? [
-											{
-												blockHash: "0xblock",
-												blockNumber: "0x9",
-												from: `0x${"2".repeat(40)}`,
-												hash: "0xmultiasset-native",
-												to: target,
-												value: "0xde0b6b3a7640000",
-											},
-										]
-									: [],
-						});
-					if (request.method === "eth_getTransactionReceipt")
-						return rpc({
-							blockHash: "0xblock",
-							blockNumber: "0x9",
-							logs: [],
-							status: "0x1",
-							transactionHash: "0xmultiasset-native",
-						});
-					throw new Error(`Unexpected RPC method ${request.method}`);
-				}),
-			);
-			const cache = new Map<
-				string,
-				ReturnType<typeof createReceivingMethodAdapters>
-			>();
-			const orderIds =
-				firstAsset === "USDT"
-					? ["order-usdt", "order-eth"]
-					: ["order-eth", "order-usdt"];
-			for (const orderId of orderIds) {
-				const start = methods.length;
-				const ack = vi.fn();
-				const retry = vi.fn();
-				await handlePaymentScan(
-					{
-						body: {
-							kind: "payment.scan",
-							version: 1,
-							receivingMethodId: "asset-eth",
-							orderId,
-						},
-						ack,
-						retry,
-					} as unknown as Parameters<typeof handlePaymentScan>[0],
-					{ DB: db, WEBHOOK_QUEUE: { send: vi.fn() } } as unknown as Env,
-					undefined,
-					cache,
+								logs: [],
+								status: "0x1",
+								transactionHash: "0xmultiasset-native",
+							});
+						throw new Error(`Unexpected RPC method ${request.method}`);
+					}),
 				);
-				expect(ack).toHaveBeenCalledOnce();
-				expect(retry).not.toHaveBeenCalled();
-				if (orderId === "order-usdt")
-					expect(methods.slice(start)).toContain("eth_getLogs");
-				else expect(methods.slice(start)).not.toContain("eth_getLogs");
+				const cache = new Map<
+					string,
+					ReturnType<typeof createReceivingMethodAdapters>
+				>();
+				const orderIds =
+					firstAsset === "USDT"
+						? ["order-usdt", "order-eth"]
+						: ["order-eth", "order-usdt"];
+				for (const orderId of orderIds) {
+					const start = methods.length;
+					const ack = vi.fn();
+					const retry = vi.fn();
+					await handlePaymentScan(
+						{
+							body: {
+								kind: "payment.scan",
+								version: 1,
+								receivingMethodId: "asset-eth",
+								orderId,
+							},
+							ack,
+							retry,
+						} as unknown as Parameters<typeof handlePaymentScan>[0],
+						{ DB: db, WEBHOOK_QUEUE: { send: vi.fn() } } as unknown as Env,
+						undefined,
+						cache,
+					);
+					expect(ack).toHaveBeenCalledOnce();
+					expect(retry).not.toHaveBeenCalled();
+					if (orderId === "order-usdt")
+						expect(methods.slice(start)).toContain("eth_getLogs");
+					else expect(methods.slice(start)).not.toContain("eth_getLogs");
+				}
+				expect(cache.size).toBe(2);
+				const orders = await db
+					.prepare(
+						"SELECT id, status, received_amount_units FROM orders ORDER BY id",
+					)
+					.all();
+				expect(orders.results).toEqual([
+					{
+						id: "order-eth",
+						status: paidAsset === "ETH" ? "paid" : "pending",
+						received_amount_units:
+							paidAsset === "ETH" ? "1000000000000000000" : "0",
+					},
+					{
+						id: "order-usdt",
+						status: paidAsset === "USDT" ? "paid" : "pending",
+						received_amount_units: paidAsset === "USDT" ? "1000000" : "0",
+					},
+				]);
+			} finally {
+				await multiAssetRuntime.dispose();
 			}
-			expect(cache.size).toBe(2);
-			const orders = await db
-				.prepare(
-					"SELECT id, status, received_amount_units FROM orders ORDER BY id",
-				)
-				.all();
-			expect(orders.results).toEqual([
-				{
-					id: "order-eth",
-					status: paidAsset === "ETH" ? "paid" : "pending",
-					received_amount_units:
-						paidAsset === "ETH" ? "1000000000000000000" : "0",
-				},
-				{
-					id: "order-usdt",
-					status: paidAsset === "USDT" ? "paid" : "pending",
-					received_amount_units: paidAsset === "USDT" ? "1000000" : "0",
-				},
-			]);
-		} finally {
-			await multiAssetRuntime.dispose();
-		}
-	});
+		},
+	);
 });
 
 async function seed(db: D1Database) {

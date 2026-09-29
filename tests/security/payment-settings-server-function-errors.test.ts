@@ -34,13 +34,14 @@ describe("payment settings Server Function error contract", () => {
 		["receiving_method_not_ready", 409],
 		["exchange_rate_not_found", 404],
 		["fiat_rate_credentials_required", 422],
-	] satisfies Array<
-		[PaymentSettingsErrorCode, number]
-	>)("normalizes %s to HTTP %i", (code, status) => {
-		expect(
-			normalizeServerFunctionError(paymentSettingsError(code), request),
-		).toMatchObject({ code, status });
-	});
+	] satisfies Array<[PaymentSettingsErrorCode, number]>)(
+		"normalizes %s to HTTP %i",
+		(code, status) => {
+			expect(
+				normalizeServerFunctionError(paymentSettingsError(code), request),
+			).toMatchObject({ code, status });
+		},
+	);
 
 	it.each([
 		[

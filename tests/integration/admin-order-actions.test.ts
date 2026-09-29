@@ -178,81 +178,81 @@ describe("admin order operations", () => {
 		).rejects.toMatchObject({ code: "order_not_found", status: 404 });
 	});
 
-	it.each([
-		"cancelled",
-		"refunded",
-	] as const)("rolls back %s, its audit, and its lock when outbox persistence fails", async (nextStatus) => {
-		const id = `atomic-${nextStatus}`;
-		const initialStatus = nextStatus === "cancelled" ? "pending" : "paid";
-		await db
-			.prepare(`INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, received_amount_units, api_key_id, notify_url, expires_at, version, created_at, updated_at)
+	it.each(["cancelled", "refunded"] as const)(
+		"rolls back %s, its audit, and its lock when outbox persistence fails",
+		async (nextStatus) => {
+			const id = `atomic-${nextStatus}`;
+			const initialStatus = nextStatus === "cancelled" ? "pending" : "paid";
+			await db
+				.prepare(`INSERT INTO orders (id, external_order_id, status, amount_minor, currency, currency_decimals, received_amount_units, api_key_id, notify_url, expires_at, version, created_at, updated_at)
 		 VALUES (?, ?, ?, '100', 'USD', 2, '0', 'merchant-key', 'https://merchant.example/notify', 9999999999999, 0, 1, 1)`)
-			.bind(id, id, initialStatus)
-			.run();
-		await db
-			.prepare(
-				"INSERT INTO receiving_method_locks (id, receiving_method_id, asset_id, order_id, expected_amount_units, expires_at, reusable_at, created_at) VALUES (?, 'method', 'asset', ?, '42', 9999999999999, 9999999999999, 1)",
-			)
-			.bind(id, id)
-			.run();
-		const env = { DB: db, WEBHOOK_QUEUE: { send } } as unknown as Env;
-		const execute = () =>
-			nextStatus === "cancelled"
-				? cancelOrderAsAdmin(env, id, context)
-				: recordExternalRefund(
-						env,
-						{
-							orderId: id,
-							reference: "external-refund",
-							note: "Recorded external refund",
-						},
-						context,
-					);
-		await db
-			.prepare(
-				`CREATE TRIGGER reject_admin_outbox BEFORE INSERT ON webhook_deliveries BEGIN SELECT RAISE(FAIL, 'simulated outbox failure'); END`,
-			)
-			.run();
-		try {
-			await expect(execute()).rejects.toThrow("simulated outbox failure");
-			expect(
-				await db
-					.prepare("SELECT status, version FROM orders WHERE id = ?")
-					.bind(id)
-					.first(),
-			).toEqual({ status: initialStatus, version: 0 });
-			expect(
-				await db
-					.prepare(
-						"SELECT released_at FROM receiving_method_locks WHERE order_id = ?",
-					)
-					.bind(id)
-					.first(),
-			).toEqual({ released_at: null });
-			expect(
-				await db
-					.prepare(
-						"SELECT COUNT(*) AS count FROM webhook_events WHERE order_id = ?",
-					)
-					.bind(id)
-					.first(),
-			).toEqual({ count: 0 });
-			expect(
-				await db
-					.prepare(
-						"SELECT COUNT(*) AS count FROM audit_logs WHERE target_id = ?",
-					)
-					.bind(id)
-					.first(),
-			).toEqual({ count: 0 });
-		} finally {
-			await db.prepare("DROP TRIGGER reject_admin_outbox").run();
-		}
-		await expect(execute()).resolves.toMatchObject({
-			changed: true,
-			status: nextStatus,
-		});
-	});
+				.bind(id, id, initialStatus)
+				.run();
+			await db
+				.prepare(
+					"INSERT INTO receiving_method_locks (id, receiving_method_id, asset_id, order_id, expected_amount_units, expires_at, reusable_at, created_at) VALUES (?, 'method', 'asset', ?, '42', 9999999999999, 9999999999999, 1)",
+				)
+				.bind(id, id)
+				.run();
+			const env = { DB: db, WEBHOOK_QUEUE: { send } } as unknown as Env;
+			const execute = () =>
+				nextStatus === "cancelled"
+					? cancelOrderAsAdmin(env, id, context)
+					: recordExternalRefund(
+							env,
+							{
+								orderId: id,
+								reference: "external-refund",
+								note: "Recorded external refund",
+							},
+							context,
+						);
+			await db
+				.prepare(
+					`CREATE TRIGGER reject_admin_outbox BEFORE INSERT ON webhook_deliveries BEGIN SELECT RAISE(FAIL, 'simulated outbox failure'); END`,
+				)
+				.run();
+			try {
+				await expect(execute()).rejects.toThrow("simulated outbox failure");
+				expect(
+					await db
+						.prepare("SELECT status, version FROM orders WHERE id = ?")
+						.bind(id)
+						.first(),
+				).toEqual({ status: initialStatus, version: 0 });
+				expect(
+					await db
+						.prepare(
+							"SELECT released_at FROM receiving_method_locks WHERE order_id = ?",
+						)
+						.bind(id)
+						.first(),
+				).toEqual({ released_at: null });
+				expect(
+					await db
+						.prepare(
+							"SELECT COUNT(*) AS count FROM webhook_events WHERE order_id = ?",
+						)
+						.bind(id)
+						.first(),
+				).toEqual({ count: 0 });
+				expect(
+					await db
+						.prepare(
+							"SELECT COUNT(*) AS count FROM audit_logs WHERE target_id = ?",
+						)
+						.bind(id)
+						.first(),
+				).toEqual({ count: 0 });
+			} finally {
+				await db.prepare("DROP TRIGGER reject_admin_outbox").run();
+			}
+			await expect(execute()).resolves.toMatchObject({
+				changed: true,
+				status: nextStatus,
+			});
+		},
+	);
 });
 
 async function count(db: D1Database, table: string, where: string) {

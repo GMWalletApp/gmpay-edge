@@ -128,9 +128,9 @@ describe("OKX Pay adapter", () => {
 			address: "123456",
 			assetCode: "USDT",
 		});
-		expect((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject(
-			{ "x-simulated-trading": "1" },
-		);
+		expect(
+			(fetchMock.mock.calls[0]?.[1] as RequestInit)?.headers,
+		).toMatchObject({ "x-simulated-trading": "1" });
 	});
 
 	it("paginates funding bills using the official after cursor", async () => {
@@ -188,11 +188,11 @@ describe("OKX Pay adapter", () => {
 		expect(
 			String(fetchMock.mock.calls[1]?.[0]).endsWith("/api/v5/public/time"),
 		).toBe(true);
-		expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject(
-			{
-				"OK-ACCESS-TIMESTAMP": new Date(serverTime).toISOString(),
-			},
-		);
+		expect(
+			(fetchMock.mock.calls[2]?.[1] as RequestInit)?.headers,
+		).toMatchObject({
+			"OK-ACCESS-TIMESTAMP": new Date(serverTime).toISOString(),
+		});
 	});
 
 	it("shares one timeout budget across clock synchronization and retry", async () => {

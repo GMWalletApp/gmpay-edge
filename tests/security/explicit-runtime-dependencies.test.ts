@@ -24,22 +24,24 @@ const explicitCapabilityEntries = [
 ] as const;
 
 describe("explicit Worker runtime dependencies", () => {
-	it.each(
-		orderDomainEntries,
-	)("keeps %s independent from ambient Env", (file) => {
-		const source = readFileSync(resolve(root, file), "utf8");
+	it.each(orderDomainEntries)(
+		"keeps %s independent from ambient Env",
+		(file) => {
+			const source = readFileSync(resolve(root, file), "utf8");
 
-		expect(source).not.toMatch(/#\/server\/db\.server/);
-		expect(source).not.toMatch(/\bget(?:Cloudflare)?Env\s*\(/);
-	});
+			expect(source).not.toMatch(/#\/server\/db\.server/);
+			expect(source).not.toMatch(/\bget(?:Cloudflare)?Env\s*\(/);
+		},
+	);
 
-	it.each(
-		explicitCapabilityEntries,
-	)("does not pass the complete Env through %s", (file) => {
-		const source = readFileSync(resolve(root, file), "utf8");
+	it.each(explicitCapabilityEntries)(
+		"does not pass the complete Env through %s",
+		(file) => {
+			const source = readFileSync(resolve(root, file), "utf8");
 
-		expect(source).not.toMatch(/\b_?env:\s*(?:Partial<)?Env\b/);
-	});
+			expect(source).not.toMatch(/\b_?env:\s*(?:Partial<)?Env\b/);
+		},
+	);
 
 	it("keeps operational decisions authoritative in D1", () => {
 		const source = readFileSync(
