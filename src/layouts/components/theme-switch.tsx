@@ -1,5 +1,5 @@
 import { Check, Monitor, Moon, Sun } from "lucide-react";
-import { type MouseEvent, useEffect } from "react";
+import type { MouseEvent } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "#/components/ui/button";
 import {
@@ -13,17 +13,7 @@ import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
 export function ThemeSwitch() {
-	const { resolvedTheme, theme, setTheme } = useTheme();
-
-	/* Update theme-color meta tag
-	 * when theme is updated */
-	useEffect(() => {
-		const themeColor = resolvedTheme === "dark" ? "#020817" : "#fff";
-		const metaThemeColor = document.querySelector("meta[name='theme-color']");
-		if (metaThemeColor) {
-			metaThemeColor.setAttribute("content", themeColor);
-		}
-	}, [resolvedTheme]);
+	const { theme, setTheme } = useTheme();
 
 	const handleThemeSelect = (
 		nextTheme: Parameters<typeof setTheme>[0],

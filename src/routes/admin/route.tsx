@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { readLayoutPreferences } from "#/context/layout-provider";
 import { getAdminBootstrapFn } from "#/features/auth/server/session";
 import {
 	canAccessAdminPath,
@@ -40,15 +41,16 @@ export const Route = createFileRoute("/admin")({
 		) {
 			throw redirect({ to: "/403" });
 		}
-		return { systemAccess, user };
+		return { systemAccess, user, layout: readLayoutPreferences() };
 	},
 	component: AdminLayoutRoute,
 });
 
 function AdminLayoutRoute() {
-	const { systemAccess, user } = Route.useLoaderData();
+	const { systemAccess, user, layout } = Route.useLoaderData();
 	return (
 		<DashboardLayout
+			layout={layout}
 			navigation={systemSidebarData(systemAccess.permissions)}
 			permissions={systemAccess.permissions}
 			user={user}

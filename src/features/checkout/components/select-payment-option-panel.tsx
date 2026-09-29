@@ -1,5 +1,5 @@
 import { ArrowLeft, Building2, Link2, WalletCards } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { AssetLabel, NetworkLabel } from "#/components/crypto-icons/labels";
 import { Button } from "#/components/ui/button";
 import {
@@ -32,16 +32,16 @@ export function SelectPaymentOptionPanel({
 	options: Option[];
 	unavailableReason?: "rate_unavailable" | "payment_method_unavailable" | null;
 }) {
-	const kinds = useMemo(
-		() => [...new Set(options.map((option) => option.railKind))],
-		[options],
-	);
-	const [kind, setKind] = useState<RailKind | "">("");
-	const [receivingMethodId, setReceivingMethodId] = useState("");
-	const [paymentMethodId, setPaymentMethodId] = useState("");
-	useEffect(() => {
-		if (!kind && kinds[0]) setKind(kinds[0]);
-	}, [kind, kinds]);
+	// Selections are kept as the payer's choices; the effective values fall
+	// back to the first available entry whenever a choice is absent or no
+	// longer offered, so the panel needs no effect to re-synchronize.
+	const [selectedKind, setSelectedKind] = useState<RailKind | "">("");
+	const [selectedReceivingMethodId, setSelectedReceivingMethodId] =
+		useState("");
+	const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState("");
+
+	const kinds = [...new Set(options.map((option) => option.railKind))];
+	const kind = kinds.find((value) => value === selectedKind) ?? kinds[0] ?? "";
 	const kindOptions = options.filter((option) => option.railKind === kind);
 	const receivingMethods = Array.from(
 		new Map(
@@ -56,17 +56,19 @@ export function SelectPaymentOptionPanel({
 			]),
 		).values(),
 	);
-	useEffect(() => {
-		if (!receivingMethods.some((method) => method.id === receivingMethodId))
-			setReceivingMethodId(receivingMethods[0]?.id ?? "");
-	}, [receivingMethodId, receivingMethods]);
+	const receivingMethodId = receivingMethods.some(
+		(method) => method.id === selectedReceivingMethodId,
+	)
+		? selectedReceivingMethodId
+		: (receivingMethods[0]?.id ?? "");
 	const assets = kindOptions.filter(
 		(option) => option.receivingMethodId === receivingMethodId,
 	);
-	useEffect(() => {
-		if (!assets.some((asset) => asset.paymentMethodId === paymentMethodId))
-			setPaymentMethodId(assets[0]?.paymentMethodId ?? "");
-	}, [assets, paymentMethodId]);
+	const paymentMethodId = assets.some(
+		(asset) => asset.paymentMethodId === selectedPaymentMethodId,
+	)
+		? selectedPaymentMethodId
+		: (assets[0]?.paymentMethodId ?? "");
 	const selected = assets.find(
 		(option) => option.paymentMethodId === paymentMethodId,
 	);
@@ -111,9 +113,9 @@ export function SelectPaymentOptionPanel({
 									className="h-auto min-h-16 flex-col gap-1 rounded-xl px-2 py-2"
 									key={value}
 									onClick={() => {
-										setKind(value);
-										setReceivingMethodId("");
-										setPaymentMethodId("");
+										setSelectedKind(value);
+										setSelectedReceivingMethodId("");
+										setSelectedPaymentMethodId("");
 									}}
 									variant={kind === value ? "default" : "outline"}
 								>
@@ -131,8 +133,8 @@ export function SelectPaymentOptionPanel({
 							<Select
 								disabled={!receivingMethods.length}
 								onValueChange={(value) => {
-									setReceivingMethodId(value);
-									setPaymentMethodId("");
+									setSelectedReceivingMethodId(value);
+									setSelectedPaymentMethodId("");
 								}}
 								value={receivingMethodId}
 							>
@@ -157,7 +159,7 @@ export function SelectPaymentOptionPanel({
 							</p>
 							<Select
 								disabled={!assets.length}
-								onValueChange={setPaymentMethodId}
+								onValueChange={setSelectedPaymentMethodId}
 								value={paymentMethodId}
 							>
 								<SelectTrigger className="h-12.5 w-full rounded-xl bg-card">

@@ -1,5 +1,3 @@
-"use client";
-
 import { Link } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -43,13 +41,13 @@ export function PublicHeader() {
 				<div className="ms-auto hidden items-center md:flex">
 					<nav className="flex items-center gap-1 text-muted-foreground text-sm">
 						{navigation.map(([label, href]) => (
-							<a
+							<Link
 								className="rounded-lg px-3 py-2 transition-colors hover:bg-accent hover:text-foreground"
-								href={href}
 								key={href}
+								to={href}
 							>
 								{label}
-							</a>
+							</Link>
 						))}
 					</nav>
 					<div className="ms-5 flex items-center gap-1">
@@ -93,12 +91,12 @@ function MobileNavigation() {
 				<nav className="grid gap-1 px-4 pt-4">
 					{navigation.map(([label, href]) => (
 						<SheetClose asChild key={href}>
-							<a
+							<Link
 								className="rounded-xl px-4 py-3 font-medium transition-colors hover:bg-accent"
-								href={href}
+								to={href}
 							>
 								{label}
-							</a>
+							</Link>
 						</SheetClose>
 					))}
 					<SheetClose asChild>

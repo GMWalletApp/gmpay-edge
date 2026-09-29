@@ -9,7 +9,7 @@ import { DateTimePicker, TimePicker } from "../base/fields/date-time-picker";
 import { Input, Password, Slider, Textarea } from "../base/fields/input";
 import { Radio, Rate, Segmented } from "../base/fields/radio";
 import { Select } from "../base/fields/select";
-import { ProDrawer, ProModal } from "../overlay";
+import { ProModal } from "../overlay";
 
 type OverlayFormSubmitter =
 	| ReactNode
@@ -276,73 +276,6 @@ export function ModalForm({
 				)}
 			</form>
 		</ProModal>
-	);
-}
-
-export function DrawerForm({
-	trigger,
-	title,
-	description,
-	children,
-	schema,
-	initialValues,
-	open: controlledOpen,
-	onOpenChange: controlledOnOpenChange,
-	onFinish,
-	onFinishFailed,
-	onCancel,
-	submitter,
-	className,
-	fieldsClassName,
-	side = "right",
-}: OverlayFormProps & { side?: "top" | "right" | "bottom" | "left" }) {
-	const { formRef, open, setOpen, loading, handleSubmit, handleCancel } =
-		useOverlayForm({
-			open: controlledOpen,
-			onOpenChange: controlledOnOpenChange,
-			onFinish,
-			onFinishFailed,
-			onCancel,
-		});
-
-	return (
-		<ProDrawer
-			trigger={trigger}
-			title={title}
-			description={description}
-			open={open}
-			onOpenChange={setOpen}
-			side={side}
-		>
-			<form
-				ref={formRef}
-				onSubmit={async (event) => {
-					event.preventDefault();
-					await handleSubmit();
-				}}
-				className={cn("flex flex-1 flex-col overflow-hidden", className)}
-			>
-				<div className="flex-1 overflow-y-auto px-4 py-2">
-					{schema && (
-						<ProSchemaFields
-							schema={schema}
-							initialValues={initialValues}
-							className={fieldsClassName}
-						/>
-					)}
-					{children}
-				</div>
-				{submitter !== false && (
-					<OverlayFormFooter
-						slot="drawer-form-footer"
-						submitter={submitter}
-						submitting={loading}
-						cancel={handleCancel}
-						className="mt-auto flex-col p-4"
-					/>
-				)}
-			</form>
-		</ProDrawer>
 	);
 }
 

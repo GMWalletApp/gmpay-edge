@@ -38,7 +38,6 @@ import { Route as authForgotPasswordRouteImport } from './routes/(auth)/forgot-p
 import { Route as AdminWebhooksRouteRouteImport } from './routes/admin/webhooks/route'
 import { Route as AdminTelegramRouteRouteImport } from './routes/admin/telegram/route'
 import { Route as AdminSettingsRouteRouteImport } from './routes/admin/settings/route'
-import { Route as AdminReceivingMethodsRouteRouteImport } from './routes/admin/receiving-methods/route'
 import { Route as AdminPaymentSettingsRouteRouteImport } from './routes/admin/payment-settings/route'
 import { Route as AdminOperationsRouteRouteImport } from './routes/admin/operations/route'
 import { Route as AdminAccessRouteRouteImport } from './routes/admin/access/route'
@@ -228,12 +227,6 @@ const AdminSettingsRouteRoute = AdminSettingsRouteRouteImport.update({
   path: '/settings',
   getParentRoute: () => AdminRouteRoute,
 } as any)
-const AdminReceivingMethodsRouteRoute =
-  AdminReceivingMethodsRouteRouteImport.update({
-    id: '/receiving-methods',
-    path: '/receiving-methods',
-    getParentRoute: () => AdminRouteRoute,
-  } as any)
 const AdminPaymentSettingsRouteRoute =
   AdminPaymentSettingsRouteRouteImport.update({
     id: '/payment-settings',
@@ -267,9 +260,9 @@ const AdminSettingsIndexRoute = AdminSettingsIndexRouteImport.update({
 } as any)
 const AdminReceivingMethodsIndexRoute =
   AdminReceivingMethodsIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AdminReceivingMethodsRouteRoute,
+    id: '/receiving-methods/',
+    path: '/receiving-methods/',
+    getParentRoute: () => AdminRouteRoute,
   } as any)
 const AdminPaymentSettingsIndexRoute =
   AdminPaymentSettingsIndexRouteImport.update({
@@ -487,7 +480,6 @@ export interface FileRoutesByFullPath {
   '/admin/access': typeof AdminAccessRouteRouteWithChildren
   '/admin/operations': typeof AdminOperationsRouteRouteWithChildren
   '/admin/payment-settings': typeof AdminPaymentSettingsRouteRouteWithChildren
-  '/admin/receiving-methods': typeof AdminReceivingMethodsRouteRouteWithChildren
   '/admin/settings': typeof AdminSettingsRouteRouteWithChildren
   '/admin/telegram': typeof AdminTelegramRouteRouteWithChildren
   '/admin/webhooks': typeof AdminWebhooksRouteRouteWithChildren
@@ -631,7 +623,6 @@ export interface FileRoutesById {
   '/admin/access': typeof AdminAccessRouteRouteWithChildren
   '/admin/operations': typeof AdminOperationsRouteRouteWithChildren
   '/admin/payment-settings': typeof AdminPaymentSettingsRouteRouteWithChildren
-  '/admin/receiving-methods': typeof AdminReceivingMethodsRouteRouteWithChildren
   '/admin/settings': typeof AdminSettingsRouteRouteWithChildren
   '/admin/telegram': typeof AdminTelegramRouteRouteWithChildren
   '/admin/webhooks': typeof AdminWebhooksRouteRouteWithChildren
@@ -708,7 +699,6 @@ export interface FileRouteTypes {
     | '/admin/access'
     | '/admin/operations'
     | '/admin/payment-settings'
-    | '/admin/receiving-methods'
     | '/admin/settings'
     | '/admin/telegram'
     | '/admin/webhooks'
@@ -851,7 +841,6 @@ export interface FileRouteTypes {
     | '/admin/access'
     | '/admin/operations'
     | '/admin/payment-settings'
-    | '/admin/receiving-methods'
     | '/admin/settings'
     | '/admin/telegram'
     | '/admin/webhooks'
@@ -1152,13 +1141,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminSettingsRouteRouteImport
       parentRoute: typeof AdminRouteRoute
     }
-    '/admin/receiving-methods': {
-      id: '/admin/receiving-methods'
-      path: '/receiving-methods'
-      fullPath: '/admin/receiving-methods'
-      preLoaderRoute: typeof AdminReceivingMethodsRouteRouteImport
-      parentRoute: typeof AdminRouteRoute
-    }
     '/admin/payment-settings': {
       id: '/admin/payment-settings'
       path: '/payment-settings'
@@ -1203,10 +1185,10 @@ declare module '@tanstack/react-router' {
     }
     '/admin/receiving-methods/': {
       id: '/admin/receiving-methods/'
-      path: '/'
+      path: '/receiving-methods'
       fullPath: '/admin/receiving-methods/'
       preLoaderRoute: typeof AdminReceivingMethodsIndexRouteImport
-      parentRoute: typeof AdminReceivingMethodsRouteRoute
+      parentRoute: typeof AdminRouteRoute
     }
     '/admin/payment-settings/': {
       id: '/admin/payment-settings/'
@@ -1583,20 +1565,6 @@ const AdminPaymentSettingsRouteRouteWithChildren =
     AdminPaymentSettingsRouteRouteChildren,
   )
 
-interface AdminReceivingMethodsRouteRouteChildren {
-  AdminReceivingMethodsIndexRoute: typeof AdminReceivingMethodsIndexRoute
-}
-
-const AdminReceivingMethodsRouteRouteChildren: AdminReceivingMethodsRouteRouteChildren =
-  {
-    AdminReceivingMethodsIndexRoute: AdminReceivingMethodsIndexRoute,
-  }
-
-const AdminReceivingMethodsRouteRouteWithChildren =
-  AdminReceivingMethodsRouteRoute._addFileChildren(
-    AdminReceivingMethodsRouteRouteChildren,
-  )
-
 interface AdminSettingsRouteRouteChildren {
   AdminSettingsAccessRoute: typeof AdminSettingsAccessRoute
   AdminSettingsAuthRoute: typeof AdminSettingsAuthRoute
@@ -1660,7 +1628,6 @@ interface AdminRouteRouteChildren {
   AdminAccessRouteRoute: typeof AdminAccessRouteRouteWithChildren
   AdminOperationsRouteRoute: typeof AdminOperationsRouteRouteWithChildren
   AdminPaymentSettingsRouteRoute: typeof AdminPaymentSettingsRouteRouteWithChildren
-  AdminReceivingMethodsRouteRoute: typeof AdminReceivingMethodsRouteRouteWithChildren
   AdminSettingsRouteRoute: typeof AdminSettingsRouteRouteWithChildren
   AdminTelegramRouteRoute: typeof AdminTelegramRouteRouteWithChildren
   AdminWebhooksRouteRoute: typeof AdminWebhooksRouteRouteWithChildren
@@ -1670,13 +1637,13 @@ interface AdminRouteRouteChildren {
   AdminPaymentReviewsRoute: typeof AdminPaymentReviewsRoute
   AdminPaymentsRoute: typeof AdminPaymentsRoute
   AdminIndexRoute: typeof AdminIndexRoute
+  AdminReceivingMethodsIndexRoute: typeof AdminReceivingMethodsIndexRoute
 }
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminAccessRouteRoute: AdminAccessRouteRouteWithChildren,
   AdminOperationsRouteRoute: AdminOperationsRouteRouteWithChildren,
   AdminPaymentSettingsRouteRoute: AdminPaymentSettingsRouteRouteWithChildren,
-  AdminReceivingMethodsRouteRoute: AdminReceivingMethodsRouteRouteWithChildren,
   AdminSettingsRouteRoute: AdminSettingsRouteRouteWithChildren,
   AdminTelegramRouteRoute: AdminTelegramRouteRouteWithChildren,
   AdminWebhooksRouteRoute: AdminWebhooksRouteRouteWithChildren,
@@ -1686,6 +1653,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminPaymentReviewsRoute: AdminPaymentReviewsRoute,
   AdminPaymentsRoute: AdminPaymentsRoute,
   AdminIndexRoute: AdminIndexRoute,
+  AdminReceivingMethodsIndexRoute: AdminReceivingMethodsIndexRoute,
 }
 
 const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(

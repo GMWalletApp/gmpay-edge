@@ -1,6 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { useCallback } from "react";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -44,13 +43,10 @@ export function CommandMenu() {
 	const { navigation } = useNavigation();
 	const groups = commandMenuGroups(navigation);
 
-	const runCommand = useCallback(
-		(command: () => unknown) => {
-			setOpen(false);
-			command();
-		},
-		[setOpen],
-	);
+	const runCommand = (command: () => unknown) => {
+		setOpen(false);
+		command();
+	};
 
 	return (
 		<CommandDialog modal open={open} onOpenChange={setOpen}>

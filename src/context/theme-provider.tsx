@@ -93,6 +93,10 @@ function applyTheme(theme: Theme, resolvedTheme: ResolvedTheme) {
 	}
 
 	root.style.colorScheme = resolvedTheme;
+
+	const background = getComputedStyle(root).getPropertyValue("--background");
+	for (const meta of document.querySelectorAll('meta[name="theme-color"]'))
+		meta.setAttribute("content", background.trim());
 }
 
 function applyFont(font: Font) {
@@ -101,7 +105,6 @@ function applyFont(font: Font) {
 	root.setAttribute("data-font", font);
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = () => {
 	const context = useContext(ThemeContext);
 

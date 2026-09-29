@@ -1,5 +1,3 @@
-"use client";
-
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { Popover as PopoverPrimitive } from "radix-ui";

@@ -76,10 +76,6 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 					name: "keywords",
 					content: m.common_seo_keywords(),
 				},
-				{
-					name: "theme-color",
-					content: "#FFFFFF",
-				},
 			],
 			links: [
 				{
@@ -116,6 +112,19 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 		<html lang={locale} suppressHydrationWarning>
 			<head>
 				<script suppressHydrationWarning>{THEME_INIT_SCRIPT}</script>
+				{/* Route head() keeps one meta per name, so both scheme-specific
+				    theme colors (the --background token of global.css) live here;
+				    ThemeProvider re-syncs them to the resolved theme after hydration. */}
+				<meta
+					content="#ffffff"
+					media="(prefers-color-scheme: light)"
+					name="theme-color"
+				/>
+				<meta
+					content="#09090b"
+					media="(prefers-color-scheme: dark)"
+					name="theme-color"
+				/>
 				<HeadContent />
 			</head>
 			<body className="antialiased wrap-anywhere">

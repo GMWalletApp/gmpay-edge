@@ -1,7 +1,5 @@
-"use client";
-
 import { cva } from "class-variance-authority";
-import { File, Upload as UploadIcon, X } from "lucide-react";
+import { Upload as UploadIcon } from "lucide-react";
 import {
 	createContext,
 	type ReactNode,
@@ -269,36 +267,5 @@ function renderUploadTriggerContent({
 			<UploadIcon className="size-6" />
 			<span>{hasFiles ? fileNames : m.pro_field_clickOrDragUpload()}</span>
 		</>
-	);
-}
-
-export function UploadFileList({ className }: { className?: string }) {
-	const upload = useUploadContext();
-
-	if (!upload.files.length) return null;
-
-	return (
-		<ul className={cn("space-y-1", className)}>
-			{upload.files.map((file) => (
-				<li
-					key={file.uid}
-					className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
-				>
-					<File className="size-4 shrink-0 text-muted-foreground" />
-					<span className="flex-1 truncate">{file.name}</span>
-					{!upload.disabled && (
-						<ProButton
-							variant="ghost"
-							size="icon-xs"
-							aria-label={m.pro_field_removeFile({ name: file.name })}
-							onClick={() => upload.removeFile(file.uid)}
-							className="shrink-0"
-						>
-							<X />
-						</ProButton>
-					)}
-				</li>
-			))}
-		</ul>
 	);
 }

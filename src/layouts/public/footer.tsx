@@ -11,10 +11,7 @@ export function PublicFooter() {
 		[m.public_footer_status(), "/status"],
 		[m.public_sign_in(), "/sign-in"],
 	] as const;
-	const developerLinks = [
-		[m.public_footer_api_reference(), "/docs"],
-		[m.public_footer_openapi(), "/openapi.yaml"],
-	] as const;
+	const developerLinks = [[m.public_footer_api_reference(), "/docs"]] as const;
 	return (
 		<footer className="w-full border-t py-14 sm:py-16">
 			<div className="container px-4">
@@ -42,7 +39,17 @@ export function PublicFooter() {
 					<FooterColumn
 						links={developerLinks}
 						title={m.public_footer_developers()}
-					/>
+					>
+						<li>
+							<a
+								className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+								href="/openapi.yaml"
+							>
+								{m.public_footer_openapi()}
+								<ArrowUpRight className="size-3" />
+							</a>
+						</li>
+					</FooterColumn>
 				</div>
 				<div className="mt-12 flex flex-col gap-2 text-muted-foreground text-xs sm:flex-row sm:items-center sm:justify-between">
 					<p>
@@ -61,9 +68,11 @@ export function PublicFooter() {
 function FooterColumn({
 	title,
 	links,
+	children,
 }: {
 	title: string;
 	links: readonly (readonly [string, string])[];
+	children?: React.ReactNode;
 }) {
 	return (
 		<nav aria-label={title}>
@@ -71,17 +80,15 @@ function FooterColumn({
 			<ul className="mt-5 grid gap-3.5 text-muted-foreground text-sm">
 				{links.map(([label, href]) => (
 					<li key={href}>
-						<a
+						<Link
 							className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-							href={href}
+							to={href}
 						>
 							{label}
-							{href.endsWith(".yaml") ? (
-								<ArrowUpRight className="size-3" />
-							) : null}
-						</a>
+						</Link>
 					</li>
 				))}
+				{children}
 			</ul>
 		</nav>
 	);

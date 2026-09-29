@@ -1,5 +1,3 @@
-"use client";
-
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { RgbaStringColorPicker } from "react-colorful";
 import { Button } from "#/components/ui/button";

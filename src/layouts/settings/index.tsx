@@ -1,8 +1,7 @@
-"use client";
-
+import { Link, type LinkProps } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { Button } from "#/components/ui/button";
+import { buttonVariants } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import {
 	Select,
@@ -14,6 +13,7 @@ import {
 import { Separator } from "#/components/ui/separator";
 import { Main } from "#/layouts/components/main";
 import { PageHeader } from "#/layouts/components/page-header";
+import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
 export type SettingsLayoutItem<TValue extends string> = {
@@ -21,6 +21,7 @@ export type SettingsLayoutItem<TValue extends string> = {
 	title: string;
 	description?: string;
 	icon: LucideIcon;
+	url: LinkProps["to"] | (string & {});
 };
 
 export function SettingsLayout<TValue extends string>({
@@ -77,11 +78,15 @@ export function SettingsLayout<TValue extends string>({
 							aria-label={m.common_settings_sections({ title })}
 						>
 							{items.map((item) => (
-								<Button
-									className={`justify-start hover:bg-accent hover:underline ${value === item.value ? "bg-muted" : ""}`}
+								<Link
+									activeOptions={{ exact: true, includeSearch: false }}
+									activeProps={{ className: "bg-muted" }}
+									className={cn(
+										buttonVariants({ variant: "ghost" }),
+										"justify-start hover:bg-accent hover:underline",
+									)}
 									key={item.value}
-									onClick={() => onValueChange(item.value)}
-									variant="ghost"
+									to={item.url}
 								>
 									<item.icon className="me-2 size-[18px] shrink-0" />
 									<span className="min-w-0 text-start">
@@ -92,7 +97,7 @@ export function SettingsLayout<TValue extends string>({
 											</span>
 										) : null}
 									</span>
-								</Button>
+								</Link>
 							))}
 						</nav>
 					</ScrollArea>

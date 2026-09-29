@@ -1,5 +1,3 @@
-"use client";
-
 import { cva, type VariantProps } from "class-variance-authority";
 import { Check, LoaderCircle, X } from "lucide-react";
 import { Slot, Tooltip as TooltipPrimitive } from "radix-ui";

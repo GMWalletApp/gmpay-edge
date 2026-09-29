@@ -1,7 +1,10 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { NavigationModuleId } from "#/layouts/components/data/sidebar-data";
-import { visibleModuleEntries } from "#/layouts/components/data/sidebar-data";
+import {
+	normalizePathname,
+	visibleModuleEntries,
+} from "#/layouts/components/data/sidebar-data";
 import { useNavigation } from "#/layouts/components/navigation-context";
 import { SettingsLayout } from "#/layouts/settings";
 
@@ -19,16 +22,15 @@ export function ModuleNavigation({
 	const navigate = useNavigate();
 	const { permissions } = useNavigation();
 	const pathname = useRouterState({
-		select: (state) => state.location.pathname.replace(/\/$/, ""),
+		select: (state) => normalizePathname(state.location.pathname),
 	});
-	const entries = visibleModuleEntries(moduleId, permissions);
-	const items = entries.map((item) => ({
+	const items = visibleModuleEntries(moduleId, permissions).map((item) => ({
 		value: item.id,
 		title: item.title(),
 		icon: item.icon,
-		path: item.url,
+		url: item.url,
 	}));
-	const active = items.find((item) => item.path === pathname) ?? items[0];
+	const active = items.find((item) => item.url === pathname) ?? items[0];
 	return (
 		<SettingsLayout
 			title={title}
@@ -37,7 +39,7 @@ export function ModuleNavigation({
 			value={active?.value ?? ""}
 			onValueChange={(value) => {
 				const target = items.find((item) => item.value === value);
-				if (target) navigate({ to: target.path });
+				if (target) navigate({ to: target.url });
 			}}
 		>
 			{children}

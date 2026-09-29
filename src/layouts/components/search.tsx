@@ -1,8 +1,9 @@
 import { SearchIcon } from "lucide-react";
+import { useSyncExternalStore } from "react";
 import { Button } from "#/components/ui/button";
-import { useSearch } from "@/context/search-provider";
-import { cn } from "@/lib/utils";
-import { m } from "@/paraglide/messages";
+import { useSearch } from "#/context/search-provider";
+import { cn } from "#/lib/utils";
+import { m } from "#/paraglide/messages";
 
 export function Search({
 	className = "",
@@ -10,6 +11,7 @@ export function Search({
 	...props
 }: React.ComponentProps<"button"> & { placeholder?: string }) {
 	const { setOpen } = useSearch();
+	const apple = useApplePlatform();
 	const searchPlaceholder = placeholder ?? m.common_search();
 	return (
 		<Button
@@ -19,7 +21,7 @@ export function Search({
 				"group relative h-8 w-full flex-1 justify-start rounded-md bg-muted/25 text-sm font-normal text-muted-foreground shadow-none hover:bg-accent sm:w-40 sm:pe-12 md:flex-none lg:w-52 xl:w-64",
 				className,
 			)}
-			aria-keyshortcuts="Meta+K Control+K"
+			aria-keyshortcuts={apple ? "Meta+K" : "Control+K"}
 			onClick={() => setOpen(true)}
 		>
 			<SearchIcon
@@ -29,8 +31,19 @@ export function Search({
 			/>
 			<span className="ms-4">{searchPlaceholder}</span>
 			<kbd className="pointer-events-none absolute inset-e-[0.3rem] top-[0.3rem] hidden h-5 items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 select-none group-hover:bg-accent sm:flex">
-				<span className="text-xs">⌘</span>K
+				{apple ? <span className="text-xs">⌘</span> : "Ctrl"}K
 			</kbd>
 		</Button>
+	);
+}
+
+const subscribeNever = () => () => {};
+
+/** The server cannot know the visitor's platform; hydration keeps the neutral hint until the browser answers. */
+function useApplePlatform() {
+	return useSyncExternalStore(
+		subscribeNever,
+		() => /Mac|iPhone|iPad|iPod/.test(navigator.userAgent),
+		() => false,
 	);
 }

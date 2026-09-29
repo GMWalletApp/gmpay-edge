@@ -160,6 +160,7 @@ export function PaymentDetailsPanel({
 								fgColor="#111111"
 								level="M"
 								size={120}
+								title={m.checkout_qr_title()}
 								value={qrValue}
 							/>
 						) : (

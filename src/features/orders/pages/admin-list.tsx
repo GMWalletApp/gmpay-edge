@@ -1,5 +1,3 @@
-"use client";
-
 import { useMutation } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -12,7 +10,7 @@ import {
 	SlidersHorizontal,
 	Undo2,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AssetLabel, NetworkLabel } from "#/components/crypto-icons/labels";
 import { ProButton } from "#/components/pro/base/button";
@@ -46,7 +44,7 @@ import { Main } from "#/layouts/components/main";
 import { useNavigation } from "#/layouts/components/navigation-context";
 import { PageHeader } from "#/layouts/components/page-header";
 import { fiatCurrencyOptions } from "#/lib/fiat-currencies";
-import { formatDateTime } from "#/lib/format";
+import { formatDateTime, formatDecimalAmount } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { useVisiblePolling } from "#/lib/use-visible-polling";
 import { m } from "#/paraglide/messages";
@@ -157,184 +155,182 @@ export function OrdersPage() {
 		onSuccess: () => toast.success(m.orders_notification_queued()),
 		onError: showError,
 	});
-	const columns = useMemo<ColumnDef<OrderRecord>[]>(
-		() => [
-			{
-				accessorKey: "externalOrderId",
-				header: m.orders_order(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<code className="block text-xs">{row.original.id}</code>
-						<span className="text-muted-foreground text-xs">
-							{row.original.externalOrderId}
-						</span>
-					</div>
+	const columns: ColumnDef<OrderRecord>[] = [
+		{
+			accessorKey: "externalOrderId",
+			header: m.orders_order(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<code className="block text-xs">{row.original.id}</code>
+					<span className="text-muted-foreground text-xs">
+						{row.original.externalOrderId}
+					</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: m.common_status(),
+			cell: ({ row }) => <StatusBadge value={row.original.status} />,
+		},
+		{
+			id: "orderAmount",
+			header: m.orders_order_amount(),
+			cell: ({ row }) =>
+				`${formatDecimalAmount(row.original.amount)} ${row.original.currency}`,
+		},
+		{
+			id: "paymentType",
+			header: m.orders_receiving_type(),
+			cell: ({ row }) =>
+				row.original.railKind ? (
+					<Badge variant="outline">
+						{paymentKindLabel(row.original.railKind)}
+					</Badge>
+				) : (
+					<span className="text-muted-foreground">—</span>
 				),
-			},
-			{
-				accessorKey: "status",
-				header: m.common_status(),
-				cell: ({ row }) => <StatusBadge value={row.original.status} />,
-			},
-			{
-				id: "orderAmount",
-				header: m.orders_order_amount(),
-				cell: ({ row }) => `${row.original.amount} ${row.original.currency}`,
-			},
-			{
-				id: "paymentType",
-				header: m.orders_receiving_type(),
-				cell: ({ row }) =>
-					row.original.railKind ? (
-						<Badge variant="outline">
-							{paymentKindLabel(row.original.railKind)}
-						</Badge>
-					) : (
-						<span className="text-muted-foreground">—</span>
-					),
-			},
-			{
-				id: "payment",
-				header: m.orders_receiving_information(),
-				cell: ({ row }) => {
-					if (!row.original.assetCode)
-						return (
-							<span className="text-muted-foreground">
-								{m.orders_payment_method_pending()}
-							</span>
-						);
+		},
+		{
+			id: "payment",
+			header: m.orders_receiving_information(),
+			cell: ({ row }) => {
+				if (!row.original.assetCode)
 					return (
-						<div className="grid gap-1.5">
-							<div className="flex flex-wrap items-center gap-1.5">
-								<NetworkLabel
-									displayName={row.original.networkName}
-									network={row.original.network}
-								/>
-							</div>
-							<AssetLabel
-								label={`${row.original.paymentAmount} ${row.original.assetCode}`}
+						<span className="text-muted-foreground">
+							{m.orders_payment_method_pending()}
+						</span>
+					);
+				return (
+					<div className="grid gap-1.5">
+						<div className="flex flex-wrap items-center gap-1.5">
+							<NetworkLabel
+								displayName={row.original.networkName}
 								network={row.original.network}
-								symbol={row.original.assetCode}
 							/>
 						</div>
-					);
-				},
+						<AssetLabel
+							label={`${row.original.paymentAmount} ${row.original.assetCode}`}
+							network={row.original.network}
+							symbol={row.original.assetCode}
+						/>
+					</div>
+				);
 			},
-			{
-				accessorKey: "createdAt",
-				header: m.common_created(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => {
-					const active = ["pending", "confirming", "partially_paid"].includes(
-						row.original.status,
-					);
-					const refundable = ["paid", "overpaid"].includes(row.original.status);
-					if (!(development || active || refundable || row.original.notifyUrl))
-						return null;
-					return (
-						<div className="flex justify-end">
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<ProButton
-										size="icon-sm"
-										variant="ghost"
-										tooltip={m.common_actions()}
+		},
+		{
+			accessorKey: "createdAt",
+			header: m.common_created(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => {
+				const active = ["pending", "confirming", "partially_paid"].includes(
+					row.original.status,
+				);
+				const refundable = ["paid", "overpaid"].includes(row.original.status);
+				if (!(development || active || refundable || row.original.notifyUrl))
+					return null;
+				return (
+					<div className="flex justify-end">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<ProButton
+									size="icon-sm"
+									variant="ghost"
+									tooltip={m.common_actions()}
+								>
+									<MoreHorizontal />
+								</ProButton>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								{development ? (
+									<>
+										<DropdownMenuItem
+											onClick={() =>
+												window.open(`/checkout/${row.original.id}`, "_blank")
+											}
+										>
+											<ExternalLink />
+											{m.common_preview()}
+										</DropdownMenuItem>
+										<DropdownMenuItem
+											onClick={() => setSimulatingOrder(row.original)}
+										>
+											<SlidersHorizontal />
+											{m.orders_simulate_status()}
+										</DropdownMenuItem>
+									</>
+								) : null}
+								{row.original.notifyUrl ? (
+									<DropdownMenuItem
+										disabled={resendNotification.isPending}
+										onClick={() =>
+											resendNotification.mutate({
+												data: { orderId: row.original.id },
+											})
+										}
 									>
-										<MoreHorizontal />
-									</ProButton>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="end">
-									{development ? (
-										<>
-											<DropdownMenuItem
-												onClick={() =>
-													window.open(`/checkout/${row.original.id}`, "_blank")
-												}
-											>
-												<ExternalLink />
-												{m.common_preview()}
-											</DropdownMenuItem>
-											<DropdownMenuItem
-												onClick={() => setSimulatingOrder(row.original)}
-											>
-												<SlidersHorizontal />
-												{m.orders_simulate_status()}
-											</DropdownMenuItem>
-										</>
-									) : null}
-									{row.original.notifyUrl ? (
-										<DropdownMenuItem
-											disabled={resendNotification.isPending}
-											onClick={() =>
-												resendNotification.mutate({
-													data: { orderId: row.original.id },
-												})
+										<Send />
+										{m.orders_resend_notification()}
+									</DropdownMenuItem>
+								) : null}
+								{active && (
+									<DropdownMenuItem
+										disabled={checkPayment.isPending}
+										onClick={() =>
+											checkPayment.mutate({
+												data: { orderId: row.original.id },
+											})
+										}
+									>
+										<RefreshCw />
+										{m.orders_check_payment()}
+									</DropdownMenuItem>
+								)}
+								{active && row.original.adapter === "mock" && (
+									<DropdownMenuItem
+										disabled={simulate.isPending}
+										onClick={() =>
+											simulate.mutate({ data: { orderId: row.original.id } })
+										}
+									>
+										<Play />
+										{m.orders_simulate_payment()}
+									</DropdownMenuItem>
+								)}
+								{row.original.status === "pending" && (
+									<DropdownMenuItem
+										variant="destructive"
+										disabled={cancel.isPending}
+										onClick={() => {
+											if (window.confirm(m.orders_cancel_confirmation())) {
+												cancel.mutate({ data: { orderId: row.original.id } });
 											}
-										>
-											<Send />
-											{m.orders_resend_notification()}
-										</DropdownMenuItem>
-									) : null}
-									{active && (
-										<DropdownMenuItem
-											disabled={checkPayment.isPending}
-											onClick={() =>
-												checkPayment.mutate({
-													data: { orderId: row.original.id },
-												})
-											}
-										>
-											<RefreshCw />
-											{m.orders_check_payment()}
-										</DropdownMenuItem>
-									)}
-									{active && row.original.adapter === "mock" && (
-										<DropdownMenuItem
-											disabled={simulate.isPending}
-											onClick={() =>
-												simulate.mutate({ data: { orderId: row.original.id } })
-											}
-										>
-											<Play />
-											{m.orders_simulate_payment()}
-										</DropdownMenuItem>
-									)}
-									{row.original.status === "pending" && (
-										<DropdownMenuItem
-											variant="destructive"
-											disabled={cancel.isPending}
-											onClick={() => {
-												if (window.confirm(m.orders_cancel_confirmation())) {
-													cancel.mutate({ data: { orderId: row.original.id } });
-												}
-											}}
-										>
-											<Ban />
-											{m.orders_cancel_order()}
-										</DropdownMenuItem>
-									)}
-									{refundable && (
-										<DropdownMenuItem
-											onClick={() => setRefundingOrder(row.original)}
-										>
-											<Undo2 />
-											{m.orders_record_refund()}
-										</DropdownMenuItem>
-									)}
-								</DropdownMenuContent>
-							</DropdownMenu>
-						</div>
-					);
-				},
+										}}
+									>
+										<Ban />
+										{m.orders_cancel_order()}
+									</DropdownMenuItem>
+								)}
+								{refundable && (
+									<DropdownMenuItem
+										onClick={() => setRefundingOrder(row.original)}
+									>
+										<Undo2 />
+										{m.orders_record_refund()}
+									</DropdownMenuItem>
+								)}
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</div>
+				);
 			},
-		],
-		[simulate, checkPayment, cancel, resendNotification],
-	);
+		},
+	];
 	return (
 		<>
 			<Main fixed className="gap-4">

@@ -1,5 +1,3 @@
-"use client";
-
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import {

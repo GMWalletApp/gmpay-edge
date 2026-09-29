@@ -1,5 +1,3 @@
-"use client";
-
 import { Columns2, Copy, Eye, EyeOff } from "lucide-react";
 import { type ComponentType, type ReactNode, useState } from "react";
 

@@ -6,7 +6,11 @@ import { Badge } from "#/components/ui/badge";
 import { getAdminDashboardFn } from "#/features/dashboard/server/admin";
 import { Main } from "#/layouts/components/main";
 import { PageHeader } from "#/layouts/components/page-header";
-import { formatDateTime, formatNumber } from "#/lib/format";
+import {
+	formatDateTime,
+	formatDecimalAmount,
+	formatNumber,
+} from "#/lib/format";
 import { m } from "#/paraglide/messages";
 
 const OrderTrendChart = lazy(() =>
@@ -44,21 +48,25 @@ function DashboardContent() {
 	const { data } = useSuspenseQuery(dashboardQuery);
 	const metrics = [
 		[
+			"orders",
 			m.payment_dashboard_total_orders(),
 			formatNumber(data.orders.total),
 			ReceiptText,
 		],
 		[
+			"paid",
 			m.payment_dashboard_paid_orders(),
 			formatNumber(data.orders.paid),
 			CircleCheck,
 		],
 		[
+			"payments",
 			m.payment_dashboard_payments(),
 			formatNumber(data.payments.total),
 			Activity,
 		],
 		[
+			"webhooks",
 			m.payment_dashboard_webhook_success(),
 			data.webhooks.successRate == null ? "—" : `${data.webhooks.successRate}%`,
 			Webhook,
@@ -67,10 +75,10 @@ function DashboardContent() {
 	return (
 		<>
 			<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-				{metrics.map(([label, value, Icon]) => (
+				{metrics.map(([id, label, value, Icon]) => (
 					<article
 						className="rounded-2xl border bg-card p-5 shadow-sm"
-						key={label}
+						key={id}
 					>
 						<div className="flex items-center justify-between text-muted-foreground text-sm">
 							<span>{label}</span>
@@ -148,7 +156,7 @@ function DashboardContent() {
 								</div>
 								<div>
 									<span className="block text-sm">
-										{order.amount} {order.currency}
+										{formatDecimalAmount(order.amount)} {order.currency}
 									</span>
 									<small className="text-muted-foreground">
 										{order.assetCode} · {order.network}

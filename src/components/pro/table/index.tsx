@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	closestCenter,
 	DndContext,
@@ -1642,8 +1640,14 @@ function ProTableToolbar<TData>({
 		: undefined;
 	const searchValue = typeof rawSearchValue === "string" ? rawSearchValue : "";
 	const [searchInputValue, setSearchInputValue] = useState(searchValue);
+	// An externally applied filter (URL state, reset) replaces the draft input
+	// in the same render instead of one commit later.
+	const [appliedSearchValue, setAppliedSearchValue] = useState(searchValue);
+	if (searchValue !== appliedSearchValue) {
+		setAppliedSearchValue(searchValue);
+		setSearchInputValue(searchValue);
+	}
 	const searchTimer = useRef<number | undefined>(undefined);
-	useEffect(() => setSearchInputValue(searchValue), [searchValue]);
 	useEffect(
 		() => () => {
 			if (searchTimer.current) window.clearTimeout(searchTimer.current);

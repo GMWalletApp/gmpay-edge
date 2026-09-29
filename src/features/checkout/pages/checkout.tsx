@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CodeXml, MessageCircle } from "lucide-react";
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useSiteBrand } from "#/context/site-brand-provider";
 import {
@@ -35,6 +35,7 @@ import {
 import { useNow } from "#/features/checkout/use-checkout-clock";
 import { LocaleSwitch } from "#/layouts/components/locale-switch";
 import { ThemeSwitch } from "#/layouts/components/theme-switch";
+import { formatDecimalAmount } from "#/lib/format";
 import { useVisiblePolling } from "#/lib/use-visible-polling";
 import { m } from "#/paraglide/messages";
 
@@ -57,7 +58,7 @@ export function CheckoutPage({
 	const [pollFailed, setPollFailed] = useState(false);
 	const now = useNow(initialNow, true);
 	const statusDetail = order?.status_detail;
-	const refreshOrder = useCallback(async () => {
+	const refreshOrder = async () => {
 		try {
 			setOrder(await getCheckoutOrderFn({ data: { orderId } }));
 			setPollFailed(false);
@@ -65,7 +66,7 @@ export function CheckoutPage({
 			setPollFailed(true);
 			throw error;
 		}
-	}, [orderId]);
+	};
 	const pollingEnabled = Boolean(order && !isTerminal(statusDetail));
 	const { pollAfterCurrent, pollNow } = useVisiblePolling(
 		refreshOrder,
@@ -81,25 +82,22 @@ export function CheckoutPage({
 		enabled: shouldLoadPaymentOptions,
 	});
 	const paymentOptions = paymentOptionsQuery.data ?? null;
-	const backgroundStyle = useMemo<CSSProperties>(
-		() => ({
-			...(brand.backgroundColor && !brand.backgroundImageUrl
-				? { backgroundColor: brand.backgroundColor }
-				: {}),
-			...(brand.backgroundImageUrl
-				? {
-						backgroundAttachment: "fixed",
-						backgroundImage: brand.backgroundColor
-							? `linear-gradient(${brand.backgroundColor}, ${brand.backgroundColor}), url(${JSON.stringify(brand.backgroundImageUrl)})`
-							: `url(${JSON.stringify(brand.backgroundImageUrl)})`,
-						backgroundPosition: "center",
-						backgroundRepeat: "no-repeat",
-						backgroundSize: "cover",
-					}
-				: {}),
-		}),
-		[brand.backgroundColor, brand.backgroundImageUrl],
-	);
+	const backgroundStyle: CSSProperties = {
+		...(brand.backgroundColor && !brand.backgroundImageUrl
+			? { backgroundColor: brand.backgroundColor }
+			: {}),
+		...(brand.backgroundImageUrl
+			? {
+					backgroundAttachment: "fixed",
+					backgroundImage: brand.backgroundColor
+						? `linear-gradient(${brand.backgroundColor}, ${brand.backgroundColor}), url(${JSON.stringify(brand.backgroundImageUrl)})`
+						: `url(${JSON.stringify(brand.backgroundImageUrl)})`,
+					backgroundPosition: "center",
+					backgroundRepeat: "no-repeat",
+					backgroundSize: "cover",
+				}
+			: {}),
+	};
 	const expiresAt = order?.expiration_time
 		? new Date(order.expiration_time).getTime()
 		: now;
@@ -156,7 +154,9 @@ export function CheckoutPage({
 		) : (
 			<OverpaidPanel
 				asset={order.token ?? ""}
-				received={order.received_amount ?? order.actual_amount ?? order.amount}
+				received={formatDecimalAmount(
+					order.received_amount ?? order.actual_amount ?? order.amount,
+				)}
 			/>
 		);
 	} else if (statusDetail === "refunded") {
@@ -175,8 +175,8 @@ export function CheckoutPage({
 		content = (
 			<PartiallyPaidPanel
 				asset={order.token ?? ""}
-				expected={order.actual_amount ?? order.amount}
-				received={order.received_amount ?? "0"}
+				expected={formatDecimalAmount(order.actual_amount ?? order.amount)}
+				received={formatDecimalAmount(order.received_amount ?? "0")}
 			>
 				{reviewAction}
 			</PartiallyPaidPanel>

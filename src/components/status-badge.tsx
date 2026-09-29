@@ -38,6 +38,7 @@ export function statusLabel(value: string) {
 		failed: m.status_failed(),
 		refunded: m.status_refunded(),
 		detected: m.status_detected(),
+		pending_review: m.status_pending_review(),
 		confirmed: m.status_confirmed(),
 		succeeded: m.status_succeeded(),
 		queued: m.status_queued(),

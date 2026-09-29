@@ -6,10 +6,10 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { m } from "@/paraglide/messages";
+} from "#/components/ui/alert-dialog";
+import { Button } from "#/components/ui/button";
+import { cn } from "#/lib/utils";
+import { m } from "#/paraglide/messages";
 
 type ConfirmDialogProps = {
 	open: boolean;

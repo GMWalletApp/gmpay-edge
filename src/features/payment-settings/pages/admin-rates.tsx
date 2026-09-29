@@ -1,5 +1,3 @@
-"use client";
-
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Pencil, Settings } from "lucide-react";
@@ -21,7 +19,7 @@ import {
 	updateManualRatesFn,
 } from "#/features/payment-settings/server/rate-functions";
 import { PageHeader } from "#/layouts/components/page-header";
-import { formatDateTime } from "#/lib/format";
+import { formatDateTime, formatDecimalAmount } from "#/lib/format";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { m } from "#/paraglide/messages";
 
@@ -67,12 +65,16 @@ export function RatesPage({ view }: { view: View }) {
 		{
 			accessorKey: "raw_rate",
 			header: m.rates_original_rate(),
-			cell: ({ row }) => row.original.raw_rate ?? "—",
+			cell: ({ row }) =>
+				row.original.raw_rate
+					? formatDecimalAmount(row.original.raw_rate)
+					: "—",
 		},
 		{
 			accessorKey: "rate",
 			header: m.infrastructure_rate(),
-			cell: ({ row }) => row.original.rate ?? "—",
+			cell: ({ row }) =>
+				row.original.rate ? formatDecimalAmount(row.original.rate) : "—",
 		},
 		{
 			accessorKey: "observed_at",

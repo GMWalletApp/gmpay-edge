@@ -17,6 +17,31 @@ describe("root provider boundaries", () => {
 		expect(providerEnd).toBeGreaterThan(toaster);
 	});
 
+	it("renders both scheme-specific theme colors outside the deduplicating route head", () => {
+		const source = readFileSync(
+			resolve(import.meta.dirname, "../../src/routes/__root.tsx"),
+			"utf8",
+		);
+		// Route head() keeps one meta per name, so a light and a dark
+		// theme-color can only coexist as shell markup.
+		expect(source).not.toMatch(/name:\s*"theme-color"/);
+		const shell = source.slice(
+			source.indexOf("<head>"),
+			source.indexOf("</head>"),
+		);
+		expect(shell).toMatch(
+			/<meta\s+content="#ffffff"\s+media="\(prefers-color-scheme: light\)"\s+name="theme-color"\s*\/>/,
+		);
+		expect(shell).toMatch(
+			/<meta\s+content="#09090b"\s+media="\(prefers-color-scheme: dark\)"\s+name="theme-color"\s*\/>/,
+		);
+		const provider = readFileSync(
+			resolve(import.meta.dirname, "../../src/context/theme-provider.tsx"),
+			"utf8",
+		);
+		expect(provider).toContain('meta[name="theme-color"]');
+	});
+
 	it("hydrates browser preferences after the SSR-compatible first frame", () => {
 		const store = readFileSync(
 			resolve(import.meta.dirname, "../../src/stores/preferences-store.ts"),

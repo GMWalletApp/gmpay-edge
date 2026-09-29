@@ -1,7 +1,7 @@
 import type { LinkProps } from "@tanstack/react-router";
 
 interface BaseNavItem {
-	id?: string;
+	id: string;
 	activePrefixes?: string[];
 	activeUrls?: string[];
 	icon?: React.ElementType;
@@ -21,7 +21,7 @@ type NavCollapsible = BaseNavItem & {
 type NavItem = NavCollapsible | NavLink;
 
 interface NavGroup {
-	id?: string;
+	id: string;
 	items: NavItem[];
 	title: string;
 }

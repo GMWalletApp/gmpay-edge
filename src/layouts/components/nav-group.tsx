@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -25,6 +25,7 @@ import {
 	SidebarMenuSubItem,
 	useSidebar,
 } from "#/components/ui/sidebar";
+import { normalizePathname } from "./data/sidebar-data";
 import type {
 	NavCollapsible,
 	NavGroup as NavGroupProps,
@@ -38,17 +39,15 @@ export function NavGroup({ title, items }: NavGroupProps) {
 			<SidebarGroupLabel>{title}</SidebarGroupLabel>
 			<SidebarMenu>
 				{items.map((item) => {
-					const key = `${item.title}-${item.url}`;
-
 					if (!item.items) {
-						return <SidebarMenuLink item={item} key={key} />;
+						return <SidebarMenuLink item={item} key={item.id} />;
 					}
 
 					if (state === "collapsed" && !isMobile) {
-						return <SidebarMenuCollapsedDropdown item={item} key={key} />;
+						return <SidebarMenuCollapsedDropdown item={item} key={item.id} />;
 					}
 
-					return <SidebarMenuCollapsible item={item} key={key} />;
+					return <SidebarMenuCollapsible item={item} key={item.id} />;
 				})}
 			</SidebarMenu>
 		</SidebarGroup>
@@ -82,9 +81,13 @@ function SidebarMenuCollapsible({ item }: { item: NavCollapsible }) {
 		matchesNavLocation(sub, location),
 	);
 	const [open, setOpen] = useState(isChildActive);
-	useEffect(() => {
+	// Navigating into a child re-opens the group without an extra commit; a
+	// group the operator collapsed stays collapsed until its child is active.
+	const [childWasActive, setChildWasActive] = useState(isChildActive);
+	if (isChildActive !== childWasActive) {
+		setChildWasActive(isChildActive);
 		if (isChildActive) setOpen(true);
-	}, [isChildActive]);
+	}
 	return (
 		<Collapsible
 			asChild
@@ -105,7 +108,7 @@ function SidebarMenuCollapsible({ item }: { item: NavCollapsible }) {
 						{item.items.map((subItem) => (
 							<CollapsibleSubItem
 								item={subItem}
-								key={subItem.title}
+								key={subItem.id}
 								onClose={() => setOpenMobile(false)}
 							/>
 						))}
@@ -156,7 +159,7 @@ function SidebarMenuCollapsedDropdown({ item }: { item: NavCollapsible }) {
 					<DropdownMenuLabel>{item.title}</DropdownMenuLabel>
 					<DropdownMenuSeparator />
 					{item.items.map((sub) => (
-						<CollapsedDropdownItem item={sub} key={`${sub.title}-${sub.url}`} />
+						<CollapsedDropdownItem item={sub} key={sub.id} />
 					))}
 				</DropdownMenuContent>
 			</DropdownMenu>
@@ -193,17 +196,13 @@ export function matchesNavLocation(
 	item: NavLink,
 	location: { pathname: string },
 ) {
-	const pathname = normalizePath(location.pathname);
-	if (pathname === normalizePath(String(item.url))) return true;
+	const pathname = normalizePathname(location.pathname);
+	if (pathname === normalizePathname(String(item.url))) return true;
 	if (item.activePrefixes?.some((prefix) => pathname.startsWith(prefix)))
 		return true;
 	if (!item.activeUrls) return false;
 	return item.activeUrls.some((url) => {
-		const candidate = normalizePath(url);
+		const candidate = normalizePathname(url);
 		return pathname === candidate || pathname.startsWith(`${candidate}/`);
 	});
-}
-
-function normalizePath(path: string) {
-	return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }

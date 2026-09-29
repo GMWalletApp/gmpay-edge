@@ -1,14 +1,44 @@
-import { useSelector } from "@tanstack/react-store";
-import { createContext, useContext } from "react";
-import {
-	type Collapsible,
-	defaultLayoutCollapsible,
-	defaultLayoutVariant,
-	type LayoutVariant,
-	preferencesStore,
-} from "#/stores/preferences-store";
+import { createContext, useContext, useState } from "react";
+import { SIDEBAR_COOKIE_NAME } from "#/components/ui/sidebar";
+import { getCookie, setCookie } from "#/lib/cookies";
 
-export type { Collapsible } from "#/stores/preferences-store";
+export type Collapsible = "offcanvas" | "icon" | "none";
+export type LayoutVariant = "inset" | "sidebar" | "floating";
+
+export type LayoutPreferences = {
+	collapsible: Collapsible;
+	variant: LayoutVariant;
+	sidebarOpen: boolean;
+};
+
+export const defaultLayoutVariant: LayoutVariant = "floating";
+export const defaultLayoutCollapsible: Collapsible = "icon";
+
+const layoutCollapsibleCookie = "layout_collapsible";
+const layoutVariantCookie = "layout_variant";
+const layoutCookieMaxAge = 60 * 60 * 24 * 7;
+
+/**
+ * Layout cookies are read where the admin route loads (SSR request or browser
+ * navigation) so the first render already matches the persisted preference.
+ */
+export function readLayoutPreferences(): LayoutPreferences {
+	const collapsible = getCookie(layoutCollapsibleCookie);
+	const variant = getCookie(layoutVariantCookie);
+	return {
+		collapsible:
+			collapsible === "offcanvas" ||
+			collapsible === "icon" ||
+			collapsible === "none"
+				? collapsible
+				: defaultLayoutCollapsible,
+		variant:
+			variant === "inset" || variant === "sidebar" || variant === "floating"
+				? variant
+				: defaultLayoutVariant,
+		sidebarOpen: getCookie(SIDEBAR_COOKIE_NAME) !== "false",
+	};
+}
 
 type LayoutContextType = {
 	resetLayout: () => void;
@@ -24,32 +54,41 @@ type LayoutContextType = {
 
 const LayoutContext = createContext<LayoutContextType | null>(null);
 
-type LayoutProviderProps = {
+export function LayoutProvider({
+	initial,
+	children,
+}: {
+	initial: LayoutPreferences;
 	children: React.ReactNode;
-};
+}) {
+	const [collapsible, setCollapsibleState] = useState(initial.collapsible);
+	const [variant, setVariantState] = useState(initial.variant);
 
-export function LayoutProvider({ children }: LayoutProviderProps) {
-	const collapsible = useSelector(
-		preferencesStore,
-		(state) => state.collapsible,
-	);
-	const variant = useSelector(preferencesStore, (state) => state.variant);
+	const setCollapsible = (next: Collapsible) => {
+		setCookie(layoutCollapsibleCookie, next, layoutCookieMaxAge);
+		setCollapsibleState(next);
+	};
+	const setVariant = (next: LayoutVariant) => {
+		setCookie(layoutVariantCookie, next, layoutCookieMaxAge);
+		setVariantState(next);
+	};
 
 	const contextValue: LayoutContextType = {
-		resetLayout: preferencesStore.actions.resetLayout,
+		resetLayout: () => {
+			setCollapsible(defaultLayoutCollapsible);
+			setVariant(defaultLayoutVariant);
+		},
 		defaultCollapsible: defaultLayoutCollapsible,
 		collapsible,
-		setCollapsible: preferencesStore.actions.setCollapsible,
+		setCollapsible,
 		defaultVariant: defaultLayoutVariant,
 		variant,
-		setVariant: preferencesStore.actions.setVariant,
+		setVariant,
 	};
 
 	return <LayoutContext value={contextValue}>{children}</LayoutContext>;
 }
 
-// Define the hook for the provider
-// eslint-disable-next-line react-refresh/only-export-components
 export function useLayout() {
 	const context = useContext(LayoutContext);
 	if (!context) {

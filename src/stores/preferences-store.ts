@@ -1,33 +1,23 @@
 import { Store } from "@tanstack/store";
-import { getCookie, setCookie } from "#/lib/cookies";
 
 export type Theme = "dark" | "light" | "auto";
 export type ResolvedTheme = Exclude<Theme, "auto">;
 export type Font = "inter" | "manrope" | "noto";
 export type Direction = "ltr" | "rtl";
-export type Collapsible = "offcanvas" | "icon" | "none";
-export type LayoutVariant = "inset" | "sidebar" | "floating";
 
 export const defaultTheme: Theme = "auto";
 export const defaultFont: Font = "noto";
 export const defaultDirection: Direction = "ltr";
-export const defaultLayoutVariant: LayoutVariant = "floating";
-export const defaultLayoutCollapsible: Collapsible = "icon";
 
 const themeStorageKey = "theme";
 const fontStorageKey = "font";
 const directionStorageKey = "direction";
-const layoutCollapsibleCookie = "layout_collapsible";
-const layoutVariantCookie = "layout_variant";
-const layoutCookieMaxAge = 60 * 60 * 24 * 7;
 
 type PreferencesState = {
 	theme: Theme;
 	font: Font;
 	direction: Direction;
 	systemTheme: ResolvedTheme;
-	collapsible: Collapsible;
-	variant: LayoutVariant;
 };
 
 type PreferencesActions = {
@@ -39,9 +29,6 @@ type PreferencesActions = {
 	setDirection: (direction: Direction) => void;
 	resetDirection: () => void;
 	setSystemTheme: (theme: ResolvedTheme) => void;
-	setCollapsible: (collapsible: Collapsible) => void;
-	setVariant: (variant: LayoutVariant) => void;
-	resetLayout: () => void;
 };
 
 export const preferencesStore = new Store<PreferencesState, PreferencesActions>(
@@ -50,8 +37,6 @@ export const preferencesStore = new Store<PreferencesState, PreferencesActions>(
 		font: defaultFont,
 		direction: defaultDirection,
 		systemTheme: "light",
-		collapsible: defaultLayoutCollapsible,
-		variant: defaultLayoutVariant,
 	},
 	(store) => ({
 		hydrate: () => store.setState(() => storedPreferences()),
@@ -81,27 +66,6 @@ export const preferencesStore = new Store<PreferencesState, PreferencesActions>(
 		},
 		setSystemTheme: (systemTheme) =>
 			store.setState((state) => ({ ...state, systemTheme })),
-		setCollapsible: (collapsible) => {
-			setCookie(layoutCollapsibleCookie, collapsible, layoutCookieMaxAge);
-			store.setState((state) => ({ ...state, collapsible }));
-		},
-		setVariant: (variant) => {
-			setCookie(layoutVariantCookie, variant, layoutCookieMaxAge);
-			store.setState((state) => ({ ...state, variant }));
-		},
-		resetLayout: () => {
-			setCookie(
-				layoutCollapsibleCookie,
-				defaultLayoutCollapsible,
-				layoutCookieMaxAge,
-			);
-			setCookie(layoutVariantCookie, defaultLayoutVariant, layoutCookieMaxAge);
-			store.setState((state) => ({
-				...state,
-				collapsible: defaultLayoutCollapsible,
-				variant: defaultLayoutVariant,
-			}));
-		},
 	}),
 );
 
@@ -111,8 +75,6 @@ function storedPreferences(): PreferencesState {
 		font: storedFont(),
 		direction: storedDirection(),
 		systemTheme: systemTheme(),
-		collapsible: storedCollapsible(),
-		variant: storedVariant(),
 	};
 }
 
@@ -133,20 +95,6 @@ function storedFont(): Font {
 function storedDirection(): Direction {
 	const value = readLocal(directionStorageKey);
 	return value === "ltr" || value === "rtl" ? value : defaultDirection;
-}
-
-function storedCollapsible(): Collapsible {
-	const value = getCookie(layoutCollapsibleCookie);
-	return value === "offcanvas" || value === "icon" || value === "none"
-		? value
-		: defaultLayoutCollapsible;
-}
-
-function storedVariant(): LayoutVariant {
-	const value = getCookie(layoutVariantCookie);
-	return value === "inset" || value === "sidebar" || value === "floating"
-		? value
-		: defaultLayoutVariant;
 }
 
 function systemTheme(): ResolvedTheme {

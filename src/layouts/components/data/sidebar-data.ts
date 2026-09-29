@@ -497,11 +497,14 @@ export function systemSidebarData(
 	};
 }
 
+export function normalizePathname(pathname: string) {
+	return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+}
+
 export function permissionForAdminPath(
 	pathname: string,
 ): SystemPermission | undefined {
-	const normalized =
-		pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+	const normalized = normalizePathname(pathname);
 	const entries = navigationGroups
 		.flatMap((group) => group.modules)
 		.flatMap((module) => module.entries);
@@ -516,8 +519,7 @@ export function canAccessAdminPath(
 	pathname: string,
 	permissions: readonly SystemPermissionGrant[],
 ) {
-	const normalized =
-		pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+	const normalized = normalizePathname(pathname);
 	const permission = permissionForAdminPath(normalized);
 	if (permission) return hasSystemPermission(permissions, permission);
 	const module = navigationGroups

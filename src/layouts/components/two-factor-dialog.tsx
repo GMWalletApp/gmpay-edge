@@ -120,7 +120,11 @@ export function TwoFactorDialog({
 				{setup ? (
 					<div className="space-y-4">
 						<div className="mx-auto w-fit rounded-xl bg-white p-3">
-							<QRCodeSVG value={setup.totpURI} size={176} />
+							<QRCodeSVG
+								size={176}
+								title={m.account_two_factor_qr_title()}
+								value={setup.totpURI}
+							/>
 						</div>
 						<div className="space-y-2">
 							<Label htmlFor="totp-code">

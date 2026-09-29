@@ -14,12 +14,10 @@ import { NavUser } from "./nav-user";
 import type { SidebarData } from "./types";
 
 export function AppSidebar({
-	data = { navGroups: [] },
-	homeHref = "/admin",
+	data,
 	user,
 }: {
-	data?: SidebarData;
-	homeHref?: string;
+	data: SidebarData;
 	user?: AuthUser;
 }) {
 	const { collapsible, variant } = useLayout();
@@ -29,14 +27,14 @@ export function AppSidebar({
 				<Link
 					activeOptions={{ exact: true }}
 					className="flex overflow-hidden rounded-md p-2 group-data-[collapsible=icon]:size-10 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:[&>span>span]:hidden"
-					to={homeHref}
+					to="/admin"
 				>
 					<AppTitle description />
 				</Link>
 			</SidebarHeader>
 			<SidebarContent>
 				{data.navGroups.map((group) => (
-					<NavGroup key={group.title} {...group} />
+					<NavGroup key={group.id} {...group} />
 				))}
 			</SidebarContent>
 			<SidebarFooter>

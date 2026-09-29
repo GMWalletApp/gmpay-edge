@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { localeLabels, supportedLocales } from "#/lib/locales";
 
@@ -68,6 +69,33 @@ describe("Paraglide message resources", () => {
 		}
 	});
 
+	it("keeps every message key referenced from application or test code", async () => {
+		const resource = JSON.parse(
+			await readFile(
+				new URL("../../messages/en-US.json", import.meta.url),
+				"utf8",
+			),
+		) as Record<string, string>;
+		const referenced = new Set<string>();
+		for (const directory of ["src", "tests"]) {
+			for (const file of await sourceFiles(
+				new URL(`../../${directory}`, import.meta.url).pathname,
+			)) {
+				const source = await readFile(file, "utf8");
+				for (const match of source.matchAll(/\bm\.([A-Za-z_][A-Za-z0-9_]*)/g))
+					if (match[1]) referenced.add(match[1]);
+				for (const match of source.matchAll(
+					/\bm\[\s*["'`]([A-Za-z_][A-Za-z0-9_]*)["'`]\s*\]/g,
+				))
+					if (match[1]) referenced.add(match[1]);
+			}
+		}
+		const unused = Object.keys(resource).filter(
+			(key) => !key.startsWith("$") && !referenced.has(key),
+		);
+		expect(unused).toEqual([]);
+	});
+
 	it("does not expose storage implementation names in user-facing copy", async () => {
 		for (const locale of locales) {
 			const resource = JSON.parse(
@@ -82,6 +110,19 @@ describe("Paraglide message resources", () => {
 		}
 	});
 });
+
+async function sourceFiles(directory: string): Promise<string[]> {
+	const entries = await readdir(directory, { withFileTypes: true });
+	const nested = await Promise.all(
+		entries.map(async (entry) => {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory())
+				return entry.name === "paraglide" ? [] : sourceFiles(path);
+			return /\.(?:ts|tsx)$/.test(entry.name) ? [path] : [];
+		}),
+	);
+	return nested.flat();
+}
 
 function placeholders(message: string) {
 	return [...message.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)]

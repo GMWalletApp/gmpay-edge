@@ -32,24 +32,27 @@ export function InstallLayout({ children }: { children: React.ReactNode }) {
 							{(
 								[
 									[
+										"database",
 										Database,
 										m.install_setup_database(),
 										m.install_setup_database_ready(),
 									],
 									[
+										"resources",
 										Cloud,
 										m.install_setup_resources(),
 										m.install_setup_resources_ready(),
 									],
 									[
+										"root",
 										CheckCircle2,
 										m.install_setup_root(),
 										m.install_setup_root_ready(),
 									],
 								] as const
-							).map(([Icon, title, status]) => (
+							).map(([id, Icon, title, status]) => (
 								<div
-									key={String(title)}
+									key={id}
 									className="flex items-center gap-3 rounded-xl border bg-background/70 p-3"
 								>
 									<span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">

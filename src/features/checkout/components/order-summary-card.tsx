@@ -6,6 +6,7 @@ import {
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { NetworkBadge } from "#/components/crypto-icons/badge";
 import { AssetLabel } from "#/components/crypto-icons/labels";
+import { formatDecimalAmount } from "#/lib/format";
 import { m } from "#/paraglide/messages";
 import type { CheckoutOrder } from "../checkout-model";
 import { CopyIconButton } from "./checkout-display";
@@ -203,5 +204,6 @@ function formatPaymentAmount(order?: CheckoutOrder) {
 }
 
 function formatAmountWithUnit(amount: string, unit?: string) {
-	return unit ? `${amount}${AMOUNT_UNIT_SEPARATOR}${unit}` : String(amount);
+	const localized = formatDecimalAmount(amount);
+	return unit ? `${localized}${AMOUNT_UNIT_SEPARATOR}${unit}` : localized;
 }

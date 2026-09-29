@@ -232,15 +232,11 @@ describe("admin navigation", () => {
 			),
 			"utf8",
 		);
-		expect(source).toContain(
-			'accessorKey: "enabled",\n\t\t\t\theader: m.common_enabled()',
+		expect(source).toMatch(
+			/accessorKey: "enabled",\s*header: m\.common_enabled\(\)/,
 		);
-		expect(source).toContain(
-			'accessorKey: "name",\n\t\t\t\theader: m.common_name()',
-		);
-		expect(source).toContain(
-			'accessorKey: "pid",\n\t\t\t\theader: m.api_keys_key()',
-		);
+		expect(source).toMatch(/accessorKey: "name",\s*header: m\.common_name\(\)/);
+		expect(source).toMatch(/accessorKey: "pid",\s*header: m\.api_keys_key\(\)/);
 	});
 
 	it("classifies every admin page route and no unknown route", async () => {
@@ -273,19 +269,20 @@ describe("admin navigation", () => {
 	it("selects only the exact child while a parent can cover all module routes", () => {
 		expect(
 			matchesNavLocation(
-				{ title: "Dashboard", url: "/admin" },
+				{ id: "dashboard", title: "Dashboard", url: "/admin" },
 				{ pathname: "/admin/orders" },
 			),
 		).toBe(false);
 		expect(
 			matchesNavLocation(
-				{ title: "Webhook", url: "/admin/webhooks" },
+				{ id: "webhooks", title: "Webhook", url: "/admin/webhooks" },
 				{ pathname: "/admin/webhooks/records" },
 			),
 		).toBe(false);
 		expect(
 			matchesNavLocation(
 				{
+					id: "webhooks",
 					title: "Webhook",
 					url: "/admin/webhooks",
 					activeUrls: ["/admin/webhooks", "/admin/webhooks/records"],
@@ -296,6 +293,7 @@ describe("admin navigation", () => {
 		expect(
 			matchesNavLocation(
 				{
+					id: "webhooks-inbound",
 					title: "Inbound Webhook",
 					url: "/admin/webhooks",
 				},

@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Check, Eye, MoreHorizontal, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AssetLabel } from "#/components/crypto-icons/labels";
 import { ProButton } from "#/components/pro/base/button";
@@ -80,11 +78,11 @@ export function PaymentReviewsPage() {
 		},
 		[markFailure, markSuccess],
 	);
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		snapshotRef.current = null;
 		await client.invalidateQueries({ queryKey: ["admin", "payment-reviews"] });
 		setRefreshKey((value) => value + 1);
-	}, [client]);
+	};
 	const resolve = useMutation({
 		mutationFn: resolvePaymentReviewFn,
 		onSuccess: async () => {
@@ -94,83 +92,80 @@ export function PaymentReviewsPage() {
 		},
 		onError: (error) => toast.error(paymentReviewErrorMessage(error)),
 	});
-	const open = useCallback((review: Review) => {
+	const open = (review: Review) => {
 		setSelected(review);
 		setTransactionHash(review.transactionHash ?? "");
 		setNote("");
-	}, []);
-	const columns = useMemo<ColumnDef<Review>[]>(
-		() => [
-			{
-				accessorKey: "externalOrderId",
-				header: m.orders_order(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<code className="block text-xs">{row.original.orderId}</code>
-						<span className="text-muted-foreground text-xs">
-							{row.original.externalOrderId}
-						</span>
-					</div>
-				),
-			},
-			{
-				accessorKey: "status",
-				header: m.common_status(),
-				cell: ({ row }) => <StatusBadge value={row.original.status} />,
-			},
-			{
-				id: "amount",
-				header: m.payments_amount(),
-				cell: ({ row }) => (
-					<AssetLabel
-						label={`${row.original.paymentAmount} ${row.original.assetCode}`}
-						network={row.original.network}
-						symbol={row.original.assetCode}
-					/>
-				),
-			},
-			{
-				accessorKey: "description",
-				header: m.payment_reviews_details(),
-				cell: ({ row }) => (
-					<p className="max-w-72 truncate" title={row.original.description}>
-						{row.original.description}
-					</p>
-				),
-			},
-			{
-				accessorKey: "createdAt",
-				header: m.common_created(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									variant="ghost"
-									tooltip={m.common_actions()}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem onClick={() => open(row.original)}>
-									<Eye /> {m.payment_reviews_view()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[open],
-	);
+	};
+	const columns: ColumnDef<Review>[] = [
+		{
+			accessorKey: "externalOrderId",
+			header: m.orders_order(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<code className="block text-xs">{row.original.orderId}</code>
+					<span className="text-muted-foreground text-xs">
+						{row.original.externalOrderId}
+					</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: m.common_status(),
+			cell: ({ row }) => <StatusBadge value={row.original.status} />,
+		},
+		{
+			id: "amount",
+			header: m.payments_amount(),
+			cell: ({ row }) => (
+				<AssetLabel
+					label={`${row.original.paymentAmount} ${row.original.assetCode}`}
+					network={row.original.network}
+					symbol={row.original.assetCode}
+				/>
+			),
+		},
+		{
+			accessorKey: "description",
+			header: m.payment_reviews_details(),
+			cell: ({ row }) => (
+				<p className="max-w-72 truncate" title={row.original.description}>
+					{row.original.description}
+				</p>
+			),
+		},
+		{
+			accessorKey: "createdAt",
+			header: m.common_created(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								variant="ghost"
+								tooltip={m.common_actions()}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onClick={() => open(row.original)}>
+								<Eye /> {m.payment_reviews_view()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 	const decide = (decision: "approve" | "reject") => {
 		if (!selected || note.trim().length < 3) return;
 		resolve.mutate({

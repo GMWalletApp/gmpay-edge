@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Check, MoreHorizontal, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AssetLabel } from "#/components/crypto-icons/labels";
 import { ProButton } from "#/components/pro/base/button";
@@ -22,7 +20,7 @@ import {
 } from "#/features/payments/server/admin";
 import { Main } from "#/layouts/components/main";
 import { PageHeader } from "#/layouts/components/page-header";
-import { formatDateTime } from "#/lib/format";
+import { formatDateTime, formatDecimalAmount } from "#/lib/format";
 import { unitsToDecimal } from "#/lib/money";
 import { useCurrentProTableUrlState } from "#/lib/pro-table-url-state";
 import { useVisiblePolling } from "#/lib/use-visible-polling";
@@ -80,10 +78,10 @@ export function PaymentsPage() {
 		},
 		[markFailure, markSuccess],
 	);
-	const refresh = useCallback(() => {
+	const refresh = () => {
 		snapshotRef.current = null;
 		setRefreshKey((value) => value + 1);
-	}, []);
+	};
 	const resolve = useMutation({
 		mutationFn: resolveLatePaymentFn,
 		onSuccess: () => {
@@ -92,116 +90,112 @@ export function PaymentsPage() {
 		},
 		onError: (error) => toast.error(paymentOperationErrorMessage(error)),
 	});
-	const columns = useMemo<ColumnDef<PaymentRecord>[]>(
-		() => [
-			{
-				accessorKey: "transactionId",
-				header: m.payments_transaction(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div className="max-w-64">
-						<code
-							className="block truncate text-xs"
-							title={row.original.transactionId}
-						>
-							{row.original.transactionId}
-						</code>
-						<small className="text-muted-foreground uppercase">
-							{row.original.network}
-						</small>
+	const columns: ColumnDef<PaymentRecord>[] = [
+		{
+			accessorKey: "transactionId",
+			header: m.payments_transaction(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div className="max-w-64">
+					<code
+						className="block truncate text-xs"
+						title={row.original.transactionId}
+					>
+						{row.original.transactionId}
+					</code>
+					<small className="text-muted-foreground uppercase">
+						{row.original.network}
+					</small>
+				</div>
+			),
+		},
+		{
+			accessorKey: "externalOrderId",
+			header: m.orders_order(),
+			cell: ({ row }) => (
+				<div>
+					<code className="block text-xs">{row.original.orderId}</code>
+					<small className="text-muted-foreground">
+						{row.original.externalOrderId}
+					</small>
+				</div>
+			),
+		},
+		{
+			id: "amount",
+			header: m.payments_amount(),
+			cell: ({ row }) => (
+				<AssetLabel
+					label={`${formatDecimalAmount(unitsToDecimal(BigInt(row.original.amountUnits), row.original.decimals), row.original.decimals)} ${row.original.assetCode}`}
+					network={row.original.network}
+					symbol={row.original.assetCode}
+				/>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: m.common_status(),
+			cell: ({ row }) => <StatusBadge value={row.original.status} />,
+		},
+		{
+			accessorKey: "confirmations",
+			header: m.payment_config_confirmations(),
+		},
+		{
+			accessorKey: "detectedAt",
+			header: m.payments_detected(),
+			cell: ({ row }) => formatDateTime(row.original.detectedAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) =>
+				row.original.status === "pending_review" ? (
+					<div className="flex justify-end">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<ProButton
+									size="icon-sm"
+									variant="ghost"
+									tooltip={m.payments_review()}
+								>
+									<MoreHorizontal />
+								</ProButton>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								<DropdownMenuItem
+									disabled={resolve.isPending}
+									onClick={() =>
+										resolve.mutate({
+											data: {
+												paymentId: row.original.id,
+												decision: "accept",
+											},
+										})
+									}
+								>
+									<Check /> {m.payments_accept()}
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									variant="destructive"
+									disabled={resolve.isPending}
+									onClick={() =>
+										resolve.mutate({
+											data: {
+												paymentId: row.original.id,
+												decision: "reject",
+											},
+										})
+									}
+								>
+									<X /> {m.payments_reject()}
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 					</div>
-				),
-			},
-			{
-				accessorKey: "externalOrderId",
-				header: m.orders_order(),
-				cell: ({ row }) => (
-					<div>
-						<code className="block text-xs">{row.original.orderId}</code>
-						<small className="text-muted-foreground">
-							{row.original.externalOrderId}
-						</small>
-					</div>
-				),
-			},
-			{
-				id: "amount",
-				header: m.payments_amount(),
-				cell: ({ row }) => (
-					<AssetLabel
-						label={`${unitsToDecimal(BigInt(row.original.amountUnits), row.original.decimals)} ${row.original.assetCode}`}
-						network={row.original.network}
-						symbol={row.original.assetCode}
-					/>
-				),
-			},
-			{
-				accessorKey: "status",
-				header: m.common_status(),
-				cell: ({ row }) => <StatusBadge value={row.original.status} />,
-			},
-			{
-				accessorKey: "confirmations",
-				header: m.payment_config_confirmations(),
-			},
-			{
-				accessorKey: "detectedAt",
-				header: m.payments_detected(),
-				cell: ({ row }) => formatDateTime(row.original.detectedAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) =>
-					row.original.status === "detected" &&
-					["expired", "cancelled"].includes(row.original.orderStatus) ? (
-						<div className="flex justify-end">
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<ProButton
-										size="icon-sm"
-										variant="ghost"
-										tooltip={m.payments_review()}
-									>
-										<MoreHorizontal />
-									</ProButton>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="end">
-									<DropdownMenuItem
-										disabled={resolve.isPending}
-										onClick={() =>
-											resolve.mutate({
-												data: {
-													paymentId: row.original.id,
-													decision: "accept",
-												},
-											})
-										}
-									>
-										<Check /> {m.payments_accept()}
-									</DropdownMenuItem>
-									<DropdownMenuItem
-										variant="destructive"
-										disabled={resolve.isPending}
-										onClick={() =>
-											resolve.mutate({
-												data: {
-													paymentId: row.original.id,
-													decision: "reject",
-												},
-											})
-										}
-									>
-										<X /> {m.payments_reject()}
-									</DropdownMenuItem>
-								</DropdownMenuContent>
-							</DropdownMenu>
-						</div>
-					) : null,
-			},
-		],
-		[resolve],
-	);
+				) : null,
+		},
+	];
 	return (
 		<Main fixed className="gap-4">
 			<PageHeader
