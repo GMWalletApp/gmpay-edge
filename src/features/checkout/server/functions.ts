@@ -13,6 +13,7 @@ import {
 import { orderIdPathSchema } from "#/features/orders/schema";
 import { DomainError } from "#/lib/domain-error";
 import { getCloudflareEnv } from "#/server/db.server";
+import { readDatabase } from "#/server/read-replica";
 
 export const getCheckoutOrderFn = createServerFn({ method: "GET" })
 	.validator((input: { orderId: string }) =>
@@ -29,7 +30,10 @@ export const getCheckoutOrderFn = createServerFn({ method: "GET" })
 				"Checkout is unavailable",
 			);
 
-		return getCheckoutOrderWithDatabase(db, data.orderId);
+		return getCheckoutOrderWithDatabase(
+			readDatabase(request, db),
+			data.orderId,
+		);
 	});
 
 export const submitCheckoutTransactionFn = createServerFn({ method: "POST" })
@@ -60,14 +64,15 @@ export const listCheckoutPaymentOptionsFn = createServerFn({ method: "GET" })
 		z.object({ orderId: orderIdPathSchema }).parse(input),
 	)
 	.handler(async ({ data }) => {
-		const db = getCloudflareEnv(getRequest()).DB;
+		const request = getRequest();
+		const db = getCloudflareEnv(request).DB;
 		if (!db)
 			throw new DomainError(
 				"checkout_unavailable",
 				503,
 				"Checkout is unavailable",
 			);
-		return listCheckoutPaymentOptions(db, data.orderId);
+		return listCheckoutPaymentOptions(readDatabase(request, db), data.orderId);
 	});
 
 export const selectCheckoutPaymentOptionFn = createServerFn({ method: "POST" })

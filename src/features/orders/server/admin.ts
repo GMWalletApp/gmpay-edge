@@ -31,6 +31,7 @@ import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 import { getCloudflareEnv } from "#/server/db.server";
 import { requestId } from "#/server/http";
+import { readDatabase } from "#/server/read-replica";
 
 const orderIdSchema = z.object({ orderId: orderIdPathSchema });
 const refundSchema = orderIdSchema.extend({
@@ -518,5 +519,5 @@ async function adminDb(permission: SystemPermission) {
 	await requireAdmin(request, permission);
 	const db = getCloudflareEnv(request).DB;
 	if (!db) throw new Error("D1 binding DB is unavailable");
-	return db;
+	return readDatabase(request, db);
 }

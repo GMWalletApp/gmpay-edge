@@ -95,8 +95,9 @@ outbox insertion are committed together. Duplicate chain/provider events cannot
 create duplicate business events or callback deliveries.
 
 Terminal delivery history follows the audit retention setting. Retention runs
-on every maintenance tick in bounded chunks while expired rows remain, so a
-steady stream of deliveries, receipts, and task runs never outgrows the cleanup.
+on every fifth maintenance minute in bounded chunks while expired rows remain,
+so a steady stream of deliveries, receipts, and task runs never outgrows the
+cleanup while user requests keep the D1 writer to themselves in between.
 
 ## Runtime notes
 

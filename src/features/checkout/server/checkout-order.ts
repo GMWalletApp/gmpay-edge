@@ -3,9 +3,10 @@ import { toGmpayStatus } from "#/features/orders/gmpay-status";
 import type { OrderStatus } from "#/features/orders/schema";
 import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
+import type { ReadDatabase } from "#/server/read-replica";
 
 export async function getCheckoutOrderWithDatabase(
-	db: D1Database,
+	db: ReadDatabase,
 	orderId: string,
 ): Promise<CheckoutOrder | null> {
 	const row = await db

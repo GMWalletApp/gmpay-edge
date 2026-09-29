@@ -204,6 +204,33 @@ package script with its `backup`, `restore`, and `import-cloudflare` subcommands
 - [ ] Configure each intended provider according to [PAYMENT_METHODS.md](PAYMENT_METHODS.md); use read-only exchange credentials and verify token identifiers and decimals.
 - [ ] Configure crypto and fiat rate sync settings; use **Run now** in each settings dialog once, verify raw/final observations, then confirm the one-minute Cron respects each category's automatic-sync switch and saved interval.
 
+## Latency on Cloudflare
+
+Every D1 statement is a network round trip to the database's primary region, so
+request latency on Workers is governed by how many statements run in sequence
+and how far the Worker is from D1. An authenticated admin call performs the
+Allowed Hosts settings read and the Better Auth session lookup concurrently and
+then its own queries; a checkout quotes every payment option from a single
+exchange-rate read. Three checks close the remaining gap:
+
+- **Smart Placement.** `wrangler.jsonc` enables it, but Cloudflare only applies
+  it after observing traffic. Confirm the status under Workers & Pages →
+  the Worker → Settings → Placement; it should report that Smart Placement is
+  active so the Worker runs near the D1 primary.
+- **D1 read replication.** Enable it once per database under D1 → the
+  database → Settings → Read replication (or through the REST API). Lists,
+  dashboards, operations views, and checkout reads then run on a session that
+  may be served by a replica near the Worker; authorization, settings, and every
+  write stay on the primary. After a mutation the response sets the
+  `gmpay_d1_bookmark` cookie (HttpOnly, five minutes) so the same browser's next
+  reads are anchored at least at that write. Without read replication the
+  session resolves to the primary and nothing changes.
+- **Measure before tuning.** Every response carries a `Server-Timing` header
+  with `authority` (settings read), `session` (Better Auth lookup), `rbac`
+  (permission cache), `app`, and `total` in milliseconds. Compare it with the
+  D1 metrics page (query latency, rows read) to see which segment dominates for
+  your users before changing regions or caching.
+
 ## Bun resources
 
 - [ ] Confirm the container runs as its non-root user and the persisted directory is writable only by the intended host/container identity.

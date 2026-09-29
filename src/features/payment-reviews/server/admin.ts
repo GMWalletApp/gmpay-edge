@@ -12,6 +12,7 @@ import { unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 import { getCloudflareEnv } from "#/server/db.server";
 import { requestId } from "#/server/http";
+import { readDatabase } from "#/server/read-replica";
 
 const paymentReviewsListSchema = z.object({
 	pageIndex: z.number().int().min(0).default(0),
@@ -25,13 +26,14 @@ export const listPaymentReviewsFn = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const request = getRequest();
 		await requireAdmin(request, systemPermission("payment_reviews", "read"));
-		const db = getCloudflareEnv(request).DB;
-		if (!db)
+		const primary = getCloudflareEnv(request).DB;
+		if (!primary)
 			throw new DomainError(
 				"payment_review_service_unavailable",
 				503,
 				"Payment review storage is unavailable",
 			);
+		const db = readDatabase(request, primary);
 		const search = data.search ? `%${data.search}%` : null;
 		const filters: string[] = [];
 		const bindings: Array<string | number> = [];

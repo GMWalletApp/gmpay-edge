@@ -2,6 +2,7 @@ import { z } from "zod";
 import { applyBasisPoints } from "#/features/payment-settings/server/rates";
 import type { AdapterErrorKind } from "#/integrations/chains/types";
 import { observeProviderOperation } from "#/integrations/provider-observability";
+import type { ReadDatabase } from "#/server/read-replica";
 
 const binanceTickerSchema = z.object({
 	symbol: z.string(),
@@ -97,15 +98,15 @@ export const defaultFiatRateSync: FiatRateSyncConfiguration = {
 };
 
 export async function loadRateSyncConfiguration(
-	db: D1Database,
+	db: ReadDatabase,
 	category: "crypto",
 ): Promise<CryptoRateSyncConfiguration>;
 export async function loadRateSyncConfiguration(
-	db: D1Database,
+	db: ReadDatabase,
 	category: "fiat",
 ): Promise<FiatRateSyncConfiguration>;
 export async function loadRateSyncConfiguration(
-	db: D1Database,
+	db: ReadDatabase,
 	category: RateSyncCategory,
 ) {
 	const row = await db

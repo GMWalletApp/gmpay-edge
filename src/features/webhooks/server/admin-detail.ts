@@ -3,8 +3,9 @@ import {
 	webhookRequestSnapshotSchema,
 } from "#/features/webhooks/types";
 import { DomainError } from "#/lib/domain-error";
+import type { ReadDatabase } from "#/server/read-replica";
 
-export async function loadAdminWebhookDelivery(db: D1Database, id: string) {
+export async function loadAdminWebhookDelivery(db: ReadDatabase, id: string) {
 	const [deliveryResult, attemptsResult] = await db.batch([
 		db
 			.prepare(`SELECT d.id, d.status, d.attempt_count, d.next_attempt_at,

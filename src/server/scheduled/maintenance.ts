@@ -1,3 +1,4 @@
+import { RETENTION_INTERVAL_MS } from "#/features/operations/schedule";
 import {
 	hasOperationalRetentionWork,
 	runOperationalRetentionCleanup,
@@ -47,6 +48,7 @@ const CLEANUP_BATCH_SIZE = 500;
 const RETENTION_BATCH_SIZE = 250;
 const RETENTION_MAX_ROWS = 2_000;
 const RETENTION_MAX_DURATION_MS = 2_000;
+
 const MAX_TASK_RUN_RETENTION_MS = 90 * 86_400_000;
 const EXTERNAL_DISPATCH_LEASE_MS = 5 * 60_000;
 const SCHEDULED_WALL_BUDGET_MS = 15 * 60_000;
@@ -120,8 +122,13 @@ async function runMaintenanceInvocation(
 	};
 	const settings = await loadOperationalSettings(env.DB);
 	const retentionWork =
-		(await hasRetentionCleanupWork(env.DB, now, settings.retentionAuditMs)) ||
-		(await hasOperationalRetentionWork(env.DB, now, settings.retentionAuditMs));
+		isRetentionMinute(now) &&
+		((await hasRetentionCleanupWork(env.DB, now, settings.retentionAuditMs)) ||
+			(await hasOperationalRetentionWork(
+				env.DB,
+				now,
+				settings.retentionAuditMs,
+			)));
 	const [cryptoRateConfiguration, fiatRateConfiguration] = await Promise.all([
 		loadRateSyncConfiguration(env.DB, "crypto"),
 		loadRateSyncConfiguration(env.DB, "fiat"),
@@ -384,6 +391,14 @@ async function settleMaintenanceTasks(
 		Array.from({ length: Math.min(3, tasks.length) }, () => worker()),
 	);
 	return results;
+}
+
+/**
+ * Retention deletes compete with user requests for the single D1 writer, so
+ * they run on every fifth minute while a backlog remains instead of every tick.
+ */
+export function isRetentionMinute(now: number) {
+	return Math.floor(now / 60_000) % (RETENTION_INTERVAL_MS / 60_000) === 0;
 }
 
 async function runRetentionCleanup(

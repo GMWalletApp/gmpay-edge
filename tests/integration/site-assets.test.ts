@@ -10,7 +10,7 @@ import { applyMigrations } from "./migrations";
 describe("site asset storage", () => {
 	let miniflare: Miniflare;
 	let db: D1Database;
-	let bucket: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
+	let bucket: R2Bucket;
 	let cache: KVNamespace;
 
 	beforeAll(async () => {
@@ -22,7 +22,9 @@ describe("site asset storage", () => {
 			kvNamespaces: ["CACHE"],
 		});
 		db = await miniflare.getD1Database("DB");
-		bucket = await miniflare.getR2Bucket("FILES");
+		// Miniflare's Node-mapped bucket type resolves differently per platform;
+		// the Workers binding type is what the code under test consumes.
+		bucket = (await miniflare.getR2Bucket("FILES")) as unknown as R2Bucket;
 		cache = (await miniflare.getKVNamespace("CACHE")) as unknown as KVNamespace;
 		await applyMigrations(db);
 		await db
