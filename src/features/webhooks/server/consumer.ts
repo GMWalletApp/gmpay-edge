@@ -7,6 +7,7 @@ import {
 	retryDelayMs,
 } from "#/features/webhooks/server/delivery";
 import {
+	type WebhookJsonObject,
 	type WebhookQueueMessage,
 	webhookJsonObjectSchema,
 } from "#/features/webhooks/types";
@@ -41,6 +42,21 @@ const callbackSnapshotSchema = z.object({
 	}),
 });
 
+// DoH resolution (3s) and the surrounding D1 round trips run inside the lease
+// in addition to the merchant fetch timeout.
+const CLAIM_LEASE_MARGIN_MS = 15_000;
+// Queue redelivery delay for infrastructure failures; the attempt is not consumed.
+const TRANSIENT_RETRY_DELAY_MS = 15_000;
+const ENQUEUE_LEASE_MS = 5 * 60_000;
+
+/** A permanent delivery-configuration failure that consumes an attempt. */
+class WebhookConfigurationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "WebhookConfigurationError";
+	}
+}
+
 export async function processWebhookMessage(
 	db: D1Database,
 	message: WebhookQueueMessageLike,
@@ -55,7 +71,8 @@ export async function processWebhookMessage(
 	const settings = context.settings ?? (await loadOperationalSettings(db));
 	const attempt = message.body.attempt;
 	const startedAt = Date.now();
-	const leaseUntil = startedAt + settings.webhookTimeoutMs + 5_000;
+	const leaseUntil =
+		startedAt + settings.webhookTimeoutMs + CLAIM_LEASE_MARGIN_MS;
 	const claimed = await db
 		.prepare(
 			`UPDATE webhook_deliveries
@@ -117,9 +134,18 @@ export async function processWebhookMessage(
 			resolveHostname &&
 			!(await assertSafeResolvedWebhookUrl(delivery.url, resolveHostname))
 		)
-			throw new Error("Webhook delivery hostname did not resolve publicly");
+			throw new WebhookConfigurationError(
+				"Webhook delivery hostname did not resolve publicly",
+			);
 		result = await deliverWebhook(delivery, fetcher, settings.webhookTimeoutMs);
-	} catch {
+	} catch (error) {
+		if (!(error instanceof WebhookConfigurationError)) {
+			// D1 read or DoH lookup failure: nothing reached the merchant, so hand the
+			// claim back and let the Queue redeliver the same attempt number.
+			await releaseWebhookClaim(db, message.body.deliveryId, attempt);
+			message.retry({ delaySeconds: TRANSIENT_RETRY_DELAY_MS / 1_000 });
+			return { success: false as const, errorCode: "transient_failure" };
+		}
 		result = {
 			success: false as const,
 			durationMs: Date.now() - startedAt,
@@ -127,9 +153,16 @@ export async function processWebhookMessage(
 		};
 	}
 	const now = Date.now();
+	// A redelivered attempt (lease expired before the outcome was recorded)
+	// replaces its own row so the history matches the delivery state.
 	await db
 		.prepare(
-			"INSERT OR IGNORE INTO webhook_attempts (id, delivery_id, attempt, request_id, response_status, duration_ms, error_code, response_excerpt, request_snapshot, attempted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			`INSERT INTO webhook_attempts (id, delivery_id, attempt, request_id, response_status, duration_ms, error_code, response_excerpt, request_snapshot, attempted_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(delivery_id, attempt) DO UPDATE SET request_id = excluded.request_id,
+			  response_status = excluded.response_status, duration_ms = excluded.duration_ms,
+			  error_code = excluded.error_code, response_excerpt = excluded.response_excerpt,
+			  request_snapshot = excluded.request_snapshot, attempted_at = excluded.attempted_at`,
 		)
 		.bind(
 			crypto.randomUUID(),
@@ -195,7 +228,12 @@ export async function processWebhookMessage(
 			.prepare(
 				"UPDATE webhook_deliveries SET next_attempt_at = ?, updated_at = ? WHERE id = ? AND status = 'failed' AND attempt_count = ?",
 			)
-			.bind(nextAttemptAt + 5 * 60_000, now, message.body.deliveryId, attempt)
+			.bind(
+				nextAttemptAt + ENQUEUE_LEASE_MS,
+				now,
+				message.body.deliveryId,
+				attempt,
+			)
 			.run();
 	} catch {
 		// D1 remains due at nextAttemptAt; Cron outbox recovery will enqueue it.
@@ -204,12 +242,49 @@ export async function processWebhookMessage(
 	return result;
 }
 
+/**
+ * Returns a claimed delivery to its pre-claim state (`queued` for the first
+ * attempt, otherwise `failed`) without recording an attempt. The row stays
+ * leased past the Queue redelivery delay so the outbox sweep only takes over
+ * when the redelivery does not arrive.
+ */
+async function releaseWebhookClaim(
+	db: D1Database,
+	deliveryId: string,
+	attempt: number,
+) {
+	const now = Date.now();
+	await db
+		.prepare(
+			`UPDATE webhook_deliveries
+			 SET status = CASE WHEN ? = 1 THEN 'queued' ELSE 'failed' END,
+			 attempt_count = ? - 1, next_attempt_at = ?, updated_at = ?
+			 WHERE id = ? AND status = 'delivering' AND attempt_count = ?`,
+		)
+		.bind(
+			attempt,
+			attempt,
+			now + TRANSIENT_RETRY_DELAY_MS + ENQUEUE_LEASE_MS,
+			now,
+			deliveryId,
+			attempt,
+		)
+		.run();
+}
+
+const sensitivePairPattern =
+	/\b(secret|token|password|passphrase|credential|authorization|api[_-]?key|signature|private[_-]?key)(\s*[=:]\s*)[^&\s"',;]+/gi;
+
+/**
+ * Structured (JSON) responses get key-based redaction; the bounded plain-text
+ * excerpt is kept for diagnostics with obvious `key=value` secrets masked.
+ */
 export function redactResponseExcerpt(value: string | undefined) {
 	if (!value) return null;
 	try {
 		return JSON.stringify(redactAuditValue(JSON.parse(value)));
 	} catch {
-		return "[REDACTED_UNPARSEABLE]";
+		return value.replace(sensitivePairPattern, "$1$2[REDACTED]");
 	}
 }
 
@@ -245,26 +320,40 @@ async function resolveWebhookDelivery(
 			secret_encrypted: string;
 			receive_address: string;
 		}>();
-	if (!row) throw new Error("Webhook delivery configuration not found");
+	if (!row)
+		throw new WebhookConfigurationError(
+			"Webhook delivery configuration not found",
+		);
 	if (!row.api_protocol)
-		throw new Error("Webhook delivery protocol is unavailable");
+		throw new WebhookConfigurationError(
+			"Webhook delivery protocol is unavailable",
+		);
 	// Validate again at delivery time so a compromised stored row cannot turn the
 	// queue worker into an SSRF proxy.
 	if (!isSafeWebhookUrl(row.url))
-		throw new Error("Webhook delivery URL is not a public HTTPS endpoint");
+		throw new WebhookConfigurationError(
+			"Webhook delivery URL is not a public HTTPS endpoint",
+		);
 	const runtime = sharedRuntime ?? (await loadRuntimeConfig(db));
 	if (!runtime.apiKeyPepper)
-		throw new Error("Webhook signing secret is unavailable");
-	const payload = webhookJsonObjectSchema.parse(JSON.parse(row.payload));
-	const snapshot = callbackSnapshotSchema.parse(payload);
+		throw new WebhookConfigurationError(
+			"Webhook signing secret is unavailable",
+		);
+	let payload: WebhookJsonObject;
+	let snapshot: z.infer<typeof callbackSnapshotSchema>;
+	let secret: string;
+	try {
+		payload = webhookJsonObjectSchema.parse(JSON.parse(row.payload));
+		snapshot = callbackSnapshotSchema.parse(payload);
+		secret = await decryptSecret(row.secret_encrypted, runtime.apiKeyPepper);
+	} catch {
+		throw new WebhookConfigurationError(
+			"Webhook payload or signing secret is unreadable",
+		);
+	}
 	const transaction = webhookJsonObjectSchema.safeParse(payload.transaction);
 	const metadata = parseMetadata(row.metadata);
-	const base = {
-		...message,
-		url: row.url,
-		secret: await decryptSecret(row.secret_encrypted, runtime.apiKeyPepper),
-		payload,
-	};
+	const base = { ...message, url: row.url, secret, payload };
 	if (row.api_protocol === "gmpay")
 		return {
 			...base,

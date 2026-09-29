@@ -230,14 +230,11 @@ describe("scheduled maintenance isolation", () => {
 		expect(JSON.parse(cleanup?.result ?? "null")).toEqual({ affectedRows: 0 });
 	});
 
-	it("runs daily retention cleanup through the unified schedule", async () => {
+	it("runs retention cleanup whenever expired rows exist", async () => {
 		const now = Date.now();
 		const expiredAt = now - 366 * 86_400_000;
 		const expiredTaskAt = now - 91 * 86_400_000;
 		await db.batch([
-			db.prepare(
-				"DELETE FROM system_settings WHERE key = 'runtime.retention_schedule'",
-			),
 			db
 				.prepare(
 					`INSERT INTO operation_task_runs
@@ -352,24 +349,67 @@ describe("scheduled maintenance isolation", () => {
 		).toContain("operation_task_runs_retention_idx");
 	});
 
-	it("bounds retention work and uses the expiry index under a large backlog", async () => {
+	it("continues retention on later ticks while expired rows remain", async () => {
 		const now = Date.now();
-		await db.batch([
-			db.prepare(
-				"DELETE FROM system_settings WHERE key = 'runtime.retention_schedule'",
-			),
+		await db
+			.prepare(
+				`WITH RECURSIVE backlog(value) AS (
+				 SELECT 1 UNION ALL SELECT value + 1 FROM backlog WHERE value < 2100
+				)
+				INSERT INTO audit_logs (id, action, target_type, created_at)
+				SELECT 'expired-backlog-' || value, 'test.expired', 'test', ? FROM backlog`,
+			)
+			.bind(now - 366 * 86_400_000)
+			.run();
+		const remaining = () =>
 			db
 				.prepare(
-					`WITH RECURSIVE backlog(value) AS (
+					"SELECT COUNT(*) AS count FROM audit_logs WHERE id LIKE 'expired-backlog-%'",
+				)
+				.first<{ count: number }>()
+				.then((row) => row?.count ?? 0);
+		const runsBefore = await db
+			.prepare(
+				"SELECT COUNT(*) AS count FROM operation_task_runs WHERE task = 'retention_cleanup'",
+			)
+			.first<{ count: number }>();
+
+		let ticks = 0;
+		while ((await remaining()) > 0 && ticks < 5) {
+			await runMaintenance({ DB: db } as unknown as Env, "* * * * *", {
+				expire: vi.fn(),
+				recoverWebhooks: vi.fn(),
+				loadDueWork: forcedDueWork(),
+			});
+			ticks += 1;
+		}
+
+		// One bounded chunk (at most 2000 rows) per tick, so the backlog needs a
+		// second tick and each tick is a tracked run.
+		expect(ticks).toBeGreaterThanOrEqual(2);
+		await expect(remaining()).resolves.toBe(0);
+		const runsAfter = await db
+			.prepare(
+				"SELECT COUNT(*) AS count FROM operation_task_runs WHERE task = 'retention_cleanup' AND status = 'succeeded'",
+			)
+			.first<{ count: number }>();
+		expect((runsAfter?.count ?? 0) - (runsBefore?.count ?? 0)).toBe(ticks);
+	});
+
+	it("bounds retention work and uses the expiry index under a large backlog", async () => {
+		const now = Date.now();
+		await db
+			.prepare(
+				`WITH RECURSIVE backlog(value) AS (
 				 SELECT 1 UNION ALL SELECT value + 1 FROM backlog WHERE value < 501
 				)
 				INSERT INTO idempotency_keys
 				 (id, key, request_hash, expires_at, created_at, updated_at)
 				SELECT 'cleanup-' || value, 'cleanup-' || value, 'hash', ?, ?, ?
 				FROM backlog`,
-				)
-				.bind(now - 1, now, now),
-		]);
+			)
+			.bind(now - 1, now, now)
+			.run();
 
 		await runMaintenance({ DB: db } as unknown as Env, "* * * * *", {
 			expire: vi.fn(),

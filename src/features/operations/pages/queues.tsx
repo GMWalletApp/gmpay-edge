@@ -1,4 +1,3 @@
-"use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, RotateCcw } from "lucide-react";
@@ -56,6 +55,11 @@ export function QueuesPage() {
 		{ accessorKey: "pending", header: m.queue_pending() },
 		{ accessorKey: "processing", header: m.queue_processing() },
 		{ accessorKey: "failed", header: m.status_failed() },
+		{
+			accessorKey: "dead",
+			header: m.queue_dead(),
+			cell: ({ row }) => row.original.dead ?? "—",
+		},
 		{
 			accessorKey: "lastConsumedAt",
 			header: m.queue_last_consumed(),

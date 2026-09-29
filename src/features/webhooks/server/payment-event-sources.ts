@@ -20,6 +20,7 @@ import {
 import { DomainError } from "#/lib/domain-error";
 import { decryptSecret, encryptSecret } from "#/lib/secrets";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 import { loadRequestRuntimeConfig } from "#/server/runtime-config";
 
 const evmNetworkSchema = z.enum(["ethereum", "base", "bsc", "polygon"]);
@@ -289,7 +290,7 @@ export const retryPaymentProviderEventFn = createServerFn({ method: "POST" })
 			Date.now(),
 			{
 				actorUserId: context.user.id,
-				requestId: context.request.headers.get("x-request-id"),
+				requestId: requestId(context.request),
 				ipAddress: context.request.headers.get("cf-connecting-ip"),
 			},
 		);
@@ -406,7 +407,7 @@ function auditStatement(
 			context.user.id,
 			action,
 			targetId,
-			context.request.headers.get("x-request-id"),
+			requestId(context.request),
 			context.request.headers.get("cf-connecting-ip"),
 			before ? JSON.stringify(before) : null,
 			after ? JSON.stringify(after) : null,

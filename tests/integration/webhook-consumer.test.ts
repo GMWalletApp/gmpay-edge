@@ -13,8 +13,8 @@ import {
 import { recoverWebhookOutbox } from "#/features/webhooks/server/outbox";
 import {
 	claimManualWebhookRetry,
-	completeManualWebhookRetry,
 	releaseManualWebhookRetry,
+	requireRetryableWebhookDelivery,
 } from "#/features/webhooks/server/retry";
 import type { WebhookQueueMessage } from "#/features/webhooks/types";
 import { encryptSecret } from "#/lib/secrets";
@@ -35,15 +35,19 @@ describe("Webhook queue consumer on D1", () => {
 	});
 	afterAll(async () => miniflare.dispose());
 
-	it("redacts structured response secrets and never persists opaque response text", () => {
+	it("redacts structured response secrets and keeps bounded plain text with masked pairs", () => {
 		expect(
 			redactResponseExcerpt(
 				JSON.stringify({ message: "failed", apiKey: "merchant-secret" }),
 			),
 		).toBe('{"message":"failed","apiKey":"[REDACTED]"}');
-		expect(redactResponseExcerpt("token=merchant-secret")).toBe(
-			"[REDACTED_UNPARSEABLE]",
+		expect(redactResponseExcerpt("token=merchant-secret&status=error")).toBe(
+			"token=[REDACTED]&status=error",
 		);
+		expect(redactResponseExcerpt("Internal Server Error")).toBe(
+			"Internal Server Error",
+		);
+		expect(redactResponseExcerpt("")).toBeNull();
 	});
 
 	it("records a failed attempt, schedules backoff, then succeeds", async () => {
@@ -414,29 +418,28 @@ describe("Webhook queue consumer on D1", () => {
 		});
 	});
 
-	it("atomically claims and can recover a manual retry", async () => {
+	it("atomically claims a manual retry and releases it as due", async () => {
+		const now = Date.now();
 		const claims = await Promise.all([
-			claimManualWebhookRetry(db, "delivery-manual", -101),
-			claimManualWebhookRetry(db, "delivery-manual", -202),
+			claimManualWebhookRetry(db, "delivery-manual", 3, now),
+			claimManualWebhookRetry(db, "delivery-manual", 3, now),
 		]);
 		expect(claims.filter(Boolean)).toHaveLength(1);
-		const token = claims[0] ? -101 : -202;
-		await releaseManualWebhookRetry(db, "delivery-manual", token, {
-			status: "failed",
-			attemptCount: 3,
-		});
 		await expect(delivery(db, "delivery-manual")).resolves.toMatchObject({
 			status: "failed",
 			attempt_count: 3,
+			next_attempt_at: now + 5 * 60_000,
+		});
+		// The Queue rejected the message: the row becomes due for the sweep.
+		await releaseManualWebhookRetry(db, "delivery-manual", 3, now);
+		await expect(delivery(db, "delivery-manual")).resolves.toMatchObject({
+			status: "failed",
+			attempt_count: 3,
+			next_attempt_at: now,
 		});
 		await expect(
-			claimManualWebhookRetry(db, "delivery-manual", -303),
+			claimManualWebhookRetry(db, "delivery-manual", 3, now),
 		).resolves.toBe(true);
-		await completeManualWebhookRetry(db, "delivery-manual", -303);
-		await expect(delivery(db, "delivery-manual")).resolves.toMatchObject({
-			status: "queued",
-			attempt_count: 0,
-		});
 	});
 
 	it("recovers persisted queued deliveries without putting secrets in Queue", async () => {
@@ -517,6 +520,227 @@ describe("Webhook queue consumer on D1", () => {
 		]);
 		expect(first.queued + second.queued).toBe(1);
 		expect(send).toHaveBeenCalledOnce();
+	});
+
+	it("recovers a delivery stranded in delivering once its consumer lease expired", async () => {
+		const now = Date.now();
+		await seedDelivery(db, "stranded", "delivering", 2, now - 1);
+		await seedDelivery(db, "leased", "delivering", 1, now + 60_000);
+		const send = vi.fn().mockResolvedValue(undefined);
+		const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+		let record: Record<string, unknown> | undefined;
+		try {
+			await recoverWebhookOutbox(
+				{ DB: db, WEBHOOK_QUEUE: { send } } as unknown as Pick<
+					Env,
+					"DB" | "WEBHOOK_QUEUE"
+				>,
+				now,
+			);
+			record = JSON.parse(String(info.mock.calls[0]?.[0]));
+		} finally {
+			info.mockRestore();
+		}
+		expect(send).toHaveBeenCalledWith({
+			kind: "webhook.delivery",
+			version: 1,
+			deliveryId: "delivery-stranded",
+			eventId: "event-stranded",
+			attempt: 3,
+		});
+		expect(
+			send.mock.calls.map(
+				(call) => (call[0] as WebhookQueueMessage).deliveryId,
+			),
+		).not.toContain("delivery-leased");
+		expect(record).toMatchObject({ strandedDeliveries: 1 });
+		await expect(delivery(db, "delivery-stranded")).resolves.toMatchObject({
+			status: "failed",
+			attempt_count: 2,
+			next_attempt_at: now + 5 * 60_000,
+		});
+		await expect(delivery(db, "delivery-leased")).resolves.toMatchObject({
+			status: "delivering",
+			attempt_count: 1,
+		});
+
+		const recovered = fakeMessage("delivery-stranded", 3);
+		recovered.message.body.eventId = "event-stranded";
+		await processWebhookMessage(
+			db,
+			recovered.message,
+			vi.fn().mockResolvedValue(new Response("ok", { status: 200 })),
+		);
+		expect(recovered.ack).toHaveBeenCalledOnce();
+		await expect(delivery(db, "delivery-stranded")).resolves.toMatchObject({
+			status: "succeeded",
+			attempt_count: 3,
+		});
+	});
+
+	it("continues attempt numbering on manual retry and lists the newest attempt", async () => {
+		const now = Date.now();
+		await seedDelivery(db, "manual-numbering", "dead", 3, null, now);
+		await db.batch(
+			[1, 2, 3].map((attempt) =>
+				db
+					.prepare(
+						"INSERT INTO webhook_attempts (id, delivery_id, attempt, request_id, response_status, attempted_at) VALUES (?, 'delivery-manual-numbering', ?, ?, 500, ?)",
+					)
+					.bind(`attempt-numbering-${attempt}`, attempt, `old-${attempt}`, now),
+			),
+		);
+		const row = await delivery(db, "delivery-manual-numbering");
+		expect(() =>
+			requireRetryableWebhookDelivery(
+				row as { status: string; next_attempt_at: number | null },
+				now,
+			),
+		).not.toThrow();
+		await expect(
+			claimManualWebhookRetry(db, "delivery-manual-numbering", 3, now),
+		).resolves.toBe(true);
+		const leased = await delivery(db, "delivery-manual-numbering");
+		expect(leased).toMatchObject({
+			status: "failed",
+			attempt_count: 3,
+			completed_at: null,
+		});
+		// While the retry is leased, another operator receives "in progress".
+		expect(() =>
+			requireRetryableWebhookDelivery(
+				leased as { status: string; next_attempt_at: number | null },
+				now,
+			),
+		).toThrow(
+			expect.objectContaining({ code: "webhook_delivery_retry_in_progress" }),
+		);
+		await expect(
+			claimManualWebhookRetry(db, "delivery-manual-numbering", 3, now),
+		).resolves.toBe(false);
+
+		const retried = fakeMessage("delivery-manual-numbering", 4);
+		retried.message.body.eventId = "event-manual-numbering";
+		await processWebhookMessage(
+			db,
+			retried.message,
+			vi.fn().mockResolvedValue(new Response("ok", { status: 200 })),
+		);
+		await expect(
+			delivery(db, "delivery-manual-numbering"),
+		).resolves.toMatchObject({ status: "succeeded", attempt_count: 4 });
+		const attempts = await db
+			.prepare(
+				"SELECT attempt, response_status FROM webhook_attempts WHERE delivery_id = 'delivery-manual-numbering' ORDER BY attempt",
+			)
+			.all<{ attempt: number; response_status: number }>();
+		expect(attempts.results).toEqual([
+			{ attempt: 1, response_status: 500 },
+			{ attempt: 2, response_status: 500 },
+			{ attempt: 3, response_status: 500 },
+			{ attempt: 4, response_status: 200 },
+		]);
+		// The admin list joins the attempt row that matches the attempt counter.
+		const listed = await db
+			.prepare(
+				`SELECT a.response_status FROM webhook_deliveries d
+				 LEFT JOIN webhook_attempts a ON a.delivery_id = d.id AND a.attempt = d.attempt_count
+				 WHERE d.id = 'delivery-manual-numbering'`,
+			)
+			.first<{ response_status: number }>();
+		expect(listed?.response_status).toBe(200);
+	});
+
+	it("hands the claim back without an attempt row when the DNS pre-check fails", async () => {
+		const now = Date.now();
+		await seedDelivery(db, "transient", "queued", 0, null);
+		const dnsFailure = vi.fn().mockRejectedValue(new Error("DoH unavailable"));
+		const fetcher = vi.fn();
+		const first = fakeMessage("delivery-transient", 1);
+		first.message.body.eventId = "event-transient";
+		await processWebhookMessage(db, first.message, fetcher, undefined, {
+			resolveHostname: dnsFailure,
+		});
+		expect(fetcher).not.toHaveBeenCalled();
+		expect(first.retry).toHaveBeenCalledWith({ delaySeconds: 15 });
+		expect(first.ack).not.toHaveBeenCalled();
+		const released = await delivery(db, "delivery-transient");
+		expect(released).toMatchObject({ status: "queued", attempt_count: 0 });
+		expect(Number(released?.next_attempt_at)).toBeGreaterThanOrEqual(
+			now + 15_000 + 5 * 60_000,
+		);
+
+		await db
+			.prepare(
+				"UPDATE webhook_deliveries SET status = 'failed', attempt_count = 1, next_attempt_at = 0 WHERE id = 'delivery-transient'",
+			)
+			.run();
+		const second = fakeMessage("delivery-transient", 2);
+		second.message.body.eventId = "event-transient";
+		await processWebhookMessage(db, second.message, fetcher, undefined, {
+			resolveHostname: dnsFailure,
+		});
+		expect(second.retry).toHaveBeenCalledWith({ delaySeconds: 15 });
+		await expect(delivery(db, "delivery-transient")).resolves.toMatchObject({
+			status: "failed",
+			attempt_count: 1,
+		});
+		await expect(attemptCount(db, "delivery-transient")).resolves.toBe(0);
+
+		// A hostname that resolves privately is a configuration failure and is recorded.
+		const third = fakeMessage("delivery-transient", 2);
+		third.message.body.eventId = "event-transient";
+		await processWebhookMessage(db, third.message, fetcher, undefined, {
+			resolveHostname: vi.fn().mockResolvedValue(["10.0.0.8"]),
+		});
+		expect(fetcher).not.toHaveBeenCalled();
+		await expect(delivery(db, "delivery-transient")).resolves.toMatchObject({
+			status: "failed",
+			attempt_count: 2,
+		});
+		const recorded = await db
+			.prepare(
+				"SELECT attempt, error_code FROM webhook_attempts WHERE delivery_id = 'delivery-transient'",
+			)
+			.all<{ attempt: number; error_code: string }>();
+		expect(recorded.results).toEqual([
+			{ attempt: 2, error_code: "configuration_error" },
+		]);
+	});
+
+	it("replaces the attempt row when a lease-expired delivering attempt is redelivered", async () => {
+		const now = Date.now();
+		await seedDelivery(db, "redelivered", "delivering", 1, now - 1);
+		await db
+			.prepare(
+				"INSERT INTO webhook_attempts (id, delivery_id, attempt, request_id, response_status, attempted_at) VALUES ('attempt-redelivered-1', 'delivery-redelivered', 1, 'request-old', 500, ?)",
+			)
+			.bind(now - 1)
+			.run();
+		const redelivered = fakeMessage("delivery-redelivered", 1);
+		redelivered.message.body.eventId = "event-redelivered";
+		await processWebhookMessage(
+			db,
+			redelivered.message,
+			vi.fn().mockResolvedValue(new Response("ok", { status: 200 })),
+		);
+		expect(redelivered.ack).toHaveBeenCalledOnce();
+		await expect(delivery(db, "delivery-redelivered")).resolves.toMatchObject({
+			status: "succeeded",
+			attempt_count: 1,
+		});
+		const attempts = await db
+			.prepare(
+				"SELECT attempt, request_id, response_status FROM webhook_attempts WHERE delivery_id = 'delivery-redelivered'",
+			)
+			.all<{ attempt: number; request_id: string; response_status: number }>();
+		expect(attempts.results).toEqual([
+			{
+				attempt: 1,
+				request_id: "request-delivery-redelivered-1",
+				response_status: 200,
+			},
+		]);
 	});
 
 	it("refuses unsafe stored endpoint URLs before calling fetch", async () => {
@@ -648,6 +872,50 @@ async function delivery(db: D1Database, id: string) {
 		)
 		.bind(id)
 		.first<Record<string, string | number | null>>();
+}
+
+async function attemptCount(db: D1Database, deliveryId: string) {
+	const row = await db
+		.prepare(
+			"SELECT COUNT(*) AS count FROM webhook_attempts WHERE delivery_id = ?",
+		)
+		.bind(deliveryId)
+		.first<{ count: number }>();
+	return row?.count ?? 0;
+}
+
+async function seedDelivery(
+	db: D1Database,
+	suffix: string,
+	status: string,
+	attemptCount: number,
+	nextAttemptAt: number | null,
+	completedAt: number | null = null,
+) {
+	const now = Date.now();
+	await db.batch([
+		db
+			.prepare(
+				`INSERT INTO webhook_events (id, order_id, type, deduplication_key, payload, created_at, updated_at)
+				 VALUES (?, 'order-webhook', 'order.paid', ?, '{"status":"paid","amount":"1","payment":{"amount":null,"asset":null,"receivedAmountUnits":"0"}}', ?, ?)`,
+			)
+			.bind(`event-${suffix}`, `event:${suffix}`, now, now),
+		db
+			.prepare(
+				`INSERT INTO webhook_deliveries (id, event_id, order_id, api_key_id, status, attempt_count, next_attempt_at, completed_at, created_at, updated_at)
+				 VALUES (?, ?, 'order-webhook', 'api-key', ?, ?, ?, ?, ?, ?)`,
+			)
+			.bind(
+				`delivery-${suffix}`,
+				`event-${suffix}`,
+				status,
+				attemptCount,
+				nextAttemptAt,
+				completedAt,
+				now,
+				now,
+			),
+	]);
 }
 
 async function seed(db: D1Database) {

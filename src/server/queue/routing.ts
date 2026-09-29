@@ -9,6 +9,7 @@ import type {
 } from "#/features/payments/types";
 import { processWebhookMessage } from "#/features/webhooks/server/consumer";
 import type { WebhookQueueMessage } from "#/features/webhooks/types";
+import { isRecord } from "#/lib/is-record";
 import { loadOperationalSettings } from "#/server/operational-settings";
 import { handlePaymentMaintenance } from "#/server/queue/payment-maintenance";
 import { handlePaymentProviderEvent } from "#/server/queue/payment-provider-event";
@@ -52,8 +53,19 @@ export async function handleQueue(
 								adapterCache,
 								expectedKind,
 							});
-						} catch {
+						} catch (error) {
 							failedMessages += 1;
+							console.error(
+								JSON.stringify({
+									event: "queue_message_failed",
+									invocationId,
+									queue: batch.queue,
+									messageId: message.id,
+									kind: queueMessageKind(message.body),
+									errorName:
+										error instanceof Error ? error.name : "UnknownError",
+								}),
+							);
 							if (disposition.value === "pending") message.retry();
 						}
 					}),
@@ -354,10 +366,6 @@ function isPaymentEventSourceReconcileMessageBody(
 		hasOnlyKeys(value, ["kind", "version", "sourceId"]) &&
 		isBoundedString(value.sourceId, 128)
 	);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: string[]) {

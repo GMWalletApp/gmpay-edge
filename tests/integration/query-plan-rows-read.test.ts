@@ -127,14 +127,13 @@ describe("maintenance hot-query rows read", () => {
 		expect(optimized.meta.rows_read).toBeLessThanOrEqual(11);
 	});
 
-	it("excludes impossible retry states from ordered outbox recovery", async () => {
+	it("excludes terminal deliveries from ordered outbox recovery", async () => {
+		// Pending migration: the partial outbox index covers every non-terminal row.
 		const query = (indexName: string) =>
 			db
 				.prepare(
 					`SELECT id FROM webhook_deliveries INDEXED BY ${indexName}
-					 WHERE status IN ('queued', 'failed')
-					 AND ((status = 'queued' AND attempt_count = 0)
-					  OR (status = 'failed' AND attempt_count > 0))
+					 WHERE status IN ('queued', 'failed', 'delivering')
 					 AND (next_attempt_at IS NULL OR next_attempt_at <= 100)
 					 ORDER BY created_at, id LIMIT 10`,
 				)
@@ -181,8 +180,7 @@ async function seedMaintenanceRows(db: D1Database) {
 		),
 		db.prepare(
 			`CREATE INDEX baseline_webhook_deliveries_outbox_idx
-			 ON webhook_deliveries (created_at, id)
-			 WHERE status IN ('queued', 'failed')`,
+			 ON webhook_deliveries (created_at, id)`,
 		),
 		db.prepare(
 			`CREATE INDEX baseline_payment_ingresses_health_idx
@@ -280,10 +278,12 @@ async function seedMaintenanceRows(db: D1Database) {
 			 SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 1010
 			)
 			INSERT INTO webhook_deliveries
-			 (id, event_id, order_id, api_key_id, status, attempt_count, created_at, updated_at)
+			 (id, event_id, order_id, api_key_id, status, attempt_count, completed_at, created_at, updated_at)
 			SELECT 'rows-delivery-' || value, 'rows-event-' || value,
-			 'rows-webhook-order', 'rows-api-key', 'queued',
-			 CASE WHEN value <= 1000 THEN 1 ELSE 0 END, value, value FROM sequence`,
+			 'rows-webhook-order', 'rows-api-key',
+			 CASE WHEN value <= 1000 THEN 'succeeded' ELSE 'queued' END,
+			 CASE WHEN value <= 1000 THEN 1 ELSE 0 END,
+			 CASE WHEN value <= 1000 THEN value ELSE NULL END, value, value FROM sequence`,
 		)
 		.run();
 }

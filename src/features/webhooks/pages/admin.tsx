@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Eye, MoreHorizontal, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CopyButton, ProButton } from "#/components/pro/base/button";
 import { ProTable, type ProTableState } from "#/components/pro/table";
@@ -78,11 +76,11 @@ export function WebhooksSection() {
 		},
 		[markFailure, markSuccess],
 	);
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		snapshotRef.current = null;
 		await client.invalidateQueries({ queryKey: ["admin", "webhooks"] });
 		setRefreshKey((value) => value + 1);
-	}, [client]);
+	};
 	const retry = useMutation({
 		mutationFn: retryWebhookDeliveryFn,
 		onSuccess: async () => {
@@ -91,108 +89,105 @@ export function WebhooksSection() {
 		},
 		onError: (error) => toast.error(webhookOperationErrorMessage(error)),
 	});
-	const columns = useMemo<ColumnDef<Delivery>[]>(
-		() => [
-			{
-				accessorKey: "type",
-				header: m.webhooks_event(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">
-							{webhookEventLabel(row.original.type)}
-						</strong>
-						<code className="text-muted-foreground text-xs">
-							{row.original.eventId}
-						</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "url",
-				header: m.api_notify_url(),
-				cell: ({ row }) => (
-					<div className="max-w-80">
-						<span className="block truncate" title={row.original.url}>
-							{row.original.url}
-						</span>
-						<code className="block truncate text-muted-foreground text-xs">
-							{row.original.orderId}
-						</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "status",
-				header: m.common_status(),
-				cell: ({ row }) => (
-					<div className="space-y-1">
-						<DeliveryStatusBadge status={row.original.status} />
-						<small className="block text-muted-foreground">
-							{m.webhooks_attempts()}: {row.original.attemptCount}
-						</small>
-						<small className="block text-muted-foreground">
-							{m.webhooks_response()}:{" "}
-							{row.original.responseStatus ?? row.original.errorCode ?? "—"}
-							{row.original.durationMs != null ? (
-								<> · {row.original.durationMs} ms</>
-							) : null}
-						</small>
-					</div>
-				),
-			},
-			{
-				accessorKey: "createdAt",
-				header: m.common_created(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									variant="ghost"
-									tooltip={m.common_actions()}
-									onFocus={(event) => {
-										detailsTriggerRef.current = event.currentTarget;
-									}}
-									onClick={(event) => {
-										detailsTriggerRef.current = event.currentTarget;
-									}}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
+	const columns: ColumnDef<Delivery>[] = [
+		{
+			accessorKey: "type",
+			header: m.webhooks_event(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">
+						{webhookEventLabel(row.original.type)}
+					</strong>
+					<code className="text-muted-foreground text-xs">
+						{row.original.eventId}
+					</code>
+				</div>
+			),
+		},
+		{
+			accessorKey: "url",
+			header: m.api_notify_url(),
+			cell: ({ row }) => (
+				<div className="max-w-80">
+					<span className="block truncate" title={row.original.url}>
+						{row.original.url}
+					</span>
+					<code className="block truncate text-muted-foreground text-xs">
+						{row.original.orderId}
+					</code>
+				</div>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: m.common_status(),
+			cell: ({ row }) => (
+				<div className="space-y-1">
+					<DeliveryStatusBadge status={row.original.status} />
+					<small className="block text-muted-foreground">
+						{m.webhooks_attempts()}: {row.original.attemptCount}
+					</small>
+					<small className="block text-muted-foreground">
+						{m.webhooks_response()}:{" "}
+						{row.original.responseStatus ?? row.original.errorCode ?? "—"}
+						{row.original.durationMs != null ? (
+							<> · {row.original.durationMs} ms</>
+						) : null}
+					</small>
+				</div>
+			),
+		},
+		{
+			accessorKey: "createdAt",
+			header: m.common_created(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								variant="ghost"
+								tooltip={m.common_actions()}
+								onFocus={(event) => {
+									detailsTriggerRef.current = event.currentTarget;
+								}}
+								onClick={(event) => {
+									detailsTriggerRef.current = event.currentTarget;
+								}}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem
+								onClick={() => setSelectedDeliveryId(row.original.id)}
+							>
+								<Eye />
+								{m.webhooks_view_details()}
+							</DropdownMenuItem>
+							{row.original.retryable ? (
 								<DropdownMenuItem
-									onClick={() => setSelectedDeliveryId(row.original.id)}
+									disabled={retry.isPending}
+									onClick={() =>
+										retry.mutate({ data: { id: row.original.id } })
+									}
 								>
-									<Eye />
-									{m.webhooks_view_details()}
+									<RotateCcw />
+									{m.webhooks_retry()}
 								</DropdownMenuItem>
-								{["failed", "dead"].includes(row.original.status) ? (
-									<DropdownMenuItem
-										disabled={retry.isPending}
-										onClick={() =>
-											retry.mutate({ data: { id: row.original.id } })
-										}
-									>
-										<RotateCcw />
-										{m.webhooks_retry()}
-									</DropdownMenuItem>
-								) : null}
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[retry],
-	);
+							) : null}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
 			<PageHeader

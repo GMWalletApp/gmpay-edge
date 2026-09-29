@@ -1,8 +1,6 @@
-"use client";
-
 import type { ColumnDef } from "@tanstack/react-table";
 import { Download } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ProTable, type ProTableState } from "#/components/pro/table";
 import { Badge } from "#/components/ui/badge";
@@ -25,7 +23,7 @@ export function AuditLogsPage() {
 	const [refreshKey, setRefreshKey] = useState(0);
 	const snapshotRef = useRef<{ key: string; at: number } | null>(null);
 	const [exporting, setExporting] = useState(false);
-	const exportLogs = useCallback(async () => {
+	const exportLogs = async () => {
 		setExporting(true);
 		try {
 			const result = await exportAuditLogsFn();
@@ -40,7 +38,7 @@ export function AuditLogsPage() {
 		} finally {
 			setExporting(false);
 		}
-	}, []);
+	};
 	const request = useCallback(async (state: ProTableState) => {
 		const search = String(
 			state.columnFilters.find((filter) => filter.id === "action")?.value ?? "",
@@ -58,61 +56,58 @@ export function AuditLogsPage() {
 		});
 		return { data: result.items, total: result.total };
 	}, []);
-	const columns = useMemo<ColumnDef<AuditLogRecord>[]>(
-		() => [
-			{
-				accessorKey: "createdAt",
-				header: m.audit_time(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actor",
-				header: m.audit_actor(),
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">
-							{row.original.actorName ?? m.audit_system()}
-						</strong>
-						<span className="text-muted-foreground text-xs">
-							{row.original.actorEmail ?? m.audit_automated_task()}
-						</span>
-					</div>
-				),
-			},
-			{
-				accessorKey: "action",
-				header: m.audit_action(),
-				cell: ({ row }) => (
-					<Badge variant="secondary">{row.original.action}</Badge>
-				),
-			},
-			{
-				id: "target",
-				header: m.audit_target(),
-				cell: ({ row }) => (
-					<div>
-						<span className="block">{row.original.targetType}</span>
-						<code className="text-muted-foreground text-xs">
-							{row.original.targetId ?? "—"}
-						</code>
-					</div>
-				),
-			},
-			{
-				id: "context",
-				header: m.audit_context(),
-				cell: ({ row }) => (
-					<div className="text-muted-foreground text-xs">
-						<span className="block">{row.original.ipAddress ?? "—"}</span>
-						{row.original.requestId ? (
-							<code>{row.original.requestId}</code>
-						) : null}
-					</div>
-				),
-			},
-		],
-		[],
-	);
+	const columns: ColumnDef<AuditLogRecord>[] = [
+		{
+			accessorKey: "createdAt",
+			header: m.audit_time(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actor",
+			header: m.audit_actor(),
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">
+						{row.original.actorName ?? m.audit_system()}
+					</strong>
+					<span className="text-muted-foreground text-xs">
+						{row.original.actorEmail ?? m.audit_automated_task()}
+					</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "action",
+			header: m.audit_action(),
+			cell: ({ row }) => (
+				<Badge variant="secondary">{row.original.action}</Badge>
+			),
+		},
+		{
+			id: "target",
+			header: m.audit_target(),
+			cell: ({ row }) => (
+				<div>
+					<span className="block">{row.original.targetType}</span>
+					<code className="text-muted-foreground text-xs">
+						{row.original.targetId ?? "—"}
+					</code>
+				</div>
+			),
+		},
+		{
+			id: "context",
+			header: m.audit_context(),
+			cell: ({ row }) => (
+				<div className="text-muted-foreground text-xs">
+					<span className="block">{row.original.ipAddress ?? "—"}</span>
+					{row.original.requestId ? (
+						<code>{row.original.requestId}</code>
+					) : null}
+				</div>
+			),
+		},
+	];
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
 			<PageHeader

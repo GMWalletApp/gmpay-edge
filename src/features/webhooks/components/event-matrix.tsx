@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { Checkbox } from "#/components/pro/base/fields/checkbox";
 import {

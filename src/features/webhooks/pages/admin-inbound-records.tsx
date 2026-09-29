@@ -1,9 +1,7 @@
-"use client";
-
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, MoreHorizontal, RotateCcw } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { ProButton } from "#/components/pro/base/button";
 import { ProTable, type ProTableState } from "#/components/pro/table";
 import { Badge } from "#/components/ui/badge";
@@ -56,107 +54,104 @@ export function InboundNotificationRecordsPage() {
 		});
 		return { data: result.items, total: result.total };
 	}, []);
-	const columns = useMemo<ColumnDef<InboundNotificationRecord>[]>(
-		() => [
-			{
-				accessorKey: "endpointCode",
-				header: m.webhooks_inbound_endpoint(),
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">
-							{endpointNameLabel(row.original.endpointCode)}
-						</strong>
-						<code className="text-muted-foreground text-xs">
-							{row.original.requestPath}
-						</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "requestId",
-				header: m.webhooks_request_id(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<code className="block max-w-56 truncate text-xs">
-						{row.original.requestId}
+	const columns: ColumnDef<InboundNotificationRecord>[] = [
+		{
+			accessorKey: "endpointCode",
+			header: m.webhooks_inbound_endpoint(),
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">
+						{endpointNameLabel(row.original.endpointCode)}
+					</strong>
+					<code className="text-muted-foreground text-xs">
+						{row.original.requestPath}
 					</code>
-				),
-			},
-			{
-				accessorKey: "processingStatus",
-				header: m.common_status(),
-				cell: ({ row }) => (
-					<div className="space-y-1">
-						<Badge
-							variant={
-								row.original.processingStatus === "failed"
-									? "destructive"
-									: "secondary"
-							}
-						>
-							{processingStatusLabel(row.original.processingStatus)}
-						</Badge>
-						<small className="block text-muted-foreground">
-							{m.webhooks_signature()}:{" "}
-							{signatureStatusLabel(row.original.signatureStatus)}
-						</small>
-					</div>
-				),
-			},
-			{
-				accessorKey: "responseStatus",
-				header: m.webhooks_response(),
-				cell: ({ row }) => (
-					<div>
-						<span>{row.original.responseStatus}</span>
-						<small className="block text-muted-foreground">
-							{row.original.durationMs} ms
-							{row.original.errorCode ? ` · ${row.original.errorCode}` : ""}
-						</small>
-					</div>
-				),
-			},
-			{
-				accessorKey: "receivedAt",
-				header: m.webhooks_received_at(),
-				cell: ({ row }) => formatDateTime(row.original.receivedAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									variant="ghost"
-									tooltip={m.common_actions()}
-									onFocus={(event) => {
-										detailsTriggerRef.current = event.currentTarget;
-									}}
-									onClick={(event) => {
-										detailsTriggerRef.current = event.currentTarget;
-									}}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem
-									onClick={() => setSelectedReceiptId(row.original.id)}
-								>
-									<Eye />
-									{m.webhooks_view_details()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[],
-	);
+				</div>
+			),
+		},
+		{
+			accessorKey: "requestId",
+			header: m.webhooks_request_id(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<code className="block max-w-56 truncate text-xs">
+					{row.original.requestId}
+				</code>
+			),
+		},
+		{
+			accessorKey: "processingStatus",
+			header: m.common_status(),
+			cell: ({ row }) => (
+				<div className="space-y-1">
+					<Badge
+						variant={
+							row.original.processingStatus === "failed"
+								? "destructive"
+								: "secondary"
+						}
+					>
+						{processingStatusLabel(row.original.processingStatus)}
+					</Badge>
+					<small className="block text-muted-foreground">
+						{m.webhooks_signature()}:{" "}
+						{signatureStatusLabel(row.original.signatureStatus)}
+					</small>
+				</div>
+			),
+		},
+		{
+			accessorKey: "responseStatus",
+			header: m.webhooks_response(),
+			cell: ({ row }) => (
+				<div>
+					<span>{row.original.responseStatus}</span>
+					<small className="block text-muted-foreground">
+						{row.original.durationMs} ms
+						{row.original.errorCode ? ` · ${row.original.errorCode}` : ""}
+					</small>
+				</div>
+			),
+		},
+		{
+			accessorKey: "receivedAt",
+			header: m.webhooks_received_at(),
+			cell: ({ row }) => formatDateTime(row.original.receivedAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								variant="ghost"
+								tooltip={m.common_actions()}
+								onFocus={(event) => {
+									detailsTriggerRef.current = event.currentTarget;
+								}}
+								onClick={(event) => {
+									detailsTriggerRef.current = event.currentTarget;
+								}}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem
+								onClick={() => setSelectedReceiptId(row.original.id)}
+							>
+								<Eye />
+								{m.webhooks_view_details()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
 			<PageHeader

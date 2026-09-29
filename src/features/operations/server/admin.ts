@@ -6,16 +6,22 @@ import {
 	type SystemPermission,
 	systemPermission,
 } from "#/features/access/system-rbac";
+import { scheduledTaskCatalog } from "#/features/operations/schedule";
 import { exportAuditLogsToR2 } from "#/features/operations/server/audit-export";
-import { retryQueueWorkload } from "#/features/operations/server/retry-queue";
+import {
+	loadDeadQueueMessageCounts,
+	retryQueueWorkload,
+} from "#/features/operations/server/retry-queue";
 import {
 	operationsTasks,
 	runOperationsTask,
 } from "#/features/operations/server/run-task";
+import { loadLatestOperationTaskRuns } from "#/features/operations/server/task-runs";
 import { loadRateSyncConfiguration } from "#/features/payment-settings/server/exchange-rates";
 import { DomainError } from "#/lib/domain-error";
 import { redactedAuditJson } from "#/server/audit-redaction";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 import { loadOperationalSettings } from "#/server/operational-settings";
 
 const auditQuery = z.object({
@@ -134,27 +140,10 @@ export const getOperationsOverviewFn = createServerFn({
 }).handler(async () => {
 	const { db } = await adminContext(systemPermission("operations", "read"));
 	const [taskRuns, cryptoRates, fiatRates] = await Promise.all([
-		db
-			.prepare(
-				`SELECT id, task, trigger, schedule, status, started_at, completed_at,
-				 duration_ms, error_code FROM (
-				  SELECT id, task, trigger, schedule, status, started_at, completed_at,
-				   duration_ms, error_code,
-				   ROW_NUMBER() OVER (PARTITION BY task ORDER BY started_at DESC) AS position
-				  FROM operation_task_runs
-				 ) WHERE position = 1 ORDER BY task`,
-			)
-			.all<{
-				id: string;
-				task: string;
-				trigger: "manual" | "scheduled";
-				schedule: string | null;
-				status: "running" | "succeeded" | "failed";
-				started_at: number;
-				completed_at: number | null;
-				duration_ms: number | null;
-				error_code: string | null;
-			}>(),
+		loadLatestOperationTaskRuns(
+			db,
+			scheduledTaskCatalog.map((entry) => entry.task),
+		),
 		loadRateSyncConfiguration(db, "crypto"),
 		loadRateSyncConfiguration(db, "fiat"),
 	]);
@@ -163,7 +152,7 @@ export const getOperationsOverviewFn = createServerFn({
 			crypto: cryptoRates.intervalMs,
 			fiat: fiatRates.intervalMs,
 		},
-		taskRuns: taskRuns.results.map((run) => ({
+		taskRuns: taskRuns.map((run) => ({
 			invocationId: run.id,
 			task: run.task,
 			trigger: run.trigger,
@@ -190,7 +179,7 @@ export const runOperationsTaskFn = createServerFn({ method: "POST" })
 		return runOperationsTask(env as Env, {
 			task: data.task,
 			actorUserId: user.id,
-			requestId: request.headers.get("x-request-id"),
+			requestId: requestId(request),
 			ipAddress: request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -200,50 +189,54 @@ export const getQueueOverviewFn = createServerFn({ method: "GET" }).handler(
 		const { db, env } = await adminContext(
 			systemPermission("operations", "read"),
 		);
-		const [webhooks, payments, recentErrors] = await Promise.all([
-			db
-				.prepare(
-					`SELECT status, COUNT(*) AS count FROM webhook_deliveries WHERE status IN ('queued', 'delivering', 'failed') GROUP BY status`,
-				)
-				.all<{ status: string; count: number }>(),
-			db
-				.prepare(
-					`SELECT COUNT(*) AS count, MAX(last_payment_scan_at) AS last_scan FROM orders WHERE status IN ('pending', 'partially_paid')`,
-				)
-				.first<{ count: number; last_scan: number | null }>(),
-			db
-				.prepare(
-					`SELECT target_id, after, created_at FROM audit_logs
-					 WHERE action = 'queue.message_rejected' AND created_at >= ?
-					 UNION ALL
-					 SELECT task AS target_id,
-					  json_object('code', COALESCE(error_code, 'task_failed')) AS after,
-					  COALESCE(completed_at, started_at) AS created_at
-					 FROM (
-					  SELECT task, status, error_code, completed_at, started_at,
-					   ROW_NUMBER() OVER (
-					    PARTITION BY task ORDER BY started_at DESC, id DESC
-					   ) AS position
-					  FROM operation_task_runs
-					  WHERE task IN ('webhook_outbox', 'payment_scan_enqueue')
-					 )
-					 WHERE position = 1 AND status = 'failed'
-					 ORDER BY created_at DESC LIMIT 20`,
-				)
-				.bind(Date.now() - 86_400_000)
-				.all<{
-					target_id: string | null;
-					after: string | null;
-					created_at: number;
-				}>(),
-		]);
-		const webhookCounts = new Map(
-			webhooks.results.map((row) => [row.status, row.count]),
-		);
-		const paymentError = recentErrors.results.find((row) =>
+		const [webhooks, payments, rejectedMessages, dispatchRuns, deadMessages] =
+			await Promise.all([
+				// Reads only the non-terminal partial index.
+				db
+					.prepare(
+						`SELECT COALESCE(SUM(status = 'queued'), 0) AS queued,
+						 COALESCE(SUM(status = 'delivering'), 0) AS delivering,
+						 COALESCE(SUM(status = 'failed'), 0) AS failed
+						 FROM webhook_deliveries WHERE status IN ('queued', 'failed', 'delivering')`,
+					)
+					.first<{ queued: number; delivering: number; failed: number }>(),
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count, MAX(last_payment_scan_at) AS last_scan FROM orders WHERE status IN ('pending', 'partially_paid')`,
+					)
+					.first<{ count: number; last_scan: number | null }>(),
+				db
+					.prepare(
+						`SELECT target_id, after, created_at FROM audit_logs
+						 WHERE action = 'queue.message_rejected' AND created_at >= ?
+						 ORDER BY created_at DESC LIMIT 20`,
+					)
+					.bind(Date.now() - 86_400_000)
+					.all<{
+						target_id: string | null;
+						after: string | null;
+						created_at: number;
+					}>(),
+				loadLatestOperationTaskRuns(db, [
+					"webhook_outbox",
+					"payment_scan_enqueue",
+				]),
+				loadDeadQueueMessageCounts(db),
+			]);
+		const recentErrors = [
+			...rejectedMessages.results,
+			...dispatchRuns
+				.filter((run) => run.status === "failed")
+				.map((run) => ({
+					target_id: run.task,
+					after: JSON.stringify({ code: run.error_code ?? "task_failed" }),
+					created_at: run.completed_at ?? run.started_at,
+				})),
+		].sort((left, right) => right.created_at - left.created_at);
+		const paymentError = recentErrors.find((row) =>
 			row.target_id?.includes("payment"),
 		);
-		const webhookError = recentErrors.results.find((row) =>
+		const webhookError = recentErrors.find((row) =>
 			row.target_id?.includes("webhook"),
 		);
 		return [
@@ -254,6 +247,7 @@ export const getQueueOverviewFn = createServerFn({ method: "GET" }).handler(
 				pending: payments?.count ?? 0,
 				processing: 0,
 				failed: paymentError ? 1 : 0,
+				dead: deadMessages?.get("gmpay-edge-payments") ?? null,
 				lastConsumedAt: payments?.last_scan
 					? new Date(payments.last_scan).toISOString()
 					: null,
@@ -263,12 +257,10 @@ export const getQueueOverviewFn = createServerFn({ method: "GET" }).handler(
 				id: "webhook",
 				name: "Webhook Queue",
 				available: Boolean(env.WEBHOOK_QUEUE),
-				pending: webhookCounts.get("queued") ?? 0,
-				processing: webhookCounts.get("delivering") ?? 0,
-				failed: Math.max(
-					webhookCounts.get("failed") ?? 0,
-					webhookError ? 1 : 0,
-				),
+				pending: webhooks?.queued ?? 0,
+				processing: webhooks?.delivering ?? 0,
+				failed: Math.max(webhooks?.failed ?? 0, webhookError ? 1 : 0),
+				dead: deadMessages?.get("gmpay-edge-webhooks") ?? null,
 				lastConsumedAt: null,
 				lastError: redactedAuditJson(webhookError?.after ?? null),
 			},
@@ -286,7 +278,7 @@ export const retryQueueFn = createServerFn({ method: "POST" })
 		);
 		return retryQueueWorkload(env as Env, data.queue, {
 			actorUserId: user.id,
-			requestId: request.headers.get("x-request-id"),
+			requestId: requestId(request),
 			ipAddress: request.headers.get("cf-connecting-ip"),
 		});
 	});

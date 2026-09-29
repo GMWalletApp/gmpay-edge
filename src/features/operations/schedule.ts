@@ -56,12 +56,6 @@ export function nextTaskExecutionAt(
 	now = Date.now(),
 ) {
 	if (task === "payment_defaults") return null;
-	if (task === "retention_cleanup") {
-		const next = new Date(now);
-		next.setUTCHours(0, 0, 0, 0);
-		if (next.getTime() <= now) next.setUTCDate(next.getUTCDate() + 1);
-		return next.toISOString();
-	}
 	if (task === "crypto_rate_sync" || task === "fiat_rate_sync") {
 		const intervalMs =
 			task === "crypto_rate_sync"

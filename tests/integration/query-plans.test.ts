@@ -105,21 +105,58 @@ describe("hot list query plans", () => {
 			expect(details).not.toContain("USE TEMP B-TREE");
 	});
 
-	it("scans only active webhook outbox rows in delivery order", async () => {
-		const details = await explain(
+	it("scans only non-terminal webhook outbox rows in delivery order", async () => {
+		// Pending migration: webhook_deliveries_outbox_idx becomes
+		// (created_at, id, status, next_attempt_at) WHERE status IN ('queued', 'failed', 'delivering').
+		const sweep = await explain(
 			db,
-			`SELECT id, event_id, status, attempt_count FROM webhook_deliveries
-			 WHERE status IN ('queued', 'failed')
-			 AND ((status = 'queued' AND attempt_count = 0)
-			  OR (status = 'failed' AND attempt_count > 0))
+			`SELECT id, event_id, status, attempt_count, created_at FROM webhook_deliveries
+			 WHERE status IN ('queued', 'failed', 'delivering')
 			 AND (next_attempt_at IS NULL OR next_attempt_at <= 0)
 			 ORDER BY created_at, id LIMIT 100`,
 		);
+		const probe = await explain(
+			db,
+			`SELECT EXISTS(SELECT 1 FROM webhook_deliveries
+			 WHERE status IN ('queued', 'failed', 'delivering')
+			 AND (next_attempt_at IS NULL OR next_attempt_at <= 0) LIMIT 1) AS due`,
+		);
+		const counts = await explain(
+			db,
+			`SELECT COALESCE(SUM(status = 'queued'), 0) AS queued,
+			 COALESCE(SUM(status = 'delivering'), 0) AS delivering,
+			 COALESCE(SUM(status = 'failed'), 0) AS failed
+			 FROM webhook_deliveries WHERE status IN ('queued', 'failed', 'delivering')`,
+		);
 
-		expect(details).toContain(
+		expect(sweep).toContain(
 			"SCAN webhook_deliveries USING INDEX webhook_deliveries_outbox_idx",
 		);
-		expect(details).not.toContain("USE TEMP B-TREE");
+		expect(sweep).not.toContain("USE TEMP B-TREE");
+		expect(probe).toContain(
+			"SCAN webhook_deliveries USING COVERING INDEX webhook_deliveries_outbox_idx",
+		);
+		expect(counts).toContain(
+			"SCAN webhook_deliveries USING COVERING INDEX webhook_deliveries_outbox_idx",
+		);
+	});
+
+	it("checks webhook foreign keys by index when an order allocation is rolled back", async () => {
+		// Pending migration: webhook_events_order_idx and webhook_deliveries_order_idx.
+		const details = await explain(
+			db,
+			`DELETE FROM orders WHERE id = 'order'
+			 AND NOT EXISTS (SELECT 1 FROM order_payment_snapshots WHERE order_id = 'order')`,
+		);
+
+		expect(details).toContain(
+			"SEARCH webhook_events USING COVERING INDEX webhook_events_order_idx (order_id=?)",
+		);
+		expect(details).toContain(
+			"SEARCH webhook_deliveries USING COVERING INDEX webhook_deliveries_order_idx (order_id=?)",
+		);
+		expect(details).not.toContain("SCAN webhook_events");
+		expect(details).not.toContain("SCAN webhook_deliveries");
 	});
 
 	it("seeks expirable orders by expiry without a temporary sort", async () => {

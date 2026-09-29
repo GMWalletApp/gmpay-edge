@@ -1,16 +1,19 @@
 import { z } from "zod";
 import { enqueueProviderEventIds } from "#/features/payments/server/provider-event-outbox";
 import type { ProviderPaymentTrigger } from "#/features/payments/types";
-import { recordInboundWebhookReceipt } from "#/features/webhooks/server/inbound-receipts";
+import {
+	claimInboundWebhookRateLimit,
+	recordInboundWebhookReceipt,
+} from "#/features/webhooks/server/inbound-receipts";
 import {
 	alchemyEventSourceConfigSchema,
+	maximumActivitiesPerDelivery,
 	parseAlchemyAddressActivity,
 	verifyAlchemyWebhookSignature,
 } from "#/integrations/chains/alchemy-webhook";
 import { sha256Hex } from "#/lib/crypto";
 import { decryptSecret } from "#/lib/secrets";
 import { json, withRequestId } from "#/server/http";
-import { claimFixedWindowRateLimit } from "#/server/rate-limit";
 import {
 	RequestBodyTooLargeError,
 	readLimitedRequestBytes,
@@ -19,7 +22,6 @@ import { loadRuntimeConfig } from "#/server/runtime-config";
 
 const sourceIdSchema = z.uuid();
 const maximumBodyBytes = 2 * 1024 * 1024;
-const maximumDeliveriesPerMinute = 600;
 const activityWriteBatchSize = 100;
 const signatureSchema = z.string().regex(/^[0-9a-f]{64}$/i);
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -39,6 +41,13 @@ export async function handleAlchemyAddressActivity(
 	env: { DB: D1Database; PAYMENT_QUEUE?: Queue },
 ) {
 	const startedAt = Date.now();
+	// Bound every client before the receipt write, body read, or decryption.
+	const rate = await claimInboundWebhookRateLimit(
+		env.DB,
+		"alchemy.address_activity",
+		request,
+	);
+	if (!rate.allowed) return errorResponse(request, "rate_limited", 429);
 	const finish = async (
 		response: Response,
 		signatureStatus: "valid" | "invalid" | "unknown",
@@ -50,6 +59,7 @@ export async function handleAlchemyAddressActivity(
 			startedAt,
 			responseStatus: response.status,
 			signatureStatus,
+			rate,
 			...(errorCode ? { errorCode } : {}),
 		});
 		return response;
@@ -129,17 +139,6 @@ export async function handleAlchemyAddressActivity(
 			errorResponse(request, "invalid_signature", 401),
 			"invalid",
 			"invalid_signature",
-		);
-	const rate = await claimFixedWindowRateLimit(env.DB, {
-		bucketKey: `provider:alchemy:${sourceId.data}`,
-		limit: maximumDeliveriesPerMinute,
-		windowMs: 60_000,
-	});
-	if (!rate.allowed)
-		return finish(
-			errorResponse(request, "rate_limited", 429),
-			"valid",
-			"rate_limited",
 		);
 
 	const now = Date.now();
@@ -407,9 +406,11 @@ async function loadDeliveryEvents(
 			`SELECT id, payload_hash, status, next_attempt_at
 			 FROM inbound_provider_events
 			 WHERE source_id = ? AND provider_event_id = ?
-			 ORDER BY activity_index LIMIT 100`,
+			 ORDER BY activity_index LIMIT ?`,
 		)
-		.bind(sourceId, providerEventId)
+		// The parser's per-delivery cap, so one delivery is enqueued completely
+		// instead of leaving the remainder to the outbox sweep.
+		.bind(sourceId, providerEventId, maximumActivitiesPerDelivery)
 		.all<{
 			id: string;
 			payload_hash: string;

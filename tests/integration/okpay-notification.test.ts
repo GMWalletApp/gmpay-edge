@@ -88,13 +88,14 @@ describe("OKPay notification flow", () => {
 			eventId: expect.any(String),
 			attempt: 1,
 		});
+		// One statement per request is the pre-authentication rate-limit claim.
 		expect(firstCounters).toEqual({
-			d1Prepare: 15,
+			d1Prepare: 16,
 			d1Batch: 1,
 			d1Exec: 0,
-			d1StatementBind: 13,
+			d1StatementBind: 14,
 			d1StatementRun: 1,
-			d1StatementFirst: 4,
+			d1StatementFirst: 5,
 			d1StatementAll: 3,
 			d1StatementRaw: 0,
 			kvGet: 0,
@@ -104,12 +105,12 @@ describe("OKPay notification flow", () => {
 			r2Get: 0,
 		});
 		expect(repeatedCounters).toEqual({
-			d1Prepare: 5,
+			d1Prepare: 6,
 			d1Batch: 0,
 			d1Exec: 0,
-			d1StatementBind: 5,
+			d1StatementBind: 6,
 			d1StatementRun: 1,
-			d1StatementFirst: 3,
+			d1StatementFirst: 4,
 			d1StatementAll: 1,
 			d1StatementRaw: 0,
 			kvGet: 0,
@@ -189,12 +190,93 @@ describe("OKPay notification flow", () => {
 		expect(response.status).toBe(401);
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(counters).toMatchObject({
-			d1Prepare: 3,
-			d1StatementFirst: 1,
+			d1Prepare: 4,
+			d1StatementFirst: 2,
 			d1StatementAll: 1,
 			d1StatementRun: 1,
 			d1Batch: 0,
 		});
+	});
+
+	it("answers an unknown order exactly like a bad signature", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const body: Record<string, unknown> = callback();
+		body.data = {
+			...(body.data as Record<string, unknown>),
+			unique_id: "00000000-0000-4000-8000-00000000dead",
+		};
+		const response = await handleOkPayNotification(
+			new Request("https://edge.example/api/providers/okpay/notify", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-request-id": "request-unknown-order",
+				},
+				body: JSON.stringify(body),
+			}),
+			env,
+		);
+		expect(response.status).toBe(401);
+		await expect(response.json()).resolves.toEqual({
+			error: "invalid_signature",
+		});
+		expect(fetchMock).not.toHaveBeenCalled();
+		await expect(
+			db
+				.prepare(
+					"SELECT signature_status, response_status, error_code FROM inbound_webhook_receipts WHERE external_request_id = 'request-unknown-order'",
+				)
+				.first(),
+		).resolves.toEqual({
+			signature_status: "unknown",
+			response_status: 401,
+			error_code: "order_not_found",
+		});
+	});
+
+	it("fails closed at the per-client rate limit before reading the body", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const now = Date.now();
+		const windowStart = Math.floor(now / 60_000) * 60_000;
+		await db
+			.prepare(
+				`INSERT INTO rate_limit_counters
+				 (id, bucket_key, window_start, count, expires_at, created_at, updated_at)
+				 VALUES ('okpay-rate-limit', 'inbound:okpay.notify:203.0.113.99', ?, 600, ?, ?, ?)`,
+			)
+			.bind(windowStart, windowStart + 120_000, now, now)
+			.run();
+		const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+		try {
+			const response = await handleOkPayNotification(
+				new Request("https://edge.example/api/providers/okpay/notify", {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"cf-connecting-ip": "203.0.113.99",
+						"x-request-id": "request-rate-limited",
+					},
+					body: JSON.stringify(callback()),
+				}),
+				env,
+			);
+			expect(response.status).toBe(429);
+			await expect(response.json()).resolves.toEqual({
+				error: "rate_limited",
+			});
+		} finally {
+			clock.mockRestore();
+		}
+		expect(fetchMock).not.toHaveBeenCalled();
+		await expect(
+			db
+				.prepare(
+					"SELECT id FROM inbound_webhook_receipts WHERE external_request_id = 'request-rate-limited'",
+				)
+				.first(),
+		).resolves.toBeNull();
 	});
 
 	it.each([

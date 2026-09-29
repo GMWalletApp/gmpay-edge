@@ -37,14 +37,21 @@ export type NodeQueueBatch<T> = {
 
 export type NodeQueueConsumerOptions = {
 	concurrency: number;
+	/** Deliveries before a message is dead-lettered (Cloudflare: 1 + max_retries). */
 	maxAttempts: number;
 	pollIntervalMs?: number;
 	maxIdlePollIntervalMs?: number;
+	/** Must exceed the longest handler run, or a live message is redelivered. */
 	leaseMs?: number;
 	baseRetryDelayMs?: number;
 	maxRetryDelayMs?: number;
+	/** How long dead-lettered rows stay inspectable before the idle purge. */
+	deadRetentionMs?: number;
 	now?: () => number;
 };
+
+const DEAD_PURGE_INTERVAL_MS = 60 * 60_000;
+const DEAD_PURGE_BATCH_SIZE = 500;
 
 export class NodeDurableQueue<T = unknown> implements RuntimeQueue<T> {
 	private readonly statements: ReturnType<typeof prepareQueueStatements>;
@@ -135,6 +142,11 @@ export class NodeDurableQueue<T = unknown> implements RuntimeQueue<T> {
 		);
 	}
 
+	/** Removes dead-lettered rows last touched at or before `olderThan`. */
+	purgeDeadMessages(olderThan: number, limit = DEAD_PURGE_BATCH_SIZE) {
+		return this.statements.purgeDead.run(this.name, olderThan, limit).changes;
+	}
+
 	private insert(message: T, delaySeconds: number) {
 		const id = randomUUID();
 		const now = Date.now();
@@ -166,6 +178,7 @@ export class NodeQueueConsumer<T> {
 	private readonly inFlight = new Set<Promise<void>>();
 	private stopped = true;
 	private idlePollIntervalMs = 0;
+	private lastDeadPurgeAt = 0;
 	private unregisterWakeup: (() => void) | undefined;
 
 	constructor(
@@ -217,6 +230,17 @@ export class NodeQueueConsumer<T> {
 				claimedCount += 1;
 				const task = this.process(message).finally(() => this.complete(task));
 				this.inFlight.add(task);
+			}
+			// Dead letters are purged from an idle poll so they never compete with
+			// live work; Cloudflare's dead-letter queue expires messages the same way.
+			if (
+				claimedCount === 0 &&
+				now - this.lastDeadPurgeAt >= DEAD_PURGE_INTERVAL_MS
+			) {
+				this.lastDeadPurgeAt = now;
+				this.queue.purgeDeadMessages(
+					now - (this.options.deadRetentionMs ?? 7 * 86_400_000),
+				);
 			}
 		}
 		if (claimedCount > 0 || available === 0) {
@@ -348,6 +372,12 @@ function prepareQueueStatements(database: NodeDatabase) {
 			`INSERT INTO node_queue_messages
 			 (id, queue, body, status, attempts, available_at, created_at, updated_at)
 			 VALUES (?, ?, ?, 'ready', 0, ?, ?, ?)`,
+		),
+		purgeDead: database.sqlite.prepare(
+			`DELETE FROM node_queue_messages WHERE id IN (
+			 SELECT id FROM node_queue_messages
+			 WHERE queue = ? AND status = 'dead' AND updated_at <= ?
+			 ORDER BY updated_at, id LIMIT ?)`,
 		),
 	};
 }

@@ -228,9 +228,12 @@ describe("Alchemy address activity ingress", () => {
 				PAYMENT_QUEUE: { sendBatch } as unknown as Queue,
 			},
 		);
-		expect(await response.json()).toEqual({ accepted: 250, queued: 100 });
-		expect(sendBatch.mock.calls[0]?.[0]).toHaveLength(100);
-		expect(counters.d1Prepare).toBeLessThanOrEqual(12);
+		// Every activity of one delivery is enqueued in Queue-sized chunks.
+		expect(await response.json()).toEqual({ accepted: 250, queued: 250 });
+		expect(sendBatch.mock.calls.map((call) => call[0].length)).toEqual([
+			100, 100, 50,
+		]);
+		expect(counters.d1Prepare).toBeLessThanOrEqual(15);
 		expect(counters.d1Batch).toBe(1);
 		const count = await db
 			.prepare(
@@ -410,32 +413,26 @@ describe("Alchemy address activity ingress", () => {
 			.bind(payload.id)
 			.first<{ count: number }>();
 		expect(count?.count).toBe(0);
+		// The first rejections of a client window are still recorded for diagnosis.
+		await expect(
+			receipt(db, "request-alchemy-invalid-signature"),
+		).resolves.toMatchObject({
+			signature_status: "invalid",
+			response_status: 401,
+			error_code: "invalid_signature",
+		});
 	});
 
-	it("fails closed at the authoritative D1 delivery rate limit", async () => {
+	it("fails closed at the authoritative per-client rate limit before any write", async () => {
 		const now = Date.now();
-		const windowStart = Math.floor(now / 60_000) * 60_000;
+		const client = "203.0.113.99";
+		await seedRateLimit(db, client, 600, now);
 		const clock = vi.spyOn(Date, "now").mockReturnValue(now);
-		await db
-			.prepare(
-				`INSERT INTO rate_limit_counters
-				 (id, bucket_key, window_start, count, expires_at, created_at, updated_at)
-				 VALUES ('alchemy-rate-limit', ?, ?, 600, ?, ?, ?)
-				 ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = 600`,
-			)
-			.bind(
-				`provider:alchemy:${sourceId}`,
-				windowStart,
-				windowStart + 120_000,
-				now,
-				now,
-			)
-			.run();
 		const payload = structuredClone(fixture);
 		payload.id = "whevt_rate_limited";
 		try {
 			const response = await handleAlchemyAddressActivity(
-				request(payload, "request-alchemy-rate-limited"),
+				request(payload, "request-alchemy-rate-limited", client),
 				sourceId,
 				{ DB: db },
 			);
@@ -452,15 +449,52 @@ describe("Alchemy address activity ingress", () => {
 			.bind(payload.id)
 			.first();
 		expect(event).toBeNull();
+		await expect(
+			receipt(db, "request-alchemy-rate-limited"),
+		).resolves.toBeNull();
+	});
+
+	it("stops recording unauthenticated rejections beyond the per-client sample", async () => {
+		const now = Date.now();
+		const client = "203.0.113.77";
+		await seedRateLimit(db, client, 25, now);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+		try {
+			const response = await handleAlchemyAddressActivity(
+				new Request(`https://pay.example/api/providers/alchemy/${sourceId}`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"cf-connecting-ip": client,
+						"x-alchemy-signature": "0".repeat(64),
+						"x-request-id": "request-alchemy-sampled-out",
+					},
+					body: JSON.stringify(fixture),
+				}),
+				sourceId,
+				{ DB: db },
+			);
+			expect(response.status).toBe(401);
+		} finally {
+			clock.mockRestore();
+		}
+		await expect(
+			receipt(db, "request-alchemy-sampled-out"),
+		).resolves.toBeNull();
 	});
 });
 
-function request(payload: unknown, requestId: string) {
+function request(
+	payload: unknown,
+	requestId: string,
+	clientAddress = "203.0.113.10",
+) {
 	const body = JSON.stringify(payload);
 	return new Request(`https://pay.example/api/providers/alchemy/${sourceId}`, {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
+			"cf-connecting-ip": clientAddress,
 			"x-alchemy-signature": createHmac("sha256", signingKey)
 				.update(body)
 				.digest("hex"),
@@ -468,4 +502,39 @@ function request(payload: unknown, requestId: string) {
 		},
 		body,
 	});
+}
+
+function receipt(db: D1Database, externalRequestId: string) {
+	return db
+		.prepare(
+			"SELECT signature_status, response_status, error_code FROM inbound_webhook_receipts WHERE external_request_id = ?",
+		)
+		.bind(externalRequestId)
+		.first();
+}
+
+function seedRateLimit(
+	db: D1Database,
+	clientAddress: string,
+	count: number,
+	now: number,
+) {
+	const windowStart = Math.floor(now / 60_000) * 60_000;
+	return db
+		.prepare(
+			`INSERT INTO rate_limit_counters
+			 (id, bucket_key, window_start, count, expires_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = excluded.count`,
+		)
+		.bind(
+			`alchemy-rate-${clientAddress}`,
+			`inbound:alchemy.address_activity:${clientAddress}`,
+			windowStart,
+			count,
+			windowStart + 120_000,
+			now,
+			now,
+		)
+		.run();
 }

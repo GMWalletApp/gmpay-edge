@@ -96,6 +96,89 @@ describe("inbound webhook receipts", () => {
 		});
 	});
 
+	it("stores only a validated external request identifier", async () => {
+		const request = new Request(
+			"https://edge.example/api/providers/okpay/notify",
+			{
+				method: "POST",
+				headers: { "x-request-id": `injected ${"x".repeat(200)}` },
+			},
+		);
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "okpay.notify",
+			request,
+			startedAt: Date.now(),
+			responseStatus: 200,
+			signatureStatus: "valid",
+		});
+		const row = await db
+			.prepare(
+				"SELECT external_request_id FROM inbound_webhook_receipts WHERE endpoint_code = 'okpay.notify' AND response_status = 200",
+			)
+			.first<{ external_request_id: string }>();
+		expect(row?.external_request_id).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+		expect(row?.external_request_id).not.toContain("injected");
+	});
+
+	it("samples unauthenticated rejections per client window and keeps authenticated and failed outcomes", async () => {
+		const window = { allowed: true, count: 21, windowStart: 0 };
+		const request = (id: string) =>
+			new Request("https://edge.example/api/providers/alchemy/source", {
+				method: "POST",
+				headers: { "x-request-id": id },
+			});
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "alchemy.address_activity",
+			request: request("sampled-out"),
+			startedAt: Date.now(),
+			responseStatus: 401,
+			signatureStatus: "invalid",
+			rate: window,
+		});
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "alchemy.address_activity",
+			request: request("rate-limited"),
+			startedAt: Date.now(),
+			responseStatus: 429,
+			signatureStatus: "unknown",
+			rate: { ...window, allowed: false, count: 600 },
+		});
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "alchemy.address_activity",
+			request: request("sampled-in"),
+			startedAt: Date.now(),
+			responseStatus: 401,
+			signatureStatus: "invalid",
+			rate: { ...window, count: 20 },
+		});
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "alchemy.address_activity",
+			request: request("authenticated"),
+			startedAt: Date.now(),
+			responseStatus: 400,
+			signatureStatus: "valid",
+			rate: window,
+		});
+		await recordInboundWebhookReceipt(db, {
+			endpointCode: "alchemy.address_activity",
+			request: request("server-failure"),
+			startedAt: Date.now(),
+			responseStatus: 503,
+			signatureStatus: "unknown",
+			rate: window,
+		});
+		const rows = await db
+			.prepare(
+				"SELECT external_request_id FROM inbound_webhook_receipts WHERE endpoint_code = 'alchemy.address_activity' ORDER BY external_request_id",
+			)
+			.all<{ external_request_id: string }>();
+		expect(rows.results.map((row) => row.external_request_id)).toEqual([
+			"authenticated",
+			"sampled-in",
+			"server-failure",
+		]);
+	});
+
 	it("returns a stable error for a missing receipt", async () => {
 		await expect(
 			loadInboundWebhookReceipt(db, "00000000-0000-4000-8000-000000000000"),

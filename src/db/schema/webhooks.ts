@@ -173,6 +173,9 @@ export const webhookEvents = sqliteTable(
 	},
 	(table) => [
 		index("webhook_events_retention_idx").on(table.createdAt, table.id),
+		// Order deletion (allocation rollback) checks this foreign key; without the
+		// index SQLite scans every event.
+		index("webhook_events_order_idx").on(table.orderId),
 	],
 );
 
@@ -205,15 +208,16 @@ export const webhookDeliveries = sqliteTable(
 			table.orderId,
 		),
 		index("webhook_deliveries_created_idx").on(table.createdAt, table.id),
+		index("webhook_deliveries_order_idx").on(table.orderId),
 		index("webhook_deliveries_retention_idx")
 			.on(table.completedAt, table.id)
 			.where(sql`${table.status} IN ('succeeded', 'dead')`),
+		// Every non-terminal row: outbox sweep order, the due probe, and the queue
+		// overview counts read only this index. A `delivering` row whose lease
+		// (`next_attempt_at`) expired is stranded and must be recoverable.
 		index("webhook_deliveries_outbox_idx")
-			.on(table.createdAt, table.id)
-			.where(
-				sql`(${table.status} = 'queued' AND ${table.attemptCount} = 0)
-					OR (${table.status} = 'failed' AND ${table.attemptCount} > 0)`,
-			),
+			.on(table.createdAt, table.id, table.status, table.nextAttemptAt)
+			.where(sql`${table.status} IN ('queued', 'failed', 'delivering')`),
 	],
 );
 

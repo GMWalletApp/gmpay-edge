@@ -1,6 +1,9 @@
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { retryQueueWorkload } from "#/features/operations/server/retry-queue";
+import {
+	loadDeadQueueMessageCounts,
+	retryQueueWorkload,
+} from "#/features/operations/server/retry-queue";
 import { applyMigrations } from "./migrations";
 
 describe("safe manual Queue retry", () => {
@@ -69,6 +72,32 @@ describe("safe manual Queue retry", () => {
 			code: "binding_unavailable",
 			status: 503,
 		});
+	});
+
+	it("reports Bun dead letters only where the durable queue table exists", async () => {
+		await expect(loadDeadQueueMessageCounts(db)).resolves.toBeNull();
+		// The Bun runtime creates this table itself; D1 deployments never have it.
+		await db
+			.prepare(
+				`CREATE TABLE node_queue_messages (
+				 id TEXT PRIMARY KEY NOT NULL, queue TEXT NOT NULL, body TEXT NOT NULL,
+				 status TEXT NOT NULL CHECK (status IN ('ready', 'leased', 'dead')),
+				 attempts INTEGER NOT NULL DEFAULT 0, available_at INTEGER NOT NULL,
+				 lease_token TEXT, lease_expires_at INTEGER, last_error TEXT,
+				 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+			)
+			.run();
+		await db
+			.prepare(
+				`INSERT INTO node_queue_messages (id, queue, body, status, attempts, available_at, created_at, updated_at)
+				 VALUES ('dead-1', 'gmpay-edge-webhooks', '{}', 'dead', 9, 0, 0, 0),
+				 ('dead-2', 'gmpay-edge-webhooks', '{}', 'dead', 9, 0, 0, 0),
+				 ('ready-1', 'gmpay-edge-payments', '{}', 'ready', 0, 0, 0, 0)`,
+			)
+			.run();
+		await expect(loadDeadQueueMessageCounts(db)).resolves.toEqual(
+			new Map([["gmpay-edge-webhooks", 2]]),
+		);
 	});
 
 	it("returns a stable error without exposing a Queue rejection", async () => {

@@ -42,11 +42,12 @@ const maintenanceDefaults: MaintenanceDependencies = {
 };
 
 const CLEANUP_BATCH_SIZE = 500;
+// Retention deletes one bounded chunk per tick and runs again on the next tick
+// while expired rows remain, so steady-state volume never outgrows a daily cap.
 const RETENTION_BATCH_SIZE = 250;
 const RETENTION_MAX_ROWS = 2_000;
 const RETENTION_MAX_DURATION_MS = 2_000;
 const MAX_TASK_RUN_RETENTION_MS = 90 * 86_400_000;
-const DAILY_RETENTION_LEASE_MS = 5 * 60_000;
 const EXTERNAL_DISPATCH_LEASE_MS = 5 * 60_000;
 const SCHEDULED_WALL_BUDGET_MS = 15 * 60_000;
 
@@ -118,17 +119,9 @@ async function runMaintenanceInvocation(
 		}
 	};
 	const settings = await loadOperationalSettings(env.DB);
-	const retentionClaim = await claimDailyRetention(env.DB, now);
 	const retentionWork =
-		retentionClaim !== null &&
-		((await hasRetentionCleanupWork(env.DB, now, settings.retentionAuditMs)) ||
-			(await hasOperationalRetentionWork(
-				env.DB,
-				now,
-				settings.retentionAuditMs,
-			)));
-	if (retentionClaim !== null && !retentionWork)
-		await completeDailyRetention(env.DB, retentionClaim, now);
+		(await hasRetentionCleanupWork(env.DB, now, settings.retentionAuditMs)) ||
+		(await hasOperationalRetentionWork(env.DB, now, settings.retentionAuditMs));
 	const [cryptoRateConfiguration, fiatRateConfiguration] = await Promise.all([
 		loadRateSyncConfiguration(env.DB, "crypto"),
 		loadRateSyncConfiguration(env.DB, "fiat"),
@@ -179,7 +172,6 @@ async function runMaintenanceInvocation(
 					now,
 					retentionMs: settings.retentionAuditMs,
 				});
-				await completeDailyRetention(env.DB, retentionClaim, now);
 				return {
 					affectedRows: core.affectedRows + operational.affectedRows,
 					webhookRows: operational.webhookRows,
@@ -239,66 +231,6 @@ async function runMaintenanceInvocation(
 	);
 }
 
-type DailyRetentionClaim = {
-	day: number;
-	leaseUntil: number;
-};
-
-async function claimDailyRetention(
-	db: D1Database,
-	now: number,
-): Promise<DailyRetentionClaim | null> {
-	const day = Math.floor(now / 86_400_000);
-	const claim = { day, leaseUntil: now + DAILY_RETENTION_LEASE_MS };
-	const result = await db
-		.prepare(
-			`INSERT INTO system_settings
-			 (key, value, is_secret, updated_by, created_at, updated_at)
-			 VALUES ('runtime.retention_schedule', ?, 0, NULL, ?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-			  updated_at = excluded.updated_at
-			 WHERE COALESCE(CAST(json_extract(system_settings.value, '$.day') AS INTEGER), -1) < ?
-			 OR (
-			  CAST(json_extract(system_settings.value, '$.day') AS INTEGER) = ?
-			  AND json_extract(system_settings.value, '$.completed') = 0
-			  AND CAST(json_extract(system_settings.value, '$.leaseUntil') AS INTEGER) <= ?
-			 )`,
-		)
-		.bind(
-			JSON.stringify({ ...claim, completed: false }),
-			now,
-			now,
-			day,
-			day,
-			now,
-		)
-		.run();
-	return result.meta.changes === 1 ? claim : null;
-}
-
-async function completeDailyRetention(
-	db: D1Database,
-	claim: DailyRetentionClaim | null,
-	now: number,
-) {
-	if (!claim) return;
-	await db
-		.prepare(
-			`UPDATE system_settings SET value = ?, updated_at = ?
-			 WHERE key = 'runtime.retention_schedule'
-			 AND CAST(json_extract(value, '$.day') AS INTEGER) = ?
-			 AND CAST(json_extract(value, '$.leaseUntil') AS INTEGER) = ?
-			 AND json_extract(value, '$.completed') = 0`,
-		)
-		.bind(
-			JSON.stringify({ day: claim.day, leaseUntil: null, completed: true }),
-			now,
-			claim.day,
-			claim.leaseUntil,
-		)
-		.run();
-}
-
 type DueMaintenanceWork = {
 	orderExpiration: boolean;
 	cryptoRateSync: boolean;
@@ -330,9 +262,8 @@ async function loadDueMaintenanceWork(
 			`SELECT
 			 EXISTS(SELECT 1 FROM exchange_rates WHERE category = 'crypto' LIMIT 1) AS crypto_rates,
 			 EXISTS(SELECT 1 FROM orders INDEXED BY orders_expiration_idx WHERE status IN ('pending','confirming','partially_paid') AND expires_at <= ? LIMIT 1) AS order_expiration,
-			 EXISTS(SELECT 1 FROM webhook_deliveries INDEXED BY webhook_deliveries_outbox_idx
-			  WHERE status IN ('queued','failed')
-			  AND ((status = 'queued' AND attempt_count = 0) OR (status = 'failed' AND attempt_count > 0))
+			 EXISTS(SELECT 1 FROM webhook_deliveries
+			  WHERE status IN ('queued','failed','delivering')
 			  AND (next_attempt_at IS NULL OR next_attempt_at <= ?) LIMIT 1) AS webhook_outbox,
 			 (EXISTS(SELECT 1 FROM inbound_provider_events INDEXED BY inbound_provider_events_outbox_idx
 			  WHERE status IN ('received','failed') AND (next_attempt_at IS NULL OR next_attempt_at <= ?) LIMIT 1)
@@ -353,7 +284,7 @@ async function loadDueMaintenanceWork(
 			   ON source.network = ops.rail_code AND source.provider = 'alchemy'
 			   AND source.enabled = 1 AND source.mode = 'active'
 			  WHERE o.status IN ('pending','confirming','partially_paid','paid','overpaid','expired')
-			  AND ((o.status IN ('pending','confirming','partially_paid') AND o.expires_at > ?)
+			  AND (((o.status IN ('pending','partially_paid') AND o.expires_at > ?) OR o.status = 'confirming')
 			   OR (o.status IN ('paid','overpaid') AND o.paid_at >= ?)
 			   OR (o.status = 'expired' AND o.updated_at >= ?))
 			  AND (o.last_payment_scan_at IS NULL OR o.last_payment_scan_at <= CASE
@@ -894,7 +825,7 @@ async function enqueuePaymentScans(
 		  AND source.enabled = 1 AND source.mode = 'active'
 		 WHERE o.status IN ('pending','confirming','partially_paid','paid','overpaid','expired')
 		 AND (
-		  (o.status IN ('pending','confirming','partially_paid') AND o.expires_at > ?)
+		  ((o.status IN ('pending','partially_paid') AND o.expires_at > ?) OR o.status = 'confirming')
 		  OR (o.status IN ('paid','overpaid') AND o.paid_at >= ?)
 		  OR (o.status = 'expired' AND o.updated_at >= ?)
 		 )

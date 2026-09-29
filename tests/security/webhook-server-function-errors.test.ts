@@ -13,14 +13,36 @@ import {
 
 const request = new Request("https://example.com/_serverFn/webhook-retry");
 
+const now = 1_000;
+
 describe("Webhook Server Function error contract", () => {
 	it.each([
 		[null, "webhook_delivery_not_found", 404],
-		[{ status: "queued" }, "webhook_delivery_not_retryable", 409],
+		[
+			{ status: "queued", next_attempt_at: null },
+			"webhook_delivery_not_retryable",
+			409,
+		],
+		[
+			{ status: "succeeded", next_attempt_at: null },
+			"webhook_delivery_not_retryable",
+			409,
+		],
+		// A scheduled automatic attempt or an active consumer lease is in progress.
+		[
+			{ status: "failed", next_attempt_at: now + 1 },
+			"webhook_delivery_retry_in_progress",
+			409,
+		],
+		[
+			{ status: "delivering", next_attempt_at: now + 1 },
+			"webhook_delivery_retry_in_progress",
+			409,
+		],
 	] as const)("maps retry state to %s without exposing persistence errors", (delivery, code, status) => {
 		let error: unknown;
 		try {
-			requireRetryableWebhookDelivery(delivery);
+			requireRetryableWebhookDelivery(delivery, now);
 		} catch (caught) {
 			error = caught;
 		}
@@ -32,10 +54,16 @@ describe("Webhook Server Function error contract", () => {
 		});
 	});
 
-	it.each(["failed", "dead"])("accepts the %s retry state", (status) => {
-		const delivery = { id: "delivery", status };
-
-		expect(() => requireRetryableWebhookDelivery(delivery)).not.toThrow();
+	it.each([
+		{ status: "failed", next_attempt_at: null },
+		{ status: "failed", next_attempt_at: now },
+		{ status: "dead", next_attempt_at: null },
+		// A stranded delivery whose consumer lease expired.
+		{ status: "delivering", next_attempt_at: now - 1 },
+	])("accepts the retryable state %j", (delivery) => {
+		expect(() =>
+			requireRetryableWebhookDelivery({ id: "delivery", ...delivery }, now),
+		).not.toThrow();
 	});
 
 	it.each([

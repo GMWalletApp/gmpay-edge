@@ -1,8 +1,5 @@
-"use client";
-
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo } from "react";
 import { ProTable } from "#/components/pro/table";
 import { Badge } from "#/components/ui/badge";
 import { webhookOperationErrorMessage } from "#/features/webhooks/error-message";
@@ -21,50 +18,47 @@ export function InboundWebhookEndpointsPage() {
 		queryKey: ["admin", "inbound-webhooks"],
 		queryFn: () => listInboundWebhookEndpointsFn(),
 	});
-	const columns = useMemo<ColumnDef<Endpoint>[]>(
-		() => [
-			{
-				accessorKey: "name",
-				header: m.webhooks_inbound_endpoint(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<strong className="font-medium">
-							{endpointNameLabel(row.original.code)}
-						</strong>
-						<code className="block text-muted-foreground text-xs">
-							{row.original.code}
-						</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "path",
-				header: m.webhooks_path(),
-				cell: ({ row }) => <code className="text-xs">{row.original.path}</code>,
-			},
-			{
-				accessorKey: "kind",
-				header: m.common_type(),
-				cell: ({ row }) => (
-					<Badge variant="outline">{inboundKindLabel(row.original.kind)}</Badge>
-				),
-			},
-			{
-				accessorKey: "receiptCount",
-				header: m.webhooks_receipts(),
-			},
-			{
-				accessorKey: "lastReceivedAt",
-				header: m.webhooks_last_received(),
-				cell: ({ row }) =>
-					row.original.lastReceivedAt
-						? formatDateTime(row.original.lastReceivedAt)
-						: "—",
-			},
-		],
-		[],
-	);
+	const columns: ColumnDef<Endpoint>[] = [
+		{
+			accessorKey: "name",
+			header: m.webhooks_inbound_endpoint(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<strong className="font-medium">
+						{endpointNameLabel(row.original.code)}
+					</strong>
+					<code className="block text-muted-foreground text-xs">
+						{row.original.code}
+					</code>
+				</div>
+			),
+		},
+		{
+			accessorKey: "path",
+			header: m.webhooks_path(),
+			cell: ({ row }) => <code className="text-xs">{row.original.path}</code>,
+		},
+		{
+			accessorKey: "kind",
+			header: m.common_type(),
+			cell: ({ row }) => (
+				<Badge variant="outline">{inboundKindLabel(row.original.kind)}</Badge>
+			),
+		},
+		{
+			accessorKey: "receiptCount",
+			header: m.webhooks_receipts(),
+		},
+		{
+			accessorKey: "lastReceivedAt",
+			header: m.webhooks_last_received(),
+			cell: ({ row }) =>
+				row.original.lastReceivedAt
+					? formatDateTime(row.original.lastReceivedAt)
+					: "—",
+		},
+	];
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
 			<PageHeader

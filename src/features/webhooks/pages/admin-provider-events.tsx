@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { RefreshCw } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { ProTable, type ProTableState } from "#/components/pro/table";
@@ -67,97 +65,94 @@ export function PaymentProviderEventsPage({ sourceId }: { sourceId?: string }) {
 		},
 		[sourceId],
 	);
-	const columns = useMemo<ColumnDef<PaymentProviderEvent>[]>(
-		() => [
-			{
-				accessorKey: "network",
-				header: m.infrastructure_source(),
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">
-							{networkLabel(row.original.network)}
-						</strong>
-						<code className="text-muted-foreground text-xs">
-							{row.original.providerEventId}
+	const columns: ColumnDef<PaymentProviderEvent>[] = [
+		{
+			accessorKey: "network",
+			header: m.infrastructure_source(),
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">
+						{networkLabel(row.original.network)}
+					</strong>
+					<code className="text-muted-foreground text-xs">
+						{row.original.providerEventId}
+					</code>
+				</div>
+			),
+		},
+		{
+			accessorKey: "transactionHash",
+			header: m.payments_transaction(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<code
+						className="block max-w-64 truncate text-xs"
+						title={row.original.transactionHash}
+					>
+						{row.original.transactionHash}
+					</code>
+					<span className="text-muted-foreground text-xs">
+						#{row.original.eventIndex}
+					</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: m.common_status(),
+			cell: ({ row }) => <StatusBadge value={row.original.status} />,
+		},
+		{
+			accessorKey: "ingestMode",
+			header: m.webhooks_event_mode(),
+			cell: ({ row }) => (
+				<Badge variant="outline">
+					{row.original.ingestMode === "active"
+						? m.webhooks_mode_active()
+						: m.webhooks_mode_shadow()}
+				</Badge>
+			),
+		},
+		{
+			accessorKey: "attemptCount",
+			header: m.webhooks_attempts(),
+			cell: ({ row }) => (
+				<div>
+					<span>{row.original.attemptCount}</span>
+					{row.original.lastErrorCode ? (
+						<code className="block max-w-48 truncate text-destructive text-xs">
+							{row.original.lastErrorCode}
 						</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "transactionHash",
-				header: m.payments_transaction(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<code
-							className="block max-w-64 truncate text-xs"
-							title={row.original.transactionHash}
-						>
-							{row.original.transactionHash}
-						</code>
-						<span className="text-muted-foreground text-xs">
-							#{row.original.eventIndex}
-						</span>
-					</div>
-				),
-			},
-			{
-				accessorKey: "status",
-				header: m.common_status(),
-				cell: ({ row }) => <StatusBadge value={row.original.status} />,
-			},
-			{
-				accessorKey: "ingestMode",
-				header: m.webhooks_event_mode(),
-				cell: ({ row }) => (
-					<Badge variant="outline">
-						{row.original.ingestMode === "active"
-							? m.webhooks_mode_active()
-							: m.webhooks_mode_shadow()}
-					</Badge>
-				),
-			},
-			{
-				accessorKey: "attemptCount",
-				header: m.webhooks_attempts(),
-				cell: ({ row }) => (
-					<div>
-						<span>{row.original.attemptCount}</span>
-						{row.original.lastErrorCode ? (
-							<code className="block max-w-48 truncate text-destructive text-xs">
-								{row.original.lastErrorCode}
-							</code>
-						) : null}
-					</div>
-				),
-			},
-			{
-				accessorKey: "receivedAt",
-				header: m.webhooks_received_at(),
-				cell: ({ row }) => formatDateTime(row.original.receivedAt),
-			},
-			{
-				id: "actions",
-				header: canUpdate ? m.common_actions() : "",
-				cell: ({ row }) =>
-					canUpdate && row.original.retryable ? (
-						<ProButton
-							size="sm"
-							variant="outline"
-							loading={
-								retry.isPending && retry.variables?.data.id === row.original.id
-							}
-							disabled={retry.isPending}
-							onClick={() => retry.mutate({ data: { id: row.original.id } })}
-						>
-							<RefreshCw />
-							{m.webhooks_retry()}
-						</ProButton>
-					) : null,
-			},
-		],
-		[canUpdate, retry],
-	);
+					) : null}
+				</div>
+			),
+		},
+		{
+			accessorKey: "receivedAt",
+			header: m.webhooks_received_at(),
+			cell: ({ row }) => formatDateTime(row.original.receivedAt),
+		},
+		{
+			id: "actions",
+			header: canUpdate ? m.common_actions() : "",
+			cell: ({ row }) =>
+				canUpdate && row.original.retryable ? (
+					<ProButton
+						size="sm"
+						variant="outline"
+						loading={
+							retry.isPending && retry.variables?.data.id === row.original.id
+						}
+						disabled={retry.isPending}
+						onClick={() => retry.mutate({ data: { id: row.original.id } })}
+					>
+						<RefreshCw />
+						{m.webhooks_retry()}
+					</ProButton>
+				) : null,
+		},
+	];
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
 			<PageHeader

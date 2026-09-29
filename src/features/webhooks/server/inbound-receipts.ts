@@ -1,3 +1,6 @@
+import { requestId } from "#/server/http";
+import { claimFixedWindowRateLimit } from "#/server/rate-limit";
+
 export const inboundWebhookEndpoints = [
 	{
 		id: "inbound-okpay-notify",
@@ -33,6 +36,37 @@ export type InboundSignatureStatus =
 	| "not_applicable"
 	| "unknown";
 
+export type InboundWebhookRateLimit = Awaited<
+	ReturnType<typeof claimFixedWindowRateLimit>
+>;
+
+const INBOUND_REQUESTS_PER_MINUTE = 600;
+// Unauthenticated rejections are stored only for the first requests of a
+// client window; later ones are visible through the rate-limit counter alone.
+const REJECTED_RECEIPTS_PER_WINDOW = 20;
+
+/**
+ * Claims the per-endpoint, per-client budget before any receipt write or
+ * expensive work. The client address header is authoritative on Cloudflare and
+ * set by the Bun request adapter.
+ */
+export function claimInboundWebhookRateLimit(
+	db: D1Database,
+	endpointCode: string,
+	request: Request,
+	now?: number,
+) {
+	const address = request.headers.get("cf-connecting-ip");
+	const client =
+		address && /^[0-9A-Fa-f.:]{1,45}$/.test(address) ? address : "unknown";
+	return claimFixedWindowRateLimit(db, {
+		bucketKey: `inbound:${endpointCode}:${client}`,
+		limit: INBOUND_REQUESTS_PER_MINUTE,
+		windowMs: 60_000,
+		...(now === undefined ? {} : { now }),
+	});
+}
+
 export async function recordInboundWebhookReceipt(
 	db: D1Database,
 	input: {
@@ -42,15 +76,24 @@ export async function recordInboundWebhookReceipt(
 		responseStatus: number;
 		signatureStatus: InboundSignatureStatus;
 		errorCode?: string;
+		/** When present, unauthenticated 4xx outcomes are sampled per client window. */
+		rate?: InboundWebhookRateLimit;
 	},
 ) {
 	const endpoint = inboundWebhookEndpoints.find(
 		(candidate) => candidate.code === input.endpointCode,
 	);
 	if (!endpoint) return;
+	const authenticated = input.signatureStatus === "valid";
+	if (
+		input.rate &&
+		!authenticated &&
+		input.responseStatus < 500 &&
+		(!input.rate.allowed || input.rate.count > REJECTED_RECEIPTS_PER_WINDOW)
+	)
+		return;
 	const now = Date.now();
 	const receiptId = crypto.randomUUID();
-	const externalRequestId = input.request.headers.get("x-request-id");
 	const processingStatus =
 		input.responseStatus >= 500
 			? "failed"
@@ -68,7 +111,8 @@ export async function recordInboundWebhookReceipt(
 			receiptId,
 			endpoint.code,
 			receiptId,
-			externalRequestId,
+			// The validated identifier echoed in the `x-request-id` response header.
+			requestId(input.request),
 			input.request.method,
 			new URL(input.request.url).pathname,
 			input.signatureStatus,

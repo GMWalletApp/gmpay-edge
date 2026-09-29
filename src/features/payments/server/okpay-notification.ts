@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { recordPaymentTransaction } from "#/features/payments/server/process";
-import { recordInboundWebhookReceipt } from "#/features/webhooks/server/inbound-receipts";
+import {
+	claimInboundWebhookRateLimit,
+	recordInboundWebhookReceipt,
+} from "#/features/webhooks/server/inbound-receipts";
 import { OkPayAdapter } from "#/integrations/wallets/okpay";
+import { isRecord } from "#/lib/is-record";
 import { decryptSecret } from "#/lib/secrets";
 import { json, withRequestId } from "#/server/http";
 import {
@@ -27,9 +31,16 @@ const depositNotificationSchema = z.looseObject({
 
 export async function handleOkPayNotification(request: Request, env: Env) {
 	const startedAt = Date.now();
+	// Bound every client before the receipt write, body read, or decryption.
+	const rate = await claimInboundWebhookRateLimit(
+		env.DB,
+		"okpay.notify",
+		request,
+	);
+	if (!rate.allowed) return errorResponse(request, "rate_limited", 429);
 	const finish = async (
 		response: Response,
-		signatureStatus: "valid" | "invalid" | "not_applicable" | "unknown",
+		signatureStatus: "valid" | "invalid" | "unknown",
 		errorCode?: string,
 	) => {
 		await recordInboundWebhookReceipt(env.DB, {
@@ -38,6 +49,7 @@ export async function handleOkPayNotification(request: Request, env: Env) {
 			startedAt,
 			responseStatus: response.status,
 			signatureStatus,
+			rate,
 			...(errorCode ? { errorCode } : {}),
 		});
 		return response;
@@ -94,9 +106,11 @@ export async function handleOkPayNotification(request: Request, env: Env) {
 			code: string;
 			decimals: number;
 		}>();
+	// An unknown order cannot be verified; answer exactly like a bad signature so
+	// the endpoint does not reveal which order identifiers exist.
 	if (!row?.provider_order_id || !row.config_encrypted)
 		return finish(
-			errorResponse(request, "order_not_found", 404),
+			errorResponse(request, "invalid_signature", 401),
 			"unknown",
 			"order_not_found",
 		);
@@ -177,8 +191,4 @@ function parseFormData(formData: FormData) {
 		input[key] = value;
 	}
 	return input;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
