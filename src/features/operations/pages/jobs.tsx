@@ -15,6 +15,7 @@ import { operationsErrorMessage } from "#/features/operations/error-message";
 import {
 	formatScheduleInterval,
 	nextTaskExecutionAt,
+	RETENTION_INTERVAL_MS,
 	type ScheduledTaskName,
 	scheduledTaskCatalog,
 } from "#/features/operations/schedule";
@@ -185,6 +186,7 @@ function taskScheduleLabel(
 ) {
 	if (task === "payment_defaults") return null;
 	let intervalMs = 60_000;
+	if (task === "retention_cleanup") intervalMs = RETENTION_INTERVAL_MS;
 	if (task === "crypto_rate_sync") intervalMs = rateIntervalsMs.crypto;
 	if (task === "fiat_rate_sync") intervalMs = rateIntervalsMs.fiat;
 	return m.jobs_schedule_every({

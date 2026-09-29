@@ -10,7 +10,7 @@ import {
 	allSystemPermissionGrants,
 	type SystemPermission,
 } from "#/features/access/system-rbac";
-import { getAuth } from "#/features/auth/server/auth";
+import { getSessionForRequest } from "#/features/auth/server/auth";
 import { getCloudflareEnv } from "#/server/db.server";
 import { measureRequestTiming } from "#/server/server-timing";
 
@@ -50,10 +50,8 @@ export async function getAdminPermissions(request: Request) {
 
 async function loadUserAccess(request: Request) {
 	return memoizeRequestAccess(requestAccess, request, async () => {
-		const session = await measureRequestTiming(request, "session", async () =>
-			(await getAuth(request)).api.getSession({
-				headers: request.headers,
-			}),
+		const session = await measureRequestTiming(request, "session", () =>
+			getSessionForRequest(request),
 		);
 		if (!session?.user) throw new AccessDeniedError(401);
 		const user = session.user as AdminSessionUser;

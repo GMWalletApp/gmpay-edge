@@ -64,5 +64,12 @@ export function nextTaskExecutionAt(
 		const last = lastStartedAt ? new Date(lastStartedAt).getTime() : now;
 		return new Date(Math.max(last + intervalMs, now)).toISOString();
 	}
+	if (task === "retention_cleanup")
+		return new Date(
+			(Math.floor(now / RETENTION_INTERVAL_MS) + 1) * RETENTION_INTERVAL_MS,
+		).toISOString();
 	return new Date(Math.floor(now / 60_000) * 60_000 + 60_000).toISOString();
 }
+
+/** Retention runs on every fifth minute; see `isRetentionMinute` in maintenance. */
+export const RETENTION_INTERVAL_MS = 5 * 60_000;

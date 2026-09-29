@@ -1,4 +1,5 @@
 import { DomainError } from "#/lib/domain-error";
+import type { ReadDatabase } from "#/server/read-replica";
 
 const TASK_LEASE_MS = 30 * 60_000;
 
@@ -159,7 +160,7 @@ export type LatestOperationTaskRun = {
  * (`operation_task_runs_task_started_idx`) instead of ranking every run.
  */
 export async function loadLatestOperationTaskRuns(
-	db: D1Database,
+	db: ReadDatabase,
 	tasks: readonly string[],
 ) {
 	const rows = await db

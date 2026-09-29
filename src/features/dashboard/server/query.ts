@@ -1,4 +1,5 @@
 import { minorToDecimal } from "#/lib/units";
+import type { ReadDatabase } from "#/server/read-replica";
 
 type OrderSummary = {
 	total: number;
@@ -23,7 +24,7 @@ type RecentOrder = {
 	network: string;
 };
 
-export async function queryAdminDashboard(db: D1Database, now = Date.now()) {
+export async function queryAdminDashboard(db: ReadDatabase, now = Date.now()) {
 	const rangeStart = startOfUtcDay(now) - 13 * 86_400_000;
 	const results = await db.batch([
 		db

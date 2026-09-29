@@ -80,6 +80,10 @@ export function CheckoutPage({
 		queryKey: ["checkout", "payment-options", orderId],
 		queryFn: () => listCheckoutPaymentOptionsFn({ data: { orderId } }),
 		enabled: shouldLoadPaymentOptions,
+		// Options are quoted from synchronized rates; the 5 s status poll must
+		// not drag the option list along with it.
+		staleTime: 60_000,
+		refetchOnWindowFocus: false,
 	});
 	const paymentOptions = paymentOptionsQuery.data ?? null;
 	const backgroundStyle: CSSProperties = {

@@ -1,4 +1,4 @@
-import { createIsolateSnapshot } from "#/features/status/server/snapshot";
+import { createIsolateSnapshot } from "#/server/isolate-snapshot";
 
 export interface HealthComponent {
 	key:

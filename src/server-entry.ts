@@ -2,11 +2,13 @@ import {
 	createStartHandler,
 	defaultStreamHandler,
 } from "@tanstack/react-start/server";
+import { primeSessionLookup } from "#/features/auth/server/auth";
 import { handleLivenessRequest } from "#/features/status/server/health";
 import { applySecurityHeaders } from "#/server/http-security";
 import { validateRequestAuthority } from "#/server/middleware/authority";
 import { handleI18nRequest } from "#/server/middleware/i18n";
 import { handleQueue } from "#/server/queue";
+import { withReadBookmarkCookie } from "#/server/read-replica";
 import { adaptCloudflareEnv } from "#/server/runtime/cloudflare";
 import { runWithRuntimeEnv } from "#/server/runtime/context";
 import type { RuntimeEnv } from "#/server/runtime/types";
@@ -25,6 +27,7 @@ export async function handleAppRequest(request: Request, env: RuntimeEnv) {
 				{ name: "total", durationMs: performance.now() - startedAt },
 			]),
 		);
+	primeSessionLookup(request);
 	const authorityStartedAt = performance.now();
 	const rejected = await validateRequestAuthority(request, env.DB);
 	const authorityDurationMs = performance.now() - authorityStartedAt;
@@ -37,11 +40,10 @@ export async function handleAppRequest(request: Request, env: RuntimeEnv) {
 			]),
 		);
 	const appStartedAt = performance.now();
-	const response = await handleI18nRequest(
+	const response = await withReadBookmarkCookie(
 		request,
+		await handleI18nRequest(request, env.DB, env.CACHE, appFetch),
 		env.DB,
-		env.CACHE,
-		appFetch,
 	);
 	return applySecurityHeaders(
 		request,

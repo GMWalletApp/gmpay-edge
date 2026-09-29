@@ -4,12 +4,18 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as schema from "#/db/schema";
 import { requireAdmin } from "#/features/access/server/require-admin";
 import { systemPermission } from "#/features/access/system-rbac";
+import { primeSessionLookup } from "#/features/auth/server/auth";
 import { createAuth } from "#/features/auth/server/auth-factory";
 import { installSystem } from "#/features/installation/server/install";
 import { createUser } from "#/features/users/server/users";
 import { adaptCloudflareEnv } from "#/server/runtime/cloudflare";
 import { runWithRuntimeEnv } from "#/server/runtime/context";
 import { createInitialRuntimeConfig } from "#/server/runtime-config";
+import {
+	createDatastoreCounters,
+	instrumentD1,
+	instrumentKv,
+} from "../helpers/datastore-counters";
 import { applyMigrations } from "./migrations";
 
 const workerEnv = vi.hoisted(() => ({
@@ -139,6 +145,83 @@ describe("requireAdmin authorization paths", () => {
 		await expect(
 			authorize(cookies.limited, systemPermission("users", "read")),
 		).rejects.toMatchObject({ name: "AccessDeniedError", status: 403 });
+	});
+
+	it("consumes a primed session lookup instead of repeating it", async () => {
+		const counters = createDatastoreCounters();
+		const cache = workerEnv.bindings.CACHE;
+		if (!cache) throw new Error("KV binding missing");
+		const env = adaptCloudflareEnv({
+			DB: instrumentD1(db, counters),
+			CACHE: instrumentKv(cache, counters),
+		});
+		const request = (path: string) =>
+			new Request(`https://pay.example${path}`, {
+				headers: { cookie: cookies.root },
+			});
+		const authorize = (target: Request) =>
+			runWithRuntimeEnv(env, () =>
+				requireAdmin(target, systemPermission("orders", "read")),
+			);
+		// A cold binding has no verified auth instance: priming is a no-op.
+		await runWithRuntimeEnv(env, () =>
+			primeSessionLookup(request("/_serverFn/orders")),
+		);
+		expect(counters).toMatchObject({ d1StatementRaw: 0, d1StatementAll: 0 });
+		await expect(authorize(request("/admin/orders"))).resolves.toMatchObject({
+			root: true,
+		});
+
+		Object.assign(counters, createDatastoreCounters());
+		const primed = request("/_serverFn/orders");
+		await runWithRuntimeEnv(env, () => primeSessionLookup(primed));
+		await expect(authorize(primed)).resolves.toMatchObject({ root: true });
+		// One settings read plus one Better Auth session lookup, not two lookups.
+		expect(
+			counters.d1StatementAll +
+				counters.d1StatementRaw +
+				counters.d1StatementFirst +
+				counters.d1StatementRun +
+				counters.d1Batch,
+		).toBe(3);
+
+		// Public paths never prime, so anonymous traffic costs nothing extra.
+		Object.assign(counters, createDatastoreCounters());
+		await runWithRuntimeEnv(env, () =>
+			primeSessionLookup(request("/checkout/12345678901234567890")),
+		);
+		expect(counters).toMatchObject({ d1StatementRaw: 0, d1StatementAll: 0 });
+	});
+
+	it("discards an optimistic lookup once the runtime secret changed", async () => {
+		const original = await db
+			.prepare(
+				"SELECT value FROM system_settings WHERE key = 'runtime.better_auth_secret'",
+			)
+			.first<{ value: string }>();
+		if (!original) throw new Error("runtime secret missing");
+		const rotated = JSON.stringify("r".repeat(64));
+		await db
+			.prepare(
+				"UPDATE system_settings SET value = ? WHERE key = 'runtime.better_auth_secret'",
+			)
+			.bind(rotated)
+			.run();
+		try {
+			await expect(
+				authorize(cookies.root, systemPermission("orders", "read")),
+			).rejects.toMatchObject({ name: "AccessDeniedError", status: 401 });
+		} finally {
+			await db
+				.prepare(
+					"UPDATE system_settings SET value = ? WHERE key = 'runtime.better_auth_secret'",
+				)
+				.bind(original.value)
+				.run();
+		}
+		await expect(
+			authorize(cookies.root, systemPermission("orders", "read")),
+		).resolves.toMatchObject({ root: true });
 	});
 
 	it("admits a granted user and returns the effective access", async () => {

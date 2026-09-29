@@ -179,6 +179,23 @@ docker compose up -d
 - [ ] 按[支付配置](PAYMENT_METHODS.md)配置计划启用的支付方式；交易所只使用只读凭证，并核对资产标识和精度。
 - [ ] 配置加密资产与法币汇率同步；在各自设置弹窗中先执行一次“立即执行”，核对原始/最终汇率，再确认每分钟 Cron 遵循每类的自动同步开关和保存周期。
 
+## Cloudflare 上的延迟
+
+每条 D1 语句都是一次到数据库主区域的网络往返，因此 Workers 上的请求延迟取决于串行执行的语句数量，以及
+Worker 与 D1 之间的距离。已认证的管理端调用会并行执行 Allowed Hosts 设置读取与 Better Auth 会话查询，
+然后再执行自身查询；结账页只用一次汇率读取为全部支付选项报价。剩余差距由三项检查收敛：
+
+- **Smart Placement。** `wrangler.jsonc` 已启用，但 Cloudflare 需要观察到流量后才会生效。请在 Workers &
+  Pages → 该 Worker → Settings → Placement 中确认状态显示 Smart Placement 已激活，使 Worker 运行在 D1
+  主库附近。
+- **D1 读复制。** 在 D1 → 该数据库 → Settings → Read replication 中（或通过 REST API）为数据库启用一次。
+  之后列表、仪表盘、运营视图与结账读取会在一个可能由 Worker 附近副本提供服务的会话上执行；授权、设置与所有
+  写入仍走主库。变更请求的响应会设置 `gmpay_d1_bookmark` cookie（HttpOnly，五分钟），使同一浏览器随后的读取
+  至少锚定在该次写入之后。未启用读复制时该会话回落到主库，行为不变。
+- **先测量再调优。** 每个响应都带有 `Server-Timing` 响应头，包含 `authority`（设置读取）、`session`（Better
+  Auth 查询）、`rbac`（权限缓存）、`app` 与 `total`，单位为毫秒。结合 D1 指标页（查询延迟、读取行数）判断
+  对你的用户而言哪一段占主导，再决定是否更换区域或增加缓存。
+
 ## Bun 资源
 
 - [ ] 确认容器以非 root 用户运行，持久化目录仅允许预期的宿主机/容器身份写入。

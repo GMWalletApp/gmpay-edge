@@ -73,9 +73,44 @@ export function instrumentD1(
 					return Reflect.apply(target.exec, target, args);
 				};
 			}
+			if (property === "withSession") {
+				return (...args: Parameters<D1Database["withSession"]>) =>
+					instrumentD1Session(
+						Reflect.apply(target.withSession, target, args),
+						counters,
+					);
+			}
 			return Reflect.get(target, property, receiver);
 		},
 	}) as D1Database;
+}
+
+/** Sessions count against the same statement counters as the primary binding. */
+function instrumentD1Session(
+	session: D1DatabaseSession,
+	counters: DatastoreCounters,
+): D1DatabaseSession {
+	return new Proxy(session, {
+		get(target, property, receiver) {
+			if (property === "prepare") {
+				return (...args: Parameters<D1DatabaseSession["prepare"]>) => {
+					counters.d1Prepare += 1;
+					const statement = Reflect.apply(target.prepare, target, args);
+					return instrumentD1Statement(statement, counters);
+				};
+			}
+			if (property === "batch") {
+				return (...args: Parameters<D1DatabaseSession["batch"]>) => {
+					counters.d1Batch += 1;
+					return Reflect.apply(target.batch, target, args);
+				};
+			}
+			if (property === "getBookmark") {
+				return () => Reflect.apply(target.getBookmark, target, []);
+			}
+			return Reflect.get(target, property, receiver);
+		},
+	}) as D1DatabaseSession;
 }
 
 function instrumentD1Statement(

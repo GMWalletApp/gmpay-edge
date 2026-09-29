@@ -279,6 +279,15 @@
 
 ## Runtime, network, and responses
 
+- With D1 read replication enabled, admin lists, dashboards, operations views,
+  and checkout reads run on a per-request D1 session that a replica may serve;
+  authorization, session and settings reads, rate-limit claims, and every write
+  stay on the primary. Mutating server-function and checkout responses set the
+  `gmpay_d1_bookmark` cookie (HttpOnly, five minutes, no personal data) so the
+  same browser's next reads are anchored at or after that write; forged cookie
+  values are ignored. The Better Auth session lookup starts as soon as an admin
+  request arrives, overlapping the Allowed Hosts settings read, and is discarded
+  whenever the runtime secret or trusted origins turn out to have changed.
 - Responses apply HSTS on HTTPS, frame denial, MIME sniffing protection, a
   strict referrer policy, a restrictive Permissions Policy, same-origin resource
   policy, and a Content Security Policy. Allowed Hosts, Origin/CSRF validation,
@@ -321,10 +330,11 @@
 - Request IDs written to audit rows and echoed in `X-Request-ID` must match
   `^[A-Za-z0-9._:-]{1,128}$`; a missing or invalid client value is replaced by
   a server-generated UUID.
-- Retention cleanup runs on every maintenance tick in bounded chunks (250 rows
-  per statement, at most 2,000 rows or two seconds per tick) and continues on
-  the next tick while expired rows remain, so a steady stream of deliveries,
-  receipts, and task runs never outgrows the cleanup.
+- Retention cleanup runs on every fifth maintenance minute in bounded chunks
+  (250 rows per statement, at most 2,000 rows or two seconds per run) and
+  continues on the next retention minute while expired rows remain, so a steady
+  stream of deliveries, receipts, and task runs never outgrows the cleanup and
+  deletes never compete with user requests for the D1 writer every minute.
 - Provider-event migration `0007_sparkling_wallflower.sql` adds a nullable lease
   token without rewriting existing rows. A claim lasts five minutes (eight
   bounded 30-second EVM lookups plus headroom). Token and expiry checks fence
