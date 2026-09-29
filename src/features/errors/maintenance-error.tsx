@@ -1,5 +1,5 @@
+import { Button } from "#/components/ui/button";
 import { m } from "#/paraglide/messages";
-import { Button } from "@/components/ui/button";
 
 export function MaintenanceError() {
 	return (

@@ -1,6 +1,6 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { Button } from "#/components/ui/button";
 import { m } from "#/paraglide/messages";
-import { Button } from "@/components/ui/button";
 
 export function NotFoundError() {
 	const navigate = useNavigate();

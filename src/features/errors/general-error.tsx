@@ -1,8 +1,8 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import type { HTMLAttributes } from "react";
+import { Button } from "#/components/ui/button";
+import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 type GeneralErrorProps = HTMLAttributes<HTMLDivElement> & {
 	minimal?: boolean;
