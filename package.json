@@ -84,7 +84,7 @@
     "@icons-pack/react-simple-icons": "^13.13.0",
     "@noble/hashes": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@tanstack/match-sorter-utils": "^8.19.4",
+    "@tanstack/match-sorter-utils": "^9.1.2",
     "@tanstack/react-devtools": "^0.10.13",
     "@tanstack/react-form": "^1.33.5",
     "@tanstack/react-query": "^5.104.0",
