@@ -39,7 +39,7 @@ describe("KV cache observability", () => {
 		);
 		recordKvCacheMetric(
 			{
-				cache: "operational_settings",
+				cache: "site_brand",
 				operation: "delete",
 				outcome: "fallback",
 			},

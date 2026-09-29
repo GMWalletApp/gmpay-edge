@@ -3,6 +3,7 @@ import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { isRecord } from "#/lib/is-record";
 import type {
 	RuntimeObjectBody,
 	RuntimeObjectHttpMetadata,
@@ -332,10 +333,6 @@ function parseStoredCustomMetadata(value: unknown): Record<string, string> {
 	)
 		throw new Error("Invalid object metadata");
 	return value as Record<string, string>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function isNotFound(error: unknown) {

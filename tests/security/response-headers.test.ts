@@ -3,7 +3,7 @@ import { AccessDeniedError } from "#/features/access/server/access-cache";
 import { adminAccessErrorResponse } from "#/server/access-error-response";
 import { apiError, json, requestId, withRequestId } from "#/server/http";
 import { applySecurityHeaders } from "#/server/http-security";
-import { withForwardedProtocol } from "#/server/runtime/forwarded-protocol";
+import { withClientAddress } from "#/server/runtime/client-address";
 
 describe("application security headers", () => {
 	it("keeps one request ID for the complete request lifecycle", () => {
@@ -84,11 +84,12 @@ describe("application security headers", () => {
 		expect(response.headers.has("strict-transport-security")).toBe(false);
 	});
 
-	it("recognizes HTTPS terminated by the first reverse proxy", () => {
-		const request = withForwardedProtocol(
+	it("recognizes HTTPS terminated by a trusted local reverse proxy", () => {
+		const request = withClientAddress(
 			new Request("http://pay.example/install", {
-				headers: { "x-forwarded-proto": "https, http" },
+				headers: { "x-forwarded-proto": "https" },
 			}),
+			"127.0.0.1",
 		);
 		const response = applySecurityHeaders(request, new Response("ok"));
 
@@ -96,6 +97,19 @@ describe("application security headers", () => {
 		expect(response.headers.get("strict-transport-security")).toContain(
 			"max-age=31536000",
 		);
+	});
+
+	it("does not send HSTS when a public peer claims HTTPS", () => {
+		const request = withClientAddress(
+			new Request("http://pay.example/install", {
+				headers: { "x-forwarded-proto": "https" },
+			}),
+			"203.0.113.9",
+		);
+		const response = applySecurityHeaders(request, new Response("ok"));
+
+		expect(request.url).toBe("http://pay.example/install");
+		expect(response.headers.has("strict-transport-security")).toBe(false);
 	});
 
 	it("applies an explicit route cache matrix without overriding R2 assets", () => {

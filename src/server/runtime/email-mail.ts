@@ -5,12 +5,15 @@ import { sendGridProvider } from "@visulima/email/providers/sendgrid";
 import { smtpProvider } from "@visulima/email/providers/smtp";
 import type { EmailProviderId } from "#/features/settings/email-channels";
 import { decryptSecret } from "#/lib/secrets";
+import { assertSmtpStartTls } from "#/server/runtime/smtp-starttls";
 import type {
 	RuntimeDatabase,
 	RuntimeEmailAddress,
 	RuntimeEmailMessage,
 	RuntimeMailSender,
 } from "#/server/runtime/types";
+
+const providerTimeoutMs = 10_000;
 
 type EmailChannelRow = {
 	id: string;
@@ -110,6 +113,7 @@ async function sendWithChannel(
 			throw new Error("Cloudflare Email binding is unavailable");
 		return cloudflareEmail.send(configuredMessage);
 	}
+	if (channel.provider === "smtp") await assertSmtpTransportSecurity(channel);
 	const credential = channel.credential_encrypted
 		? await decryptSecret(channel.credential_encrypted, encryptionSecret)
 		: "";
@@ -142,8 +146,20 @@ async function sendWithChannel(
 	}
 }
 
+/**
+ * Port 465 is implicit TLS. Every other port must upgrade with STARTTLS before
+ * the credential is even decrypted; the provider alone would fall back to
+ * plaintext when the server does not advertise it.
+ */
+async function assertSmtpTransportSecurity(channel: EmailChannelRow) {
+	if (!channel.smtp_host) throw new Error("SMTP host is not configured");
+	const port = channel.smtp_port ?? 587;
+	if (port === 465) return;
+	await assertSmtpStartTls(channel.smtp_host, port, providerTimeoutMs);
+}
+
 function createProvider(channel: EmailChannelRow, credential: string) {
-	const common = { retries: 0, timeout: 10_000 } as const;
+	const common = { retries: 0, timeout: providerTimeoutMs } as const;
 	switch (channel.provider) {
 		case "resend":
 			return resendProvider({ apiKey: credential, ...common });

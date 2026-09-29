@@ -11,7 +11,7 @@ export {
 	NodePreparedStatement,
 	openNodeDatabase,
 } from "./database";
-export { NodeRuntimeLifecycle } from "./lifecycle";
+export { NodeRequestTracker, NodeRuntimeLifecycle } from "./lifecycle";
 export type { NodeMigration } from "./migrations";
 export { applyNodeMigrations, loadNodeMigrations } from "./migrations";
 export type { StoredObjectMetadata } from "./object-storage";

@@ -1,3 +1,5 @@
+import { createIsolateSnapshot } from "#/features/status/server/snapshot";
+
 export interface HealthComponent {
 	key:
 		| "database"
@@ -67,10 +69,7 @@ export function handleLivenessRequest(request: Request): Response | null {
 	});
 }
 
-const healthSnapshots = new WeakMap<
-	object,
-	{ expiresAt: number; value: Promise<HealthReport> }
->();
+const healthSnapshot = createIsolateSnapshot<HealthReport>(healthSnapshotTtlMs);
 
 export function getHealthSnapshot(
 	env: Partial<Env>,
@@ -78,20 +77,7 @@ export function getHealthSnapshot(
 ): Promise<HealthReport> {
 	const cacheKey = env.DB ?? env.CACHE;
 	if (!cacheKey) return checkHealth(env);
-	const cached = healthSnapshots.get(cacheKey);
-	if (cached && cached.expiresAt > now) return cached.value;
-
-	const value = checkHealth(env).catch((error) => {
-		if (healthSnapshots.get(cacheKey)?.value === value) {
-			healthSnapshots.delete(cacheKey);
-		}
-		throw error;
-	});
-	healthSnapshots.set(cacheKey, {
-		expiresAt: now + healthSnapshotTtlMs,
-		value,
-	});
-	return value;
+	return healthSnapshot(cacheKey, () => checkHealth(env), now);
 }
 
 export async function checkHealth(env: Partial<Env>): Promise<HealthReport> {

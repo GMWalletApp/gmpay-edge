@@ -5,9 +5,11 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	applyNodeMigrations,
+	type NodeDatabase,
 	NodeDurableQueue,
 	NodeMemoryCache,
 	NodeObjectStorage,
+	NodeRequestTracker,
 	NodeRuntimeLifecycle,
 	NodeScheduler,
 	openNodeDatabase,
@@ -62,15 +64,21 @@ describe("Bun SQLite database", () => {
 			"CREATE TABLE example (id TEXT PRIMARY KEY);",
 		);
 		const database = openNodeDatabase(":memory:");
+		const run = vi.spyOn(database.sqlite, "run");
 		const url = pathToFileURL(`${directory}/`);
 		expect(await applyNodeMigrations(database, url)).toEqual({
 			applied: 1,
 			total: 1,
 		});
+		expect(
+			run.mock.calls.filter(([sql]) => sql === "PRAGMA optimize"),
+		).toHaveLength(1);
+		run.mockClear();
 		expect(await applyNodeMigrations(database, url)).toEqual({
 			applied: 0,
 			total: 1,
 		});
+		expect(run).not.toHaveBeenCalledWith("PRAGMA optimize");
 		await writeFile(
 			join(directory, "0000_initial.sql"),
 			"CREATE TABLE changed (id TEXT PRIMARY KEY);",
@@ -281,14 +289,348 @@ describe("Node durable background services", () => {
 	});
 });
 
+describe("NodeDurableQueue delivery budget", () => {
+	it("keeps a leased message exclusive until the lease expires, then redelivers it", async () => {
+		vi.useFakeTimers();
+		const database = openNodeDatabase(":memory:");
+		const queue = new NodeDurableQueue<{ id: string }>(database, "payments");
+		const claim = vi.spyOn(queue, "claim");
+		// The injected clock stays ahead of the wall-clock insert timestamps so
+		// only the lease arithmetic under test decides what a poll may claim.
+		let clock = Date.now() + 86_400_000;
+		const deliveries: { attempts: number; finish: () => void }[] = [];
+		const consumer = queue.createConsumer(
+			(batch) =>
+				new Promise<void>((resolve) => {
+					// The handler stays open until the test releases it, like a hung
+					// worker whose lease must run out before anyone else may deliver.
+					for (const message of batch.messages)
+						deliveries.push({
+							attempts: message.attempts,
+							finish: () => {
+								message.ack();
+								resolve();
+							},
+						});
+				}),
+			{
+				concurrency: 2,
+				maxAttempts: 3,
+				pollIntervalMs: 100,
+				maxIdlePollIntervalMs: 100,
+				leaseMs: 5_000,
+				now: () => clock,
+			},
+		);
+
+		consumer.start();
+		const { messageId } = await queue.send({ id: "payment-1" });
+		await advanceTimersByTime(0);
+		const leaseExpiresAt = clock + 5_000;
+		expect(deliveries.map((delivery) => delivery.attempts)).toEqual([1]);
+		const first = readQueueRow(database, messageId);
+		expect(first).toMatchObject({
+			status: "leased",
+			attempts: 1,
+			lease_expires_at: leaseExpiresAt,
+		});
+
+		clock = leaseExpiresAt - 1;
+		await advanceTimersByTime(100);
+		expect(claim).toHaveBeenLastCalledWith(1, 5_000, leaseExpiresAt - 1);
+		expect(deliveries).toHaveLength(1);
+		expect(readQueueRow(database, messageId)).toEqual(first);
+
+		clock = leaseExpiresAt;
+		await advanceTimersByTime(100);
+		expect(deliveries.map((delivery) => delivery.attempts)).toEqual([1, 2]);
+		const second = readQueueRow(database, messageId);
+		expect(second).toMatchObject({
+			status: "leased",
+			attempts: 2,
+			lease_expires_at: leaseExpiresAt + 5_000,
+		});
+		expect(second?.lease_token).not.toBe(first?.lease_token);
+
+		// The stale delivery finishing late cannot ack the redelivered row.
+		deliveries[0]?.finish();
+		await advanceTimersByTime(0);
+		expect(readQueueRow(database, messageId)).toEqual(second);
+		deliveries[1]?.finish();
+		await advanceTimersByTime(0);
+		expect(readQueueRow(database, messageId)).toBeNull();
+
+		await consumer.stop();
+		database.close();
+	});
+
+	it("dead-letters a failing message after exactly maxAttempts deliveries", async () => {
+		vi.useFakeTimers();
+		const database = openNodeDatabase(":memory:");
+		const queue = new NodeDurableQueue<{ id: string }>(database, "webhooks");
+		let clock = Date.now() + 86_400_000;
+		const attempts: number[] = [];
+		const consumer = queue.createConsumer(
+			async (batch) => {
+				attempts.push(...batch.messages.map((message) => message.attempts));
+				throw new Error("merchant endpoint unavailable");
+			},
+			{
+				concurrency: 1,
+				maxAttempts: 3,
+				pollIntervalMs: 100,
+				maxIdlePollIntervalMs: 100,
+				now: () => clock,
+			},
+		);
+
+		consumer.start();
+		const { messageId } = await queue.send({ id: "delivery-1" });
+		await advanceTimersByTime(0);
+		expect(attempts).toEqual([1]);
+		// Without baseRetryDelayMs the first retry waits the 15s retry_delay that
+		// wrangler.jsonc configures for the Cloudflare consumers.
+		expect(readQueueRow(database, messageId)).toMatchObject({
+			status: "ready",
+			attempts: 1,
+			available_at: clock + 15_000,
+			lease_token: null,
+			last_error: "Error",
+		});
+
+		clock += 14_999;
+		await advanceTimersByTime(100);
+		expect(attempts).toEqual([1]);
+		clock += 1;
+		await advanceTimersByTime(100);
+		expect(attempts).toEqual([1, 2]);
+		expect(readQueueRow(database, messageId)).toMatchObject({
+			status: "ready",
+			attempts: 2,
+			available_at: clock + 30_000,
+		});
+
+		clock += 30_000;
+		await advanceTimersByTime(100);
+		expect(attempts).toEqual([1, 2, 3]);
+		expect(readQueueRow(database, messageId)).toMatchObject({
+			status: "dead",
+			attempts: 3,
+			lease_token: null,
+			last_error: "Error",
+		});
+
+		// The dead letter is never redelivered and stays inspectable: idle polls
+		// purge with the documented seven-day default, which this row is far from.
+		const purge = vi.spyOn(queue, "purgeDeadMessages");
+		clock += 60 * 60_000;
+		await advanceTimersByTime(100);
+		expect(attempts).toEqual([1, 2, 3]);
+		expect(purge).toHaveBeenLastCalledWith(clock - 7 * 86_400_000);
+		expect(readQueueRow(database, messageId)).toMatchObject({
+			status: "dead",
+			attempts: 3,
+		});
+
+		await consumer.stop();
+		database.close();
+	});
+
+	it("purges only its own dead rows at or before the cutoff, oldest first and bounded", async () => {
+		const database = openNodeDatabase(":memory:");
+		const queue = new NodeDurableQueue<{ id: string }>(database, "payments");
+		const other = new NodeDurableQueue<{ id: string }>(database, "webhooks");
+		const oldest = await deadLetter(queue, 1_000);
+		const boundary = await deadLetter(queue, 2_000);
+		const newest = await deadLetter(queue, 3_000);
+		await deadLetter(other, 1_000);
+		await queue.send({ id: "leased" });
+		expect(queue.claim(1, 60_000, Date.now())).toHaveLength(1);
+		await queue.send({ id: "ready" });
+		expect(deadMessageIds(database, "payments")).toEqual([
+			oldest,
+			boundary,
+			newest,
+		]);
+
+		expect(queue.purgeDeadMessages(2_000, 1)).toBe(1);
+		expect(deadMessageIds(database, "payments")).toEqual([boundary, newest]);
+		expect(queue.purgeDeadMessages(2_000)).toBe(1);
+		expect(deadMessageIds(database, "payments")).toEqual([newest]);
+		expect(queue.purgeDeadMessages(2_000)).toBe(0);
+
+		// A cutoff covering every row still leaves live work and other queues alone.
+		expect(queue.purgeDeadMessages(Number.MAX_SAFE_INTEGER)).toBe(1);
+		expect(
+			database.sqlite
+				.prepare(
+					"SELECT queue, status FROM node_queue_messages ORDER BY queue, status",
+				)
+				.all(),
+		).toEqual([
+			{ queue: "payments", status: "leased" },
+			{ queue: "payments", status: "ready" },
+			{ queue: "webhooks", status: "dead" },
+		]);
+		database.close();
+	});
+
+	it("purges dead letters past deadRetentionMs from idle polls once per interval", async () => {
+		vi.useFakeTimers();
+		const database = openNodeDatabase(":memory:");
+		const queue = new NodeDurableQueue<{ id: string }>(database, "webhooks");
+		const purge = vi.spyOn(queue, "purgeDeadMessages");
+		let clock = Date.now() + 86_400_000;
+		const expired = await deadLetter(queue, clock - 60_000);
+		const retained = await deadLetter(queue, clock - 59_999);
+		expect(deadMessageIds(database, "webhooks")).toEqual([expired, retained]);
+		const handled: string[] = [];
+		const consumer = queue.createConsumer(
+			async (batch) => {
+				handled.push(...batch.messages.map((message) => message.body.id));
+				batch.ackAll();
+			},
+			{
+				concurrency: 1,
+				maxAttempts: 1,
+				pollIntervalMs: 100,
+				maxIdlePollIntervalMs: 100,
+				deadRetentionMs: 60_000,
+				now: () => clock,
+			},
+		);
+
+		consumer.start();
+		await advanceTimersByTime(0);
+		expect(purge).toHaveBeenCalledTimes(1);
+		expect(purge).toHaveBeenLastCalledWith(clock - 60_000);
+		expect(deadMessageIds(database, "webhooks")).toEqual([retained]);
+
+		// Idle polls inside the hourly purge interval leave newly expired rows alone.
+		clock += 1;
+		await advanceTimersByTime(100);
+		expect(purge).toHaveBeenCalledTimes(1);
+
+		// Once the interval has passed, a poll that claims live work still defers
+		// the purge to the next idle poll.
+		clock += 60 * 60_000;
+		await queue.send({ id: "live" });
+		await advanceTimersByTime(0);
+		expect(handled).toEqual(["live"]);
+		expect(purge).toHaveBeenCalledTimes(1);
+		await advanceTimersByTime(0);
+		expect(purge).toHaveBeenCalledTimes(2);
+		expect(deadMessageIds(database, "webhooks")).toEqual([]);
+
+		await consumer.stop();
+		database.close();
+	});
+});
+
+describe("NodeRequestTracker", () => {
+	it("lets later services wait for in-flight requests before stopping", async () => {
+		const tracker = new NodeRequestTracker(10_000);
+		const calls: string[] = [];
+		const lifecycle = new NodeRuntimeLifecycle([
+			{
+				start() {},
+				stop: () => {
+					calls.push("database");
+				},
+			},
+			tracker,
+		]);
+		await lifecycle.start();
+		let finish: ((value: string) => void) | undefined;
+		const request = tracker.track(
+			() =>
+				new Promise<string>((resolve) => {
+					finish = resolve;
+				}),
+		);
+
+		const stopping = lifecycle.stop();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(calls).toEqual([]);
+
+		finish?.("ok");
+		await expect(request).resolves.toBe("ok");
+		await stopping;
+		expect(calls).toEqual(["database"]);
+	});
+
+	it("bounds the drain wait and settles failed or throwing handlers", async () => {
+		const hung = new NodeRequestTracker(20);
+		void hung.track(() => new Promise<never>(() => {}));
+		const startedAt = Date.now();
+		await hung.stop();
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(15);
+
+		const failing = new NodeRequestTracker(10_000);
+		await expect(
+			failing.track(() => Promise.reject(new Error("boom"))),
+		).rejects.toThrow("boom");
+		await expect(
+			failing.track(() => {
+				throw new Error("sync");
+			}),
+		).rejects.toThrow("sync");
+		expect(failing.stop()).toBeUndefined();
+	});
+});
+
 async function advanceTimersByTime(durationMs: number) {
 	vi.advanceTimersByTime(durationMs);
-	await Promise.resolve();
-	await Promise.resolve();
+	// A handler settling, its disposition write and the wake-up that follows
+	// span several microtask turns.
+	for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
 }
 
 async function temporaryDirectory() {
 	const directory = await mkdtemp(join(tmpdir(), "gmpay-node-runtime-"));
 	directories.push(directory);
 	return directory;
+}
+
+type QueueRow = {
+	status: "ready" | "leased" | "dead";
+	attempts: number;
+	available_at: number;
+	lease_token: string | null;
+	lease_expires_at: number | null;
+	last_error: string | null;
+	updated_at: number;
+};
+
+function readQueueRow(database: NodeDatabase, id: string) {
+	return database.sqlite
+		.prepare(
+			`SELECT status, attempts, available_at, lease_token, lease_expires_at,
+			 last_error, updated_at FROM node_queue_messages WHERE id = ?`,
+		)
+		.get(id) as QueueRow | null;
+}
+
+function deadMessageIds(database: NodeDatabase, queue: string) {
+	const rows = database.sqlite
+		.prepare(
+			`SELECT id FROM node_queue_messages
+			 WHERE queue = ? AND status = 'dead' ORDER BY updated_at, id`,
+		)
+		.all(queue) as { id: string }[];
+	return rows.map((row) => row.id);
+}
+
+/** Dead-letters a fresh message and backdates its last touch to `deadAt`. */
+async function deadLetter(
+	queue: NodeDurableQueue<{ id: string }>,
+	deadAt: number,
+) {
+	const { messageId } = await queue.send({ id: `dead-${deadAt}` });
+	const [claimed] = queue.claim(1, 1_000, Date.now());
+	if (!claimed || claimed.id !== messageId)
+		throw new Error("Expected to claim the message that was just sent");
+	queue.retry(claimed, { maxAttempts: 1, delayMs: 0, now: deadAt });
+	return messageId;
 }

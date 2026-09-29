@@ -1,4 +1,4 @@
-type KvCacheName = "operational_settings" | "rbac_access" | "site_brand";
+type KvCacheName = "rbac_access" | "site_brand";
 
 type KvCacheMetric = { cache: KvCacheName } & (
 	| {

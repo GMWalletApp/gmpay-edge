@@ -1,5 +1,5 @@
+import { withClientAddress } from "#/server/runtime/client-address";
 import { runWithRuntimeEnv } from "#/server/runtime/context";
-import { withForwardedProtocol } from "#/server/runtime/forwarded-protocol";
 import { createNodeApplication } from "#/server/runtime/node/application";
 import { handleAppRequest } from "#/server-entry";
 
@@ -7,8 +7,10 @@ const application = await createNodeApplication();
 
 export default {
 	fetch(request: Request) {
-		return runWithRuntimeEnv(application.env, () =>
-			handleAppRequest(withForwardedProtocol(request), application.env),
+		return application.trackRequest(() =>
+			runWithRuntimeEnv(application.env, () =>
+				handleAppRequest(withClientAddress(request), application.env),
+			),
 		);
 	},
 };

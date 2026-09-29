@@ -31,3 +31,37 @@ export class NodeRuntimeLifecycle {
 		for (const service of [...this.services].reverse()) await service.stop();
 	}
 }
+
+/**
+ * srvx drains in-flight HTTP requests on SIGTERM independently of this
+ * lifecycle. Tracking handled requests lets services that stop later in the
+ * reverse order (the database) wait for those requests to settle, bounded so a
+ * hung handler cannot block process exit.
+ */
+export class NodeRequestTracker implements NodeRuntimeService {
+	private inFlight = 0;
+	private drained: (() => void) | undefined;
+
+	constructor(private readonly drainTimeoutMs = 10_000) {}
+
+	track<T>(handle: () => Promise<T>): Promise<T> {
+		this.inFlight += 1;
+		return new Promise<T>((resolve) => resolve(handle())).finally(() => {
+			this.inFlight -= 1;
+			if (this.inFlight === 0) this.drained?.();
+		});
+	}
+
+	start() {}
+
+	stop() {
+		if (this.inFlight === 0) return;
+		return new Promise<void>((resolve) => {
+			const timer = setTimeout(resolve, this.drainTimeoutMs);
+			this.drained = () => {
+				clearTimeout(timer);
+				resolve();
+			};
+		});
+	}
+}

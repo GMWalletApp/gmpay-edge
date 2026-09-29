@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	appendFile,
+	cp,
+	mkdir,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -88,6 +96,56 @@ describe("Bun data operations", () => {
 		).toBeGreaterThan(0);
 	});
 
+	it("refuses tampered, forged, padded, or malformed backups", async () => {
+		const root = await temporaryDirectory();
+		const data = join(root, "data");
+		const backup = join(root, "backup");
+		await mkdir(data);
+		const database = openNodeDatabase(join(data, "gmpay.sqlite"));
+		await applyNodeMigrations(database);
+		database.close();
+		await runDataCommand(data, "backup", "--output", backup);
+
+		const tampered = join(root, "tampered");
+		await cp(backup, tampered, { recursive: true });
+		await appendFile(join(tampered, "gmpay.sqlite"), "x");
+
+		const forged = join(root, "forged");
+		await cp(backup, forged, { recursive: true });
+		const manifest = JSON.parse(
+			await readFile(join(forged, "manifest.json"), "utf8"),
+		) as { files: Array<{ name: string; bytes: number; sha256: string }> };
+		const [first] = manifest.files;
+		if (!first) throw new Error("Expected a manifest entry");
+		first.sha256 = "0".repeat(64);
+		await writeFile(join(forged, "manifest.json"), JSON.stringify(manifest));
+
+		const padded = join(root, "padded");
+		await cp(backup, padded, { recursive: true });
+		await mkdir(join(padded, "objects"), { recursive: true });
+		await writeFile(join(padded, "objects", "planted.bin"), "planted");
+
+		const malformed = join(root, "malformed");
+		await cp(backup, malformed, { recursive: true });
+		await writeFile(
+			join(malformed, "manifest.json"),
+			JSON.stringify({ ...manifest, format: 2 }),
+		);
+
+		for (const [input, message] of [
+			[tampered, "Backup file checksums do not match the manifest"],
+			[forged, "Backup file checksums do not match the manifest"],
+			[padded, "Backup file checksums do not match the manifest"],
+			[malformed, "Unsupported or invalid backup manifest"],
+		] as const) {
+			const target = join(root, `restored-${input.split("/").at(-1)}`);
+			await expect(
+				runDataCommand(target, "restore", "--input", input),
+			).rejects.toThrow(message);
+			expect(await isMissingOrEmpty(target)).toBe(true);
+		}
+	});
+
 	it("imports a D1 SQL export and an R2 key directory", async () => {
 		const root = await temporaryDirectory();
 		const exportFile = join(root, "d1.sql");
@@ -142,6 +200,15 @@ async function runDataCommand(dataDirectory: string, ...args: string[]) {
 		cwd: process.cwd(),
 		env: { ...process.env, GMPAY_DATA_DIR: dataDirectory },
 	});
+}
+
+async function isMissingOrEmpty(path: string) {
+	try {
+		return (await readdir(path)).length === 0;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+		throw error;
+	}
 }
 
 async function temporaryDirectory() {

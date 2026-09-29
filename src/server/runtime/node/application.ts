@@ -10,6 +10,7 @@ import {
 	NodeDurableQueue,
 	NodeMemoryCache,
 	NodeObjectStorage,
+	NodeRequestTracker,
 	NodeRuntimeLifecycle,
 	NodeScheduler,
 	openNodeDatabase,
@@ -24,6 +25,8 @@ const PAYMENT_QUEUE_NAME = "gmpay-edge-payments";
 export type NodeApplication = {
 	env: RuntimeEnv;
 	dataDirectory: string;
+	/** Wraps one HTTP request so shutdown drains it before closing the database. */
+	trackRequest<T>(handle: () => Promise<T>): Promise<T>;
 	stop(): Promise<void>;
 };
 
@@ -86,14 +89,19 @@ export async function createNodeApplication(
 				workerEnv,
 			),
 		);
+	// maxAttempts mirrors Cloudflare: 1 delivery + max_retries from wrangler.jsonc.
 	const webhookConsumer = webhookQueue.createConsumer(consume, {
 		concurrency: 5,
-		maxAttempts: 8,
+		maxAttempts: 9,
+		// Merchant fetch (<= 30s), DoH pre-check, and D1 round trips per message.
+		leaseMs: 120_000,
 		baseRetryDelayMs: 15_000,
 	});
 	const paymentConsumer = paymentQueue.createConsumer(consume, {
 		concurrency: 2,
-		maxAttempts: 5,
+		maxAttempts: 6,
+		// Provider-event processing holds a five-minute application lease.
+		leaseMs: 600_000,
 		baseRetryDelayMs: 15_000,
 	});
 	const scheduler = new NodeScheduler((scheduledAt) =>
@@ -101,6 +109,9 @@ export async function createNodeApplication(
 			runMaintenance(workerEnv, "* * * * *", undefined, scheduledAt),
 		),
 	);
+	const requests = new NodeRequestTracker();
+	// Reverse stop order: scheduler, consumers, in-flight HTTP requests, then
+	// background tasks and the database.
 	const lifecycle = new NodeRuntimeLifecycle([
 		{
 			start() {},
@@ -109,6 +120,7 @@ export async function createNodeApplication(
 				database.close();
 			},
 		},
+		requests,
 		webhookConsumer,
 		paymentConsumer,
 		scheduler,
@@ -119,6 +131,7 @@ export async function createNodeApplication(
 	return {
 		env,
 		dataDirectory: layout.root,
+		trackRequest: (handle) => requests.track(handle),
 		async stop() {
 			removeSignalHandlers();
 			await lifecycle.stop();

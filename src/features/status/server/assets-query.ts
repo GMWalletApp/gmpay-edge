@@ -1,3 +1,5 @@
+import { createIsolateSnapshot } from "#/features/status/server/snapshot";
+
 export type PublicPaymentMethod = {
 	type: "network" | "exchange" | "wallet";
 	code: string;
@@ -5,6 +7,24 @@ export type PublicPaymentMethod = {
 	assets: string[];
 	status: "available" | "implemented";
 };
+
+export const publicPaymentMethodsTtlMs = 10_000;
+
+const publicPaymentMethodsSnapshot = createIsolateSnapshot<
+	PublicPaymentMethod[]
+>(publicPaymentMethodsTtlMs);
+
+/** Anonymous `/assets` loads share one catalog query round per ten seconds. */
+export function getPublicPaymentMethodsSnapshot(
+	db: D1Database,
+	now = Date.now(),
+) {
+	return publicPaymentMethodsSnapshot(
+		db,
+		() => queryPublicPaymentMethods(db),
+		now,
+	);
+}
 
 export async function queryPublicPaymentMethods(db: D1Database) {
 	const rows = await db

@@ -66,7 +66,11 @@ export async function applyNodeMigrations(
 		return appliedCount;
 	});
 
-	return { applied: apply(), total: migrations.length };
+	const applied = apply();
+	// New tables and indexes ship without planner statistics; optimize once
+	// after the batch commits rather than on every start.
+	if (applied > 0) database.sqlite.run("PRAGMA optimize");
+	return { applied, total: migrations.length };
 }
 
 function splitMigration(sql: string) {
