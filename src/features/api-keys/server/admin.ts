@@ -14,6 +14,7 @@ import {
 	generateApiSecret,
 } from "#/lib/secrets";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 import { loadRequestRuntimeConfig } from "#/server/runtime-config";
 
 const createKeyInput = z.object({
@@ -80,7 +81,7 @@ export const createApiKeyFn = createServerFn({ method: "POST" })
 					crypto.randomUUID(),
 					user.id,
 					id,
-					request.headers.get("x-request-id"),
+					requestId(request),
 					request.headers.get("cf-connecting-ip"),
 					JSON.stringify({
 						name: data.name,
@@ -105,7 +106,7 @@ export const setApiKeyEnabledFn = createServerFn({ method: "POST" })
 		return setApiKeyEnabled(db, {
 			...data,
 			actorUserId: user.id,
-			requestId: request.headers.get("x-request-id"),
+			requestId: requestId(request),
 			ipAddress: request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -119,7 +120,7 @@ export const revokeApiKeyFn = createServerFn({ method: "POST" })
 		return revokeApiKeyCredential(db, {
 			id: data.id,
 			actorUserId: user.id,
-			requestId: request.headers.get("x-request-id"),
+			requestId: requestId(request),
 			ipAddress: request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -146,7 +147,7 @@ export const rotateApiKeyFn = createServerFn({ method: "POST" })
 				crypto.randomUUID(),
 				context.user.id,
 				data.id,
-				context.request.headers.get("x-request-id"),
+				requestId(context.request),
 				context.request.headers.get("cf-connecting-ip"),
 				JSON.stringify({ pid: rotated.pid }),
 				rotated.rotatedAt,

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { requireAdmin } from "#/features/access/server/require-admin";
 import { systemPermission } from "#/features/access/system-rbac";
+import { adminAccessErrorResponse } from "#/server/access-error-response";
 import { getEnv } from "#/server/db.server";
 
 export const Route = createFileRoute(
@@ -10,10 +11,14 @@ export const Route = createFileRoute(
 	server: {
 		handlers: {
 			GET: async ({ request, params }) => {
-				await requireAdmin(
-					request,
-					systemPermission("payment_reviews", "read"),
-				);
+				try {
+					await requireAdmin(
+						request,
+						systemPermission("payment_reviews", "read"),
+					);
+				} catch (error) {
+					return adminAccessErrorResponse(request, error);
+				}
 				const env = getEnv();
 				const reviewIdResult = z.uuid().safeParse(params.reviewId);
 				if (!reviewIdResult.success)

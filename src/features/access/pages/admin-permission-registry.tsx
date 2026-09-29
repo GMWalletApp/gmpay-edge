@@ -1,5 +1,3 @@
-"use client";
-
 import type { ColumnDef } from "@tanstack/react-table";
 import { ProTable } from "#/components/pro/table";
 import { Badge } from "#/components/ui/badge";

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { settingsErrorMessage } from "#/features/settings/error-message";
+import { m } from "#/paraglide/messages";
 
 describe("settings Server Function errors", () => {
 	it("maps only reviewed asset codes and hides unknown messages", () => {
@@ -15,6 +16,15 @@ describe("settings Server Function errors", () => {
 		);
 		expect(settingsErrorMessage({ code: "site_logo_not_square" })).toBe(
 			"The site logo must be square",
+		);
+		expect(settingsErrorMessage({ code: "runtime_secret_in_use" })).toBe(
+			m.settings_error_runtime_secret_in_use(),
+		);
+		expect(settingsErrorMessage({ code: "email_credential_required" })).toBe(
+			m.settings_error_email_credential_required(),
+		);
+		expect(settingsErrorMessage({ code: "email_test_rate_limited" })).toBe(
+			m.settings_error_email_test_rate_limited(),
 		);
 		expect(
 			settingsErrorMessage({
@@ -59,6 +69,7 @@ describe("settings Server Function errors", () => {
 		const serverBoundary = `${server}\n${settingsServer}\n${assetServer}`;
 		for (const code of [
 			"invalid_settings",
+			"runtime_secret_in_use",
 			"site_asset_storage_unavailable",
 			"site_asset_too_large",
 			"site_asset_invalid",

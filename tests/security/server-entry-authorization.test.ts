@@ -41,6 +41,7 @@ const reviewedInputlessPostFunctions = new Set([
 	"removeSiteBackgroundFn",
 	"removeSiteLogoFn",
 	"syncTelegramCommandsFn",
+	"reconcileTelegramDefaultsFn",
 ]);
 
 const adminOwnerFunctions = new Set([
@@ -187,6 +188,7 @@ const permissionContracts = [
 			"setTelegramBotEnabledFn",
 			"testTelegramBotFn",
 			"syncTelegramCommandsFn",
+			"reconcileTelegramDefaultsFn",
 		],
 	],
 	[

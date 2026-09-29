@@ -7,7 +7,7 @@ import {
 } from "#/features/payment-reviews/server/create";
 import { isSameOriginRequest } from "#/server/api-boundaries";
 import { getEnv } from "#/server/db.server";
-import { json, withRequestId } from "#/server/http";
+import { json, requestId, withRequestId } from "#/server/http";
 import {
 	RequestBodyTooLargeError,
 	readLimitedRequestBytes,
@@ -67,7 +67,7 @@ export const Route = createFileRoute("/api/checkout/$orderId/review")({
 						{
 							db: env.DB,
 							bucket: env.FILES,
-							requestId: request.headers.get("x-request-id"),
+							requestId: requestId(request),
 							ipAddress: request.headers.get("cf-connecting-ip"),
 						},
 					);

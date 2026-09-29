@@ -144,6 +144,7 @@ export async function saveSystemSettings(
 		return [{ key, value: definitions[key].parse(item.value) as SettingValue }];
 	});
 	const orderSettings = await validateOrderSettings(parsed, dependencies.db);
+	await assertRuntimeSecretsRotatable(parsed, dependencies.db);
 
 	const now = Date.now();
 	await dependencies.db.batch([
@@ -184,6 +185,46 @@ export async function saveSystemSettings(
 	if (parsed.some(({ key }) => key.startsWith("site.")))
 		await invalidateSiteBrandCache(dependencies.cache);
 	return { updated: parsed.map((item) => item.key) };
+}
+
+// Stored ciphertexts are keyed by the runtime secret that encrypted them.
+// Replacing that secret would strand every credential, so rotation is refused
+// until the encrypted rows are removed; the Better Auth secret has no
+// ciphertext and may change freely.
+const ciphertextOwners = {
+	"runtime.api_key_pepper": "api_key_pepper",
+	"runtime.integration_config_secret": "integration_config_secret",
+} as const;
+
+async function assertRuntimeSecretsRotatable(
+	parsed: Array<{ key: SettingKey }>,
+	db: RuntimeDatabase,
+) {
+	const owners = parsed.flatMap(({ key }) =>
+		key in ciphertextOwners
+			? [ciphertextOwners[key as keyof typeof ciphertextOwners]]
+			: [],
+	);
+	if (owners.length === 0) return;
+	const counts = await db
+		.prepare(
+			`SELECT (SELECT COUNT(*) FROM api_keys) AS api_key_pepper,
+			 (SELECT COUNT(*) FROM payment_ingress_credentials)
+			 + (SELECT COUNT(*) FROM payment_ingresses WHERE config_encrypted IS NOT NULL)
+			 + (SELECT COUNT(*) FROM receiving_methods WHERE config_encrypted IS NOT NULL)
+			 + (SELECT COUNT(*) FROM telegram_bots)
+			 + (SELECT COUNT(*) FROM email_channel_configs WHERE credential_encrypted IS NOT NULL)
+			 AS integration_config_secret`,
+		)
+		.first<
+			Record<(typeof ciphertextOwners)[keyof typeof ciphertextOwners], number>
+		>();
+	if (!counts || owners.some((owner) => counts[owner] > 0))
+		throw new DomainError(
+			"runtime_secret_in_use",
+			409,
+			"Stored credentials are encrypted with this secret",
+		);
 }
 
 async function validateOrderSettings(

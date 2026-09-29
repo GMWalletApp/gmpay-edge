@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { bumpRoleUsersAccessRevisionStatement } from "#/features/access/server/access-revision";
 import { requireAdmin } from "#/features/access/server/require-admin";
+import { deleteCustomRole } from "#/features/access/server/role-delete";
 import { setCustomRoleEnabled } from "#/features/access/server/role-enabled";
 import {
 	allSystemPermissionGrants,
@@ -165,33 +166,15 @@ export const deleteSystemRoleFn = createServerFn({ method: "POST" })
 		const { db, request, user } = await context(
 			systemPermission("roles", "delete"),
 		);
-		const role = await db
-			.prepare(`SELECT r.built_in, COUNT(ur.id) AS user_count FROM roles r
-			 LEFT JOIN user_roles ur ON ur.role_id = r.id WHERE r.id = ? GROUP BY r.id`)
-			.bind(data.id)
-			.first<{ built_in: number; user_count: number }>();
-		if (!role) throw new DomainError("role_not_found", 404, "Role not found");
-		if (role.built_in)
-			throw new DomainError(
-				"built_in_role",
-				409,
-				"Built-in roles cannot be deleted",
-			);
-		if (role.user_count)
-			throw new DomainError(
-				"role_in_use",
-				409,
-				"Remove this role from users first",
-			);
-		await db.batch([
-			db.prepare("DELETE FROM roles WHERE id = ?").bind(data.id),
+		return deleteCustomRole(
+			db,
+			data.id,
 			createAuditStatement(db, request, user.id, {
 				action: "role.deleted",
 				targetType: "role",
 				targetId: data.id,
 			}),
-		]);
-		return data;
+		);
 	});
 
 export const setSystemRoleEnabledFn = createServerFn({ method: "POST" })

@@ -5,20 +5,26 @@ import {
 	shouldPreserveRuntimeSecret,
 } from "#/features/settings/secrecy";
 
+const secretKeys = [
+	"runtime.better_auth_secret",
+	"runtime.api_key_pepper",
+	"runtime.integration_config_secret",
+] as const;
+
 describe("runtime setting secrecy", () => {
-	it("returns configured secrets to authorized settings pages", () => {
+	it("reports whether a secret is configured without returning its value", () => {
 		const secret = "a-real-runtime-secret-that-must-not-leave-d1";
-		expect(presentSettingValue("runtime.better_auth_secret", secret)).toEqual({
-			value: secret,
-			configured: true,
-		});
-		expect(presentSettingValue("runtime.api_key_pepper", secret)).toEqual({
-			value: secret,
-			configured: true,
-		});
-		expect(
-			presentSettingValue("runtime.integration_config_secret", secret),
-		).toEqual({ value: secret, configured: true });
+		for (const key of secretKeys) {
+			expect(isRuntimeSecret(key)).toBe(true);
+			expect(presentSettingValue(key, secret)).toEqual({
+				value: "",
+				configured: true,
+			});
+			expect(presentSettingValue(key, "")).toEqual({
+				value: "",
+				configured: false,
+			});
+		}
 	});
 
 	it("keeps the canonical URL visible because it is not a secret", () => {

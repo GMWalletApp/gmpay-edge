@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, MoreHorizontal, Pencil, Plus, Send } from "lucide-react";
-import { type ComponentProps, useCallback, useMemo, useState } from "react";
+import { type ComponentProps, useState } from "react";
 import { toast } from "sonner";
 import { EmailProviderLogo } from "#/components/email-provider-logo";
 import { ProButton } from "#/components/pro/base/button";
@@ -47,10 +45,8 @@ export function EmailSettingsPage() {
 	const [editing, setEditing] = useState<EmailChannel>();
 	const [creatingProvider, setCreatingProvider] = useState<EmailProviderId>();
 	const [testing, setTesting] = useState<EmailChannel | null>();
-	const refresh = useCallback(
-		() => client.invalidateQueries({ queryKey: ["admin", "email-channels"] }),
-		[client],
-	);
+	const refresh = () =>
+		client.invalidateQueries({ queryKey: ["admin", "email-channels"] });
 	const save = useMutation({
 		mutationFn: saveEmailChannelFn,
 		onSuccess: async () => {
@@ -79,80 +75,77 @@ export function EmailSettingsPage() {
 		},
 		onError: (error) => toast.error(settingsErrorMessage(error)),
 	});
-	const columns = useMemo<ColumnDef<EmailChannel>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				meta: { className: "w-20 min-w-20 max-w-20" },
-				cell: ({ row }) => (
-					<Switch
-						aria-label={`${m.common_enabled()} · ${row.original.name}`}
-						checked={row.original.enabled}
-						disabled={setEnabled.isPending}
-						onCheckedChange={(enabled) =>
-							setEnabled.mutate({ data: { id: row.original.id, enabled } })
-						}
+	const columns: ColumnDef<EmailChannel>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			meta: { className: "w-20 min-w-20 max-w-20" },
+			cell: ({ row }) => (
+				<Switch
+					aria-label={`${m.common_enabled()} · ${row.original.name}`}
+					checked={row.original.enabled}
+					disabled={setEnabled.isPending}
+					onCheckedChange={(enabled) =>
+						setEnabled.mutate({ data: { id: row.original.id, enabled } })
+					}
+				/>
+			),
+		},
+		{
+			accessorKey: "name",
+			header: m.settings_email_channel_name(),
+			meta: { search: true },
+			cell: ({ row }) => <strong>{row.original.name}</strong>,
+		},
+		{
+			accessorKey: "provider",
+			header: m.settings_email_provider(),
+			meta: { className: "w-48 min-w-48 max-w-48" },
+			cell: ({ row }) => (
+				<div className="flex items-center gap-2">
+					<EmailProviderLogo
+						className="size-8"
+						providerId={row.original.provider}
 					/>
-				),
-			},
-			{
-				accessorKey: "name",
-				header: m.settings_email_channel_name(),
-				meta: { search: true },
-				cell: ({ row }) => <strong>{row.original.name}</strong>,
-			},
-			{
-				accessorKey: "provider",
-				header: m.settings_email_provider(),
-				meta: { className: "w-48 min-w-48 max-w-48" },
-				cell: ({ row }) => (
-					<div className="flex items-center gap-2">
-						<EmailProviderLogo
-							className="size-8"
-							providerId={row.original.provider}
-						/>
-						{emailProviderName(row.original.provider)}
-					</div>
-				),
-			},
-			{
-				accessorKey: "fromAddress",
-				header: m.settings_email_from_address(),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				meta: { align: "right" },
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									tooltip={m.common_actions()}
-									variant="ghost"
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem onClick={() => setTesting(row.original)}>
-									<Send />
-									{m.settings_email_test_channel()}
-								</DropdownMenuItem>
-								<DropdownMenuItem onClick={() => setEditing(row.original)}>
-									<Pencil />
-									{m.common_edit()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[setEnabled],
-	);
+					{emailProviderName(row.original.provider)}
+				</div>
+			),
+		},
+		{
+			accessorKey: "fromAddress",
+			header: m.settings_email_from_address(),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			meta: { align: "right" },
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								tooltip={m.common_actions()}
+								variant="ghost"
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onClick={() => setTesting(row.original)}>
+								<Send />
+								{m.settings_email_test_channel()}
+							</DropdownMenuItem>
+							<DropdownMenuItem onClick={() => setEditing(row.original)}>
+								<Pencil />
+								{m.common_edit()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 
 	return (
 		<Main fixed className="gap-4">
@@ -255,6 +248,7 @@ export function EmailSettingsPage() {
 				open={editing !== undefined || creatingProvider !== undefined}
 				schema={emailChannelFormSchema(
 					editing?.provider ?? creatingProvider ?? "resend",
+					editing?.credentialConfigured === true,
 				)}
 			/>
 			<ModalForm
@@ -294,7 +288,7 @@ function emailChannelValues(
 	return {
 		name: channel?.name ?? "",
 		provider: channel?.provider ?? provider,
-		credential: channel?.credential ?? "",
+		credential: "",
 		domain: channel?.domain ?? "",
 		region: channel?.region ?? "us",
 		smtpHost: channel?.smtpHost ?? "",
@@ -308,6 +302,7 @@ function emailChannelValues(
 const fullWidth = { className: "sm:col-span-2" };
 function emailChannelFormSchema(
 	provider: EmailProviderId,
+	credentialConfigured: boolean,
 ): NonNullable<ComponentProps<typeof ModalForm>["schema"]> {
 	return [
 		{
@@ -334,6 +329,9 @@ function emailChannelFormSchema(
 			valueType: "password",
 			hidden: provider === "cloudflare_email",
 			formItemProps: fullWidth,
+			...(credentialConfigured
+				? { fieldProps: { placeholder: m.settings_secret_configured() } }
+				: {}),
 		},
 		{
 			name: "domain",

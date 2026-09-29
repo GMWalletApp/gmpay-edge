@@ -12,6 +12,7 @@ import {
 } from "#/features/settings/server/system-settings";
 import { siteAssetContentTypes } from "#/features/settings/site-assets";
 import { DomainError } from "#/lib/domain-error";
+import { requestId } from "#/server/http";
 
 export const listSystemSettingsFn = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -44,7 +45,7 @@ export const updateSystemSettingsFn = createServerFn({ method: "POST" })
 			db: context.db,
 			cache: context.env.CACHE,
 			userId: context.user.id,
-			requestId: context.request.headers.get("x-request-id"),
+			requestId: requestId(context.request),
 			ipAddress: context.request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -113,7 +114,7 @@ function siteAssetDependencies(
 		bucket: context.env.FILES,
 		cache: context.env.CACHE,
 		userId: context.user.id,
-		requestId: context.request.headers.get("x-request-id"),
+		requestId: requestId(context.request),
 		ipAddress: context.request.headers.get("cf-connecting-ip"),
 	};
 }

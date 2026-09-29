@@ -1,10 +1,20 @@
 import { APIError, type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import {
+	createAuthMiddleware,
+	getIp,
+	getSessionFromCtx,
+} from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import { z } from "zod";
 import * as schema from "#/db/schema";
+import {
+	authRateLimitPolicies,
+	claimAuthRateLimit,
+} from "#/features/auth/server/rate-limit";
 import type { AppDb } from "#/server/db.server";
+import { headerRequestId } from "#/server/http";
 import type { RuntimeMailSender } from "#/server/runtime/types";
 import { schedulePasswordResetEmail } from "./password-reset-email";
 
@@ -74,13 +84,15 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 						crypto.randomUUID(),
 						user.id,
 						user.id,
-						request?.headers.get("x-request-id") ?? null,
+						request ? headerRequestId(request.headers) : null,
 						request?.headers.get("cf-connecting-ip") ?? null,
 						Date.now(),
 					)
 					.run();
 			},
 		},
+		// Best-effort per-isolate memory limiter; the D1 windows in hooks.before
+		// are the authoritative limit shared by every instance.
 		rateLimit: {
 			enabled: true,
 			window: 60,
@@ -92,6 +104,26 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 			},
 		},
 		hooks: {
+			before: createAuthMiddleware(async (ctx) => {
+				// Direct auth.api calls come from trusted server code; only HTTP
+				// requests are limited, mirroring Better Auth's own limiter.
+				if (!ctx.request || !authRateLimitPolicies.has(ctx.path)) return;
+				const denied = await claimAuthRateLimit(db.$client, {
+					path: ctx.path,
+					ip: getIp(ctx.request, ctx.context.options),
+					email:
+						ctx.path === "/sign-in/email" ? signInEmail(ctx.body) : undefined,
+				});
+				if (!denied) return;
+				throw new APIError(
+					"TOO_MANY_REQUESTS",
+					{
+						message: "Too many requests. Please try again later.",
+						code: "TOO_MANY_REQUESTS",
+					},
+					{ "Retry-After": String(denied.retryAfterSeconds) },
+				);
+			}),
 			after: createAuthMiddleware(async (ctx) => {
 				const action = securityAuditAction(ctx.path);
 				if (!action) return;
@@ -120,7 +152,7 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 						userId,
 						action,
 						userId,
-						ctx.headers?.get("x-request-id") ?? null,
+						ctx.headers ? headerRequestId(ctx.headers) : null,
 						ctx.headers?.get("cf-connecting-ip") ?? null,
 						after ? JSON.stringify(after) : null,
 						Date.now(),
@@ -144,6 +176,13 @@ export function createAuth(db: AppDb, env: AuthEnv) {
 			tanstackStartCookies(),
 		],
 	});
+}
+
+const signInBody = z.object({ email: z.string().trim().toLowerCase() });
+
+function signInEmail(body: unknown) {
+	const parsed = signInBody.safeParse(body);
+	return parsed.success ? parsed.data.email : undefined;
 }
 
 function securityAuditAction(path: string) {

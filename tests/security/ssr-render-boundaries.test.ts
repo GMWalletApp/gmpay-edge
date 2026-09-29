@@ -35,7 +35,9 @@ describe("SSR render data boundaries", () => {
 		expect(adminRoute).toContain("loader: async ({ location }) =>");
 		expect(adminRoute).toContain("bootstrap = await getAdminBootstrapFn()");
 		expect(adminRoute).not.toContain("beforeLoad:");
-		expect(adminRoute).toContain("return { systemAccess, user }");
+		expect(adminRoute).toContain(
+			"return { systemAccess, user, layout: readLayoutPreferences() }",
+		);
 		expect(checkoutRoute).toContain(
 			"getCheckoutOrderFn({ data: { orderId: params.orderId } })",
 		);

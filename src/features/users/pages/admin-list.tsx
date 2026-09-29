@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { ModalForm } from "#/components/pro/form";
@@ -53,10 +51,10 @@ export function UsersPage() {
 		value: role.id,
 	}));
 
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		await queryClient.invalidateQueries({ queryKey: adminUsersQueryKey });
 		setRefreshKey((value) => value + 1);
-	}, [queryClient]);
+	};
 	const saveUserMutation = useMutation({
 		mutationFn: saveUserFn,
 	});
@@ -87,77 +85,74 @@ export function UsersPage() {
 		},
 		[queryClient],
 	);
-	const columns = useMemo<ColumnDef<AdminUserRecord>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) => (
-					<UserEnabledSwitch user={row.original} onChanged={refresh} />
-				),
-			},
-			{
-				accessorKey: "name",
-				header: m.admin_users_name(),
-			},
-			{
-				accessorKey: "email",
-				header: m.common_email(),
-			},
-			{
-				accessorKey: "roles",
-				header: m.admin_users_roles(),
-				cell: ({ row }) => (
-					<div className="flex flex-wrap gap-1">
-						{row.original.roles.map((role) => (
-							<Badge key={role} variant="outline">
-								{role}
-							</Badge>
-						))}
-					</div>
-				),
-			},
-			{
-				accessorKey: "createdAt",
-				header: m.common_created(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									variant="ghost"
-									size="icon-sm"
-									tooltip={m.common_actions()}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end" className="w-44">
-								<DropdownMenuItem onClick={() => setEditingUser(row.original)}>
-									<Pencil />
-									{m.common_edit()}
-								</DropdownMenuItem>
-								<DropdownMenuSeparator />
-								<DropdownMenuItem
-									variant="destructive"
-									onClick={() => setDeletingUser(row.original)}
-								>
-									<Trash2 />
-									{m.common_delete()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[refresh],
-	);
+	const columns: ColumnDef<AdminUserRecord>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) => (
+				<UserEnabledSwitch user={row.original} onChanged={refresh} />
+			),
+		},
+		{
+			accessorKey: "name",
+			header: m.admin_users_name(),
+		},
+		{
+			accessorKey: "email",
+			header: m.common_email(),
+		},
+		{
+			accessorKey: "roles",
+			header: m.admin_users_roles(),
+			cell: ({ row }) => (
+				<div className="flex flex-wrap gap-1">
+					{row.original.roles.map((role) => (
+						<Badge key={role} variant="outline">
+							{role}
+						</Badge>
+					))}
+				</div>
+			),
+		},
+		{
+			accessorKey: "createdAt",
+			header: m.common_created(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								variant="ghost"
+								size="icon-sm"
+								tooltip={m.common_actions()}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" className="w-44">
+							<DropdownMenuItem onClick={() => setEditingUser(row.original)}>
+								<Pencil />
+								{m.common_edit()}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								variant="destructive"
+								onClick={() => setDeletingUser(row.original)}
+							>
+								<Trash2 />
+								{m.common_delete()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 
 	async function saveUser(values: Record<string, unknown>) {
 		const saved = await saveUserMutation.mutateAsync({

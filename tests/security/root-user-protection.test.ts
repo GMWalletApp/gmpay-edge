@@ -147,14 +147,22 @@ describe("root user protection", () => {
 		}
 	});
 
-	it("rejects disabling the last enabled root through the switch", async () => {
+	it("refuses root user state changes from a non-root operator", async () => {
+		const db = drizzle(database, { schema });
+		for (const enabled of [false, true])
+			await expect(
+				setUserEnabled(db, {
+					id: "root-a",
+					enabled,
+					currentUserId: "operator",
+				}),
+			).rejects.toMatchObject({ code: "root_role_required", status: 403 });
 		await expect(
-			setUserEnabled(drizzle(database, { schema }), {
-				id: "root-a",
-				enabled: false,
-				currentUserId: "operator",
-			}),
-		).rejects.toMatchObject({ code: "last_root_required", status: 409 });
+			deleteUser(db, { id: "root-a", currentUserId: "operator" }),
+		).rejects.toMatchObject({ code: "root_role_required", status: 403 });
+		await expect(
+			database.prepare("SELECT enabled FROM users WHERE id = 'root-a'").first(),
+		).resolves.toEqual({ enabled: 1 });
 	});
 
 	it("rejects granting root from a non-root administrator", async () => {
@@ -292,6 +300,30 @@ describe("root user protection", () => {
 		).resolves.toEqual({ id: "root-a" });
 	});
 
+	it("lets only a root actor re-enable a disabled root user", async () => {
+		const db = drizzle(database, { schema });
+		await expect(
+			setUserEnabled(db, {
+				id: "root-a",
+				enabled: true,
+				currentUserId: "operator",
+			}),
+		).rejects.toMatchObject({ code: "root_role_required", status: 403 });
+		await expect(
+			database.prepare("SELECT enabled FROM users WHERE id = 'root-a'").first(),
+		).resolves.toEqual({ enabled: 0 });
+		await expect(
+			setUserEnabled(db, {
+				id: "root-a",
+				enabled: true,
+				currentUserId: "root-b",
+			}),
+		).resolves.toEqual({ id: "root-a" });
+		await expect(
+			database.prepare("SELECT enabled FROM users WHERE id = 'root-a'").first(),
+		).resolves.toEqual({ enabled: 1 });
+	});
+
 	it("revokes sessions when the edit form disables a user", async () => {
 		const now = Date.now();
 		await database.batch([
@@ -364,12 +396,12 @@ describe("root user protection", () => {
 			setUserEnabled(db, {
 				id: "root-a",
 				enabled: false,
-				currentUserId: "operator",
+				currentUserId: "root-b",
 			}),
 			setUserEnabled(db, {
 				id: "root-b",
 				enabled: false,
-				currentUserId: "operator",
+				currentUserId: "root-a",
 			}),
 		]);
 		expect(
@@ -444,8 +476,8 @@ describe("root user protection", () => {
 		]);
 		const db = drizzle(database, { schema });
 		const results = await Promise.allSettled([
-			deleteUser(db, { id: "root-a", currentUserId: "operator" }),
-			deleteUser(db, { id: "root-b", currentUserId: "operator" }),
+			deleteUser(db, { id: "root-a", currentUserId: "root-b" }),
+			deleteUser(db, { id: "root-b", currentUserId: "root-a" }),
 		]);
 		expect(
 			results.filter((result) => result.status === "fulfilled"),

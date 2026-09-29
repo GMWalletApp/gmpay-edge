@@ -7,8 +7,9 @@ import {
 	emailChannelSchema,
 } from "#/features/settings/email-channels";
 import { settingsAdminContext } from "#/features/settings/server/admin-context";
+import { claimTestEmailRateLimit } from "#/features/settings/server/test-email-rate-limit";
 import { DomainError } from "#/lib/domain-error";
-import { decryptSecret, encryptSecret } from "#/lib/secrets";
+import { encryptSecret } from "#/lib/secrets";
 import { createAuditStatement } from "#/server/audit";
 import { getRuntimeEnv } from "#/server/db.server";
 import { sendConfiguredEmail } from "#/server/runtime/email-mail";
@@ -34,10 +35,9 @@ type EmailChannelRow = {
 
 export const listEmailChannelsFn = createServerFn({ method: "GET" }).handler(
 	async () => {
-		const context = await settingsAdminContext(
+		const { db } = await settingsAdminContext(
 			systemPermission("settings", "read"),
 		);
-		const { db } = context;
 		const rows = await db
 			.prepare(
 				`SELECT id, name, provider, credential_encrypted, domain, region,
@@ -46,19 +46,13 @@ export const listEmailChannelsFn = createServerFn({ method: "GET" }).handler(
 				 FROM email_channel_configs ORDER BY sort_order, id`,
 			)
 			.all<EmailChannelRow>();
-		const encrypted = rows.results.some((row) => row.credential_encrypted);
-		const secret = encrypted
-			? (await loadRuntimeConfig(db)).integrationConfigSecret
-			: "";
-		const channels = await Promise.all(
-			rows.results.map(async (row) => ({
+		return {
+			// Credentials are write-only; the list only tells whether one is stored.
+			channels: rows.results.map((row) => ({
 				id: row.id,
 				name: row.name,
 				provider: row.provider,
-				credential:
-					row.credential_encrypted && secret
-						? await decryptSecret(row.credential_encrypted, secret)
-						: "",
+				credentialConfigured: row.credential_encrypted !== null,
 				domain: row.domain ?? "",
 				region: row.region,
 				smtpHost: row.smtp_host ?? "",
@@ -71,9 +65,6 @@ export const listEmailChannelsFn = createServerFn({ method: "GET" }).handler(
 				createdAt: row.created_at,
 				updatedAt: row.updated_at,
 			})),
-		);
-		return {
-			channels,
 		};
 	},
 );
@@ -88,10 +79,16 @@ export const saveEmailChannelFn = createServerFn({ method: "POST" })
 		);
 		const existing = await context.db
 			.prepare(
-				"SELECT id, name, provider, enabled FROM email_channel_configs WHERE id = ? LIMIT 1",
+				"SELECT id, name, provider, enabled, credential_encrypted FROM email_channel_configs WHERE id = ? LIMIT 1",
 			)
 			.bind(data.id ?? "")
-			.first<{ id: string; name: string; provider: string; enabled: number }>();
+			.first<{
+				id: string;
+				name: string;
+				provider: string;
+				enabled: number;
+				credential_encrypted: string | null;
+			}>();
 		const conflict = await context.db
 			.prepare(
 				"SELECT id FROM email_channel_configs WHERE name = ? AND (? IS NULL OR id <> ?) LIMIT 1",
@@ -104,7 +101,11 @@ export const saveEmailChannelFn = createServerFn({ method: "POST" })
 				409,
 				"Email channel name already exists",
 			);
-		const credentialEncrypted = await encryptedCredential(context.db, data);
+		const credentialEncrypted = await storedCredential(
+			context.db,
+			data,
+			existing?.credential_encrypted ?? null,
+		);
 		const id = data.id ?? crypto.randomUUID();
 		const now = Date.now();
 		const values = [
@@ -251,6 +252,13 @@ export const sendTestEmailFn = createServerFn({ method: "POST" })
 		const context = await settingsAdminContext(
 			systemPermission("settings", "update"),
 		);
+		const claim = await claimTestEmailRateLimit(context.db, context.user.id);
+		if (!claim.allowed)
+			throw new DomainError(
+				"email_test_rate_limited",
+				429,
+				"Too many test emails were sent recently",
+			);
 		const runtime = getRuntimeEnv(context.request);
 		if (data.channelId) await assertChannelExists(context.db, data.channelId);
 		await sendConfiguredEmail(
@@ -273,11 +281,23 @@ export const sendTestEmailFn = createServerFn({ method: "POST" })
 		return { sent: true };
 	});
 
-async function encryptedCredential(
+// A blank credential keeps the stored ciphertext for an existing channel;
+// providers that authenticate must end up with one either way.
+async function storedCredential(
 	db: D1Database,
 	data: z.infer<typeof emailChannelSchema>,
+	existing: string | null,
 ) {
-	if (data.provider === "cloudflare_email" || !data.credential) return null;
+	if (data.provider === "cloudflare_email") return null;
+	if (data.provider === "smtp" && !data.smtpUser) return null;
+	if (!data.credential) {
+		if (existing) return existing;
+		throw new DomainError(
+			"email_credential_required",
+			400,
+			"Email credential is required",
+		);
+	}
 	const secret = (await loadRuntimeConfig(db)).integrationConfigSecret;
 	if (!secret)
 		throw new DomainError(

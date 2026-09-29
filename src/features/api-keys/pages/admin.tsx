@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Check, Copy, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { Checkbox } from "#/components/pro/base/fields/checkbox";
@@ -75,9 +73,9 @@ export function ApiKeysPage() {
 	const [pendingAction, setPendingAction] = useState<PendingKeyAction | null>(
 		null,
 	);
-	const refresh = useCallback(() => {
+	const refresh = () => {
 		setRefreshKey((value) => value + 1);
-	}, []);
+	};
 	const request = useCallback(async (state: ProTableState) => {
 		const search = String(
 			state.columnFilters.find((filter) => filter.id === "name")?.value ?? "",
@@ -119,117 +117,114 @@ export function ApiKeysPage() {
 		},
 		onError: showError,
 	});
-	const columns = useMemo<ColumnDef<ApiKeyRecord>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) =>
-					row.original.revokedAt ? (
-						<Badge variant="secondary">{m.api_keys_revoked()}</Badge>
-					) : (
-						<Switch
-							aria-label={m.api_keys_toggle({ name: row.original.name })}
-							checked={row.original.enabled}
-							disabled={!canRotate || enabled.isPending}
-							onCheckedChange={(nextEnabled) =>
-								enabled.mutate({
-									data: { id: row.original.id, enabled: nextEnabled },
-								})
-							}
-						/>
-					),
-			},
-			{
-				accessorKey: "name",
-				header: m.common_name(),
-				meta: { search: true },
-				cell: ({ row }) => <strong>{row.original.name}</strong>,
-			},
-			{
-				accessorKey: "pid",
-				header: m.api_keys_key(),
-				cell: ({ row }) => (
-					<code className="text-muted-foreground text-xs">
-						{row.original.pid}
-					</code>
+	const columns: ColumnDef<ApiKeyRecord>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) =>
+				row.original.revokedAt ? (
+					<Badge variant="secondary">{m.api_keys_revoked()}</Badge>
+				) : (
+					<Switch
+						aria-label={m.api_keys_toggle({ name: row.original.name })}
+						checked={row.original.enabled}
+						disabled={!canRotate || enabled.isPending}
+						onCheckedChange={(nextEnabled) =>
+							enabled.mutate({
+								data: { id: row.original.id, enabled: nextEnabled },
+							})
+						}
+					/>
 				),
-			},
-			{
-				accessorKey: "scopes",
-				header: m.api_keys_scopes(),
-				cell: ({ row }) => (
-					<div className="flex max-w-md flex-wrap gap-1">
-						{row.original.scopes.map((scope) => (
-							<Badge key={scope} variant="outline">
-								{scopeLabel(scope)}
-							</Badge>
-						))}
-					</div>
-				),
-			},
-			{
-				accessorKey: "lastUsedAt",
-				header: m.api_keys_last_used(),
-				cell: ({ row }) =>
-					row.original.lastUsedAt
-						? formatDateTime(row.original.lastUsedAt)
-						: m.api_keys_never(),
-			},
-			{
-				id: "actions",
-				header: canRotate || canRevoke ? m.common_actions() : "",
-				cell: ({ row }) =>
-					!row.original.revokedAt && (canRotate || canRevoke) ? (
-						<div className="flex justify-end">
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<ProButton
-										size="icon-sm"
-										variant="ghost"
-										tooltip={m.common_actions()}
+		},
+		{
+			accessorKey: "name",
+			header: m.common_name(),
+			meta: { search: true },
+			cell: ({ row }) => <strong>{row.original.name}</strong>,
+		},
+		{
+			accessorKey: "pid",
+			header: m.api_keys_key(),
+			cell: ({ row }) => (
+				<code className="text-muted-foreground text-xs">
+					{row.original.pid}
+				</code>
+			),
+		},
+		{
+			accessorKey: "scopes",
+			header: m.api_keys_scopes(),
+			cell: ({ row }) => (
+				<div className="flex max-w-md flex-wrap gap-1">
+					{row.original.scopes.map((scope) => (
+						<Badge key={scope} variant="outline">
+							{scopeLabel(scope)}
+						</Badge>
+					))}
+				</div>
+			),
+		},
+		{
+			accessorKey: "lastUsedAt",
+			header: m.api_keys_last_used(),
+			cell: ({ row }) =>
+				row.original.lastUsedAt
+					? formatDateTime(row.original.lastUsedAt)
+					: m.api_keys_never(),
+		},
+		{
+			id: "actions",
+			header: canRotate || canRevoke ? m.common_actions() : "",
+			cell: ({ row }) =>
+				!row.original.revokedAt && (canRotate || canRevoke) ? (
+					<div className="flex justify-end">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<ProButton
+									size="icon-sm"
+									variant="ghost"
+									tooltip={m.common_actions()}
+								>
+									<MoreHorizontal />
+								</ProButton>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								{canRotate ? (
+									<DropdownMenuItem
+										disabled={rotate.isPending}
+										onClick={() =>
+											setPendingAction({
+												kind: "rotate",
+												key: row.original,
+											})
+										}
 									>
-										<MoreHorizontal />
-									</ProButton>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="end">
-									{canRotate ? (
-										<DropdownMenuItem
-											disabled={rotate.isPending}
-											onClick={() =>
-												setPendingAction({
-													kind: "rotate",
-													key: row.original,
-												})
-											}
-										>
-											<RotateCcw />
-											{m.api_keys_rotate()}
-										</DropdownMenuItem>
-									) : null}
-									{canRevoke ? (
-										<DropdownMenuItem
-											variant="destructive"
-											disabled={revoke.isPending}
-											onClick={() =>
-												setPendingAction({
-													kind: "revoke",
-													key: row.original,
-												})
-											}
-										>
-											<Trash2 />
-											{m.api_keys_revoke()}
-										</DropdownMenuItem>
-									) : null}
-								</DropdownMenuContent>
-							</DropdownMenu>
-						</div>
-					) : null,
-			},
-		],
-		[canRevoke, canRotate, enabled, revoke, rotate],
-	);
+										<RotateCcw />
+										{m.api_keys_rotate()}
+									</DropdownMenuItem>
+								) : null}
+								{canRevoke ? (
+									<DropdownMenuItem
+										variant="destructive"
+										disabled={revoke.isPending}
+										onClick={() =>
+											setPendingAction({
+												kind: "revoke",
+												key: row.original,
+											})
+										}
+									>
+										<Trash2 />
+										{m.api_keys_revoke()}
+									</DropdownMenuItem>
+								) : null}
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</div>
+				) : null,
+		},
+	];
 	async function create(values: Record<string, unknown>) {
 		const result = await createApiKeyFn({
 			data: {

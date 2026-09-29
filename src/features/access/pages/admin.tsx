@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { CheckboxControl } from "#/components/pro/base/fields/checkbox";
@@ -84,55 +82,50 @@ export function SystemAccessPage() {
 		onError: showError,
 	});
 
-	const roleColumns = useMemo<ColumnDef<Role>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) => (
-					<Switch
-						aria-label={`${m.common_enabled()} · ${row.original.name}`}
-						checked={row.original.enabled}
-						disabled={row.original.protected || setRoleEnabled.isPending}
-						onCheckedChange={(enabled) =>
-							setRoleEnabled.mutate({
-								data: { id: row.original.id, enabled },
-							})
-						}
-					/>
-				),
-			},
-			{
-				accessorKey: "name",
-				header: m.access_role(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">{row.original.name}</strong>
-						<small className="text-muted-foreground">
-							{row.original.description ?? "—"}
-						</small>
-					</div>
-				),
-			},
-			{ accessorKey: "memberCount", header: m.admin_dashboard_users() },
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<ActionMenu
-						disableDelete={
-							row.original.protected || row.original.memberCount > 0
-						}
-						disableEdit={row.original.protected}
-						onDelete={() => setDeletingRole(row.original)}
-						onEdit={() => setEditingRole(row.original)}
-					/>
-				),
-			},
-		],
-		[setRoleEnabled],
-	);
+	const roleColumns: ColumnDef<Role>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) => (
+				<Switch
+					aria-label={`${m.common_enabled()} · ${row.original.name}`}
+					checked={row.original.enabled}
+					disabled={row.original.protected || setRoleEnabled.isPending}
+					onCheckedChange={(enabled) =>
+						setRoleEnabled.mutate({
+							data: { id: row.original.id, enabled },
+						})
+					}
+				/>
+			),
+		},
+		{
+			accessorKey: "name",
+			header: m.access_role(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">{row.original.name}</strong>
+					<small className="text-muted-foreground">
+						{row.original.description ?? "—"}
+					</small>
+				</div>
+			),
+		},
+		{ accessorKey: "memberCount", header: m.admin_dashboard_users() },
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<ActionMenu
+					disableDelete={row.original.protected || row.original.memberCount > 0}
+					disableEdit={row.original.protected}
+					onDelete={() => setDeletingRole(row.original)}
+					onEdit={() => setEditingRole(row.original)}
+				/>
+			),
+		},
+	];
 
 	async function submitRole(values: Record<string, unknown>) {
 		await saveRole.mutateAsync({

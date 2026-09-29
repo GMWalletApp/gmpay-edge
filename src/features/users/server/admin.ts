@@ -42,34 +42,36 @@ export const listUsersFn = createServerFn({ method: "GET" })
 		});
 	});
 
+// Every audit row below is handed to the mutation so it commits in the same
+// guarded D1 batch: a rejected change leaves no audit trail behind.
 export const saveUserFn = createServerFn({ method: "POST" })
 	.validator((input: UserFormInput) => userInput.parse(input))
 	.handler(async ({ data }) => {
 		const { currentUser, db, request } = await getAdminServerContext(
 			systemPermission("users", data.id ? "update" : "create"),
 		);
+		const id = data.id ?? crypto.randomUUID();
 		const user = {
+			id,
 			name: data.name,
 			email: data.email,
 			enabled: data.enabled,
 			...(data.password === undefined ? {} : { password: data.password }),
+			audit: createAuditStatement(db.$client, request, currentUser.id, {
+				action: data.id ? "user.updated" : "user.created",
+				targetType: "user",
+				targetId: id,
+				after: {
+					name: data.name,
+					email: data.email.trim().toLowerCase(),
+					enabled: data.enabled,
+					passwordChanged: Boolean(data.password),
+				},
+			}),
 		};
-		const result = data.id
-			? updateUser(db, { ...user, id: data.id, currentUserId: currentUser.id })
+		return data.id
+			? updateUser(db, { ...user, currentUserId: currentUser.id })
 			: createUser(db, user);
-		const saved = await result;
-		await createAuditStatement(db.$client, request, currentUser.id, {
-			action: data.id ? "user.updated" : "user.created",
-			targetType: "user",
-			targetId: saved.id,
-			after: {
-				name: data.name,
-				email: data.email.trim().toLowerCase(),
-				enabled: data.enabled,
-				passwordChanged: Boolean(data.password),
-			},
-		}).run();
-		return saved;
 	});
 
 export const setUserEnabledFn = createServerFn({ method: "POST" })
@@ -80,17 +82,16 @@ export const setUserEnabledFn = createServerFn({ method: "POST" })
 		const { currentUser, db, request } = await getAdminServerContext(
 			systemPermission("users", "update"),
 		);
-		const result = await setUserEnabled(db, {
+		return setUserEnabled(db, {
 			...data,
 			currentUserId: currentUser.id,
+			audit: createAuditStatement(db.$client, request, currentUser.id, {
+				action: "user.enabled_changed",
+				targetType: "user",
+				targetId: data.id,
+				after: { enabled: data.enabled },
+			}),
 		});
-		await createAuditStatement(db.$client, request, currentUser.id, {
-			action: "user.enabled_changed",
-			targetType: "user",
-			targetId: data.id,
-			after: { enabled: data.enabled },
-		}).run();
-		return result;
 	});
 
 export const deleteUserFn = createServerFn({ method: "POST" })
@@ -99,16 +100,15 @@ export const deleteUserFn = createServerFn({ method: "POST" })
 		const { currentUser, db, request } = await getAdminServerContext(
 			systemPermission("users", "delete"),
 		);
-		const result = await deleteUser(db, {
+		return deleteUser(db, {
 			id: data.id,
 			currentUserId: currentUser.id,
+			audit: createAuditStatement(db.$client, request, currentUser.id, {
+				action: "user.deleted",
+				targetType: "user",
+				targetId: data.id,
+			}),
 		});
-		await createAuditStatement(db.$client, request, currentUser.id, {
-			action: "user.deleted",
-			targetType: "user",
-			targetId: data.id,
-		}).run();
-		return result;
 	});
 
 export const setUserRolesFn = createServerFn({ method: "POST" })
@@ -138,17 +138,16 @@ export const setUserRolesFn = createServerFn({ method: "POST" })
 				409,
 				"Unknown or disabled role",
 			);
-		const result = await replaceUserRolesAtomically(db.$client, {
+		return replaceUserRolesAtomically(db.$client, {
 			...data,
 			desiredHasRoot: roles.results.some((role) => role.name === "root"),
 			currentUserId: currentUser.id,
 			currentUserIsRoot: currentUser.root,
+			audit: createAuditStatement(db.$client, request, currentUser.id, {
+				action: "user.roles_replaced",
+				targetType: "user",
+				targetId: data.userId,
+				after: { roleIds: [...data.roleIds].sort() },
+			}),
 		});
-		await createAuditStatement(db.$client, request, currentUser.id, {
-			action: "user.roles_replaced",
-			targetType: "user",
-			targetId: data.userId,
-			after: { roleIds: result.roleIds },
-		}).run();
-		return result;
 	});

@@ -43,6 +43,9 @@ export const emailChannelSchema = z
 		enabled: z.boolean().default(true),
 	})
 	.superRefine((value, context) => {
+		// A blank credential on an existing channel keeps the stored one; the
+		// server rejects the update when no credential is stored either.
+		const creating = !value.id;
 		if (value.provider === "mailgun" && !value.domain)
 			context.addIssue({
 				code: "custom",
@@ -50,6 +53,7 @@ export const emailChannelSchema = z
 				path: ["domain"],
 			});
 		if (
+			creating &&
 			["resend", "postmark", "sendgrid", "mailgun"].includes(value.provider) &&
 			!value.credential
 		)
@@ -65,7 +69,9 @@ export const emailChannelSchema = z
 					message: "SMTP host is required",
 					path: ["smtpHost"],
 				});
-			if (Boolean(value.smtpUser) !== Boolean(value.credential))
+			if (
+				value.credential ? !value.smtpUser : creating && Boolean(value.smtpUser)
+			)
 				context.addIssue({
 					code: "custom",
 					message: "SMTP username and password must be configured together",

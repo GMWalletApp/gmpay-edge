@@ -8,17 +8,21 @@ interface ApiErrorBody {
 }
 
 const requestIds = new WeakMap<Request, string>();
+const requestIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** The validated inbound correlation id, or null when none is acceptable. */
+export function headerRequestId(headers: Headers): string | null {
+	return (
+		[headers.get("cf-ray"), headers.get("x-request-id")].find((candidate) =>
+			candidate ? requestIdPattern.test(candidate) : false,
+		) ?? null
+	);
+}
 
 export function requestId(request: Request): string {
 	const cached = requestIds.get(request);
 	if (cached) return cached;
-	const value = [
-		request.headers.get("cf-ray"),
-		request.headers.get("x-request-id"),
-	].find((candidate) =>
-		candidate ? /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) : false,
-	);
-	const id = value ?? crypto.randomUUID();
+	const id = headerRequestId(request.headers) ?? crypto.randomUUID();
 	requestIds.set(request, id);
 	return id;
 }

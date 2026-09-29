@@ -1,8 +1,11 @@
 import { m } from "#/paraglide/messages";
 
 function errorCode(error: unknown) {
-	if (!error || typeof error !== "object" || !("code" in error)) return;
-	return typeof error.code === "string" ? error.code : undefined;
+	if (!error || typeof error !== "object") return;
+	if ("code" in error && typeof error.code === "string") return error.code;
+	// Better Auth's built-in limiter answers 429 without a body code.
+	if ("status" in error && error.status === 429) return "TOO_MANY_REQUESTS";
+	return undefined;
 }
 
 export function signInErrorMessage(error: unknown) {
@@ -13,6 +16,8 @@ export function signInErrorMessage(error: unknown) {
 			return m.auth_error_invalid_credentials();
 		case "EMAIL_NOT_VERIFIED":
 			return m.auth_error_email_not_verified();
+		case "TOO_MANY_REQUESTS":
+			return m.auth_error_too_many_requests();
 		default:
 			return m.auth_signInFailed();
 	}

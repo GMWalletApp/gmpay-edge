@@ -1,4 +1,5 @@
 import { redactAuditValue } from "#/server/audit-redaction";
+import { requestId } from "#/server/http";
 
 export function createAuditStatement(
 	db: D1Database,
@@ -25,7 +26,7 @@ export function createAuditStatement(
 			input.action,
 			input.targetType,
 			input.targetId ?? null,
-			request.headers.get("x-request-id"),
+			requestId(request),
 			request.headers.get("cf-connecting-ip"),
 			input.before == null
 				? null
