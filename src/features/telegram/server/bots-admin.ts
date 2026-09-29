@@ -15,6 +15,7 @@ import {
 } from "#/features/telegram/server/update-bot";
 import { DomainError } from "#/lib/domain-error";
 import { decryptSecret } from "#/lib/secrets";
+import { requestId } from "#/server/http";
 
 export type TelegramBotRecord = {
 	id: string;
@@ -97,15 +98,21 @@ export const createTelegramBotFn = createServerFn({ method: "POST" })
 			configSecret: context.runtime.integrationConfigSecret,
 			baseUrl: context.runtime.betterAuthUrl,
 			actorUserId: context.user.id,
-			requestId: context.request.headers.get("x-request-id"),
+			requestId: requestId(context.request),
 			ipAddress: context.request.headers.get("cf-connecting-ip"),
 		});
-		const synchronization = await syncTelegramCommandCatalog(
-			context.db,
-			bot.id,
-			context.runtime.integrationConfigSecret,
-		);
-		return { ...bot, ...synchronization };
+		// The Bot row is committed; a failed command sync is reported, not
+		// thrown, so a retry cannot create a second row for the same token.
+		try {
+			const synchronization = await syncTelegramCommandCatalog(
+				context.db,
+				bot.id,
+				context.runtime.integrationConfigSecret,
+			);
+			return { ...bot, synced: synchronization.synced };
+		} catch {
+			return { ...bot, synced: false as const };
+		}
 	});
 
 const botUpdateInput = z.object({
@@ -131,7 +138,7 @@ export const updateTelegramBotFn = createServerFn({ method: "POST" })
 			configSecret: context.runtime.integrationConfigSecret,
 			baseUrl: context.runtime.betterAuthUrl,
 			actorUserId: context.user.id,
-			requestId: context.request.headers.get("x-request-id"),
+			requestId: requestId(context.request),
 			ipAddress: context.request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -149,7 +156,7 @@ export const setTelegramBotEnabledFn = createServerFn({ method: "POST" })
 			configSecret: context.runtime.integrationConfigSecret,
 			baseUrl: context.runtime.betterAuthUrl,
 			actorUserId: context.user.id,
-			requestId: context.request.headers.get("x-request-id"),
+			requestId: requestId(context.request),
 			ipAddress: context.request.headers.get("cf-connecting-ip"),
 		});
 	});
@@ -188,13 +195,16 @@ export const deleteTelegramBotFn = createServerFn({ method: "POST" })
 		const context = await telegramAdminContext(
 			systemPermission("telegram", "delete"),
 		);
-		await deleteTelegramBot(context.db, data.id);
-		await telegramAuditStatement(
-			context,
-			"telegram_bot.deleted",
-			"telegram_bot",
+		await deleteTelegramBot(
+			context.db,
 			data.id,
-			null,
-		).run();
+			telegramAuditStatement(
+				context,
+				"telegram_bot.deleted",
+				"telegram_bot",
+				data.id,
+				null,
+			),
+		);
 		return data;
 	});

@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Pencil, Send, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { MoreHorizontal, Pencil, RotateCcw, Send, Trash2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { ModalForm } from "#/components/pro/form";
@@ -20,6 +18,7 @@ import {
 	createTelegramCommandFn,
 	deleteTelegramCommandFn,
 	listTelegramCommandsFn,
+	reconcileTelegramDefaultsFn,
 	setTelegramCommandEnabledFn,
 	syncTelegramCommandsFn,
 	type TelegramCommandRecord,
@@ -52,13 +51,13 @@ export function TelegramCommandsPage() {
 	});
 	const [editing, setEditing] = useState<TelegramCommandRecord | null>(null);
 	const snapshotRef = useRef<{ key: string; at: number } | null>(null);
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		snapshotRef.current = null;
 		await client.invalidateQueries({
 			queryKey: ["admin", "telegram", "commands"],
 		});
 		setRefreshKey((value) => value + 1);
-	}, [client]);
+	};
 	const request = useCallback(
 		async (state: ProTableState) => {
 			const search = String(
@@ -111,73 +110,76 @@ export function TelegramCommandsPage() {
 		onSuccess: showSynchronizationResult,
 		onError: showTelegramError,
 	});
-	const columns = useMemo<ColumnDef<TelegramCommandRecord>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) => (
-					<Switch
-						aria-label={`${m.common_enabled()} · /${row.original.command}`}
-						checked={row.original.enabled}
-						disabled={toggle.isPending}
-						onCheckedChange={(enabled) =>
-							toggle.mutate({ data: { id: row.original.id, enabled } })
-						}
-					/>
-				),
-			},
-			{
-				accessorKey: "command",
-				header: m.telegram_command(),
-				meta: { search: true },
-				cell: ({ row }) => <code>/{row.original.command}</code>,
-			},
-			{
-				accessorKey: "scope",
-				header: m.telegram_scope(),
-				cell: ({ row }) => telegramOptionLabel(row.original.scope),
-			},
-			{ accessorKey: "sortOrder", header: m.telegram_sort_order() },
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									variant="ghost"
-									tooltip={m.common_actions()}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem onClick={() => setEditing(row.original)}>
-									<Pencil />
-									{m.common_edit()}
-								</DropdownMenuItem>
-								<DropdownMenuSeparator />
-								<DropdownMenuItem
-									variant="destructive"
-									disabled={remove.isPending}
-									onClick={() =>
-										remove.mutate({ data: { id: row.original.id } })
-									}
-								>
-									<Trash2 />
-									{m.common_delete()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[remove, toggle],
-	);
+	const reconcile = useMutation({
+		mutationFn: reconcileTelegramDefaultsFn,
+		onSuccess: async (result) => {
+			await refresh();
+			toast.success(m.telegram_defaults_reconciled({ count: result.added }));
+		},
+		onError: showTelegramError,
+	});
+	const columns: ColumnDef<TelegramCommandRecord>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) => (
+				<Switch
+					aria-label={`${m.common_enabled()} · /${row.original.command}`}
+					checked={row.original.enabled}
+					disabled={toggle.isPending}
+					onCheckedChange={(enabled) =>
+						toggle.mutate({ data: { id: row.original.id, enabled } })
+					}
+				/>
+			),
+		},
+		{
+			accessorKey: "command",
+			header: m.telegram_command(),
+			meta: { search: true },
+			cell: ({ row }) => <code>/{row.original.command}</code>,
+		},
+		{
+			accessorKey: "scope",
+			header: m.telegram_scope(),
+			cell: ({ row }) => telegramOptionLabel(row.original.scope),
+		},
+		{ accessorKey: "sortOrder", header: m.telegram_sort_order() },
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								variant="ghost"
+								tooltip={m.common_actions()}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onClick={() => setEditing(row.original)}>
+								<Pencil />
+								{m.common_edit()}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								variant="destructive"
+								disabled={remove.isPending}
+								onClick={() => remove.mutate({ data: { id: row.original.id } })}
+							>
+								<Trash2 />
+								{m.common_delete()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
@@ -186,6 +188,14 @@ export function TelegramCommandsPage() {
 				description={m.telegram_commands_description()}
 				actions={
 					<div className="flex gap-2">
+						<ProButton
+							variant="outline"
+							disabled={reconcile.isPending}
+							onClick={() => reconcile.mutate({ data: undefined })}
+						>
+							<RotateCcw />
+							{m.telegram_reconcile_defaults()}
+						</ProButton>
 						<ProButton
 							variant="outline"
 							disabled={sync.isPending || configuration.botCount === 0}

@@ -86,6 +86,16 @@ describe("Telegram admin page ownership", () => {
 		).toBe(false);
 	});
 
+	it("exposes the audited reconcile action from the commands page", () => {
+		const page = read("src/features/telegram/pages/commands.tsx");
+		expect(page).toContain("reconcileTelegramDefaultsFn");
+		expect(page).toContain("m.telegram_reconcile_defaults()");
+		const server = read("src/features/telegram/server/commands-admin.ts");
+		expect(server).toMatch(
+			/export const reconcileTelegramDefaultsFn[\s\S]*systemPermission\("telegram", "update"\)[\s\S]*reconcileTelegramDefaults\(context\.db, now\)[\s\S]*"telegram\.defaults_reconciled"/,
+		);
+	});
+
 	it("lays out notification forms without nested event cards", () => {
 		const source = read("src/features/telegram/pages/notifications.tsx");
 		expect(source).toContain(

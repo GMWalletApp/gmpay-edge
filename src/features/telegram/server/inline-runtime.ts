@@ -4,9 +4,10 @@ import { createOrder } from "#/features/orders/server/create";
 import type { PaymentScanMessage } from "#/features/payments/types";
 import { defaultTelegramNotificationTranslations } from "#/features/telegram/defaults";
 import {
-	createTelegramApi,
+	callTelegramApi,
 	TelegramApiRequestError,
 } from "#/features/telegram/server/client";
+import { disableBlockedTelegramTarget } from "#/features/telegram/server/notification-bindings";
 import {
 	renderTelegramTemplate,
 	telegramTemplateParseMode,
@@ -69,11 +70,37 @@ export async function answerInlineQuery(
 	context: TelegramUpdateContext,
 	query: TelegramInlineQuery,
 ) {
+	const locale = telegramLocale(query.from);
+	// Quotes and order searches cost D1 reads per keystroke, so only an enabled
+	// private binding (the same gate as order creation) receives them.
+	const binding = await findEnabledPrivateBinding(
+		context.db,
+		context.botId,
+		String(query.from.id),
+	);
+	if (!binding) {
+		await telegramCall(context, "answerInlineQuery", {
+			inline_query_id: query.id,
+			cache_time: 0,
+			is_personal: true,
+			results: [
+				{
+					type: "article",
+					id: "account-unbound",
+					title: m.telegram_account_unbound({}, { locale }),
+					description: m.telegram_help({}, { locale }),
+					input_message_content: {
+						message_text: m.telegram_account_unbound({}, { locale }),
+					},
+				},
+			],
+		});
+		return;
+	}
 	const createInput = parseTelegramCreateQuery(query.query);
 	const draftInput = createInput ? null : parseTelegramDraftQuery(query.query);
-	const locale = telegramLocale(query.from);
 	if (createInput) {
-		await telegramCall(context.token, "answerInlineQuery", {
+		await telegramCall(context, "answerInlineQuery", {
 			inline_query_id: query.id,
 			cache_time: 0,
 			is_personal: true,
@@ -108,7 +135,7 @@ export async function answerInlineQuery(
 			return;
 		}
 		const options = await inlinePaymentOptions(context.db, draftInput);
-		await telegramCall(context.token, "answerInlineQuery", {
+		await telegramCall(context, "answerInlineQuery", {
 			inline_query_id: query.id,
 			cache_time: 0,
 			is_personal: true,
@@ -156,7 +183,7 @@ async function answerOrderResults(
 	locale: TelegramLocale,
 	orders: OrderRow[],
 ) {
-	await telegramCall(context.token, "answerInlineQuery", {
+	await telegramCall(context, "answerInlineQuery", {
 		inline_query_id: query.id,
 		cache_time: 0,
 		is_personal: true,
@@ -198,12 +225,11 @@ export async function createChosenInlineOrder(
 	if (!input) return;
 	const telegramUserId = String(chosen.from.id);
 	const locale = telegramLocale(chosen.from);
-	const binding = await context.db
-		.prepare(
-			"SELECT id FROM telegram_notification_bindings WHERE bot_id = ? AND target_type = 'private' AND target_id = ? AND enabled = 1 LIMIT 1",
-		)
-		.bind(context.botId, telegramUserId)
-		.first<{ id: string }>();
+	const binding = await findEnabledPrivateBinding(
+		context.db,
+		context.botId,
+		telegramUserId,
+	);
 	if (!binding) {
 		await deliverInlineMessage(
 			context,
@@ -336,7 +362,7 @@ async function deliverInlineMessage(
 	replyMarkup?: { inline_keyboard: ReturnType<typeof orderKeyboard> },
 ) {
 	await telegramCall(
-		context.token,
+		context,
 		chosen.inline_message_id ? "editMessageText" : "sendMessage",
 		{
 			...(chosen.inline_message_id
@@ -382,7 +408,7 @@ export async function answerMessage(
 	const template = findCommandTemplate(command.template_translations, locale);
 	async function sendTemplate() {
 		if (!template) return false;
-		await telegramCall(context.token, "sendMessage", {
+		await telegramCall(context, "sendMessage", {
 			chat_id: message.chat.id,
 			parse_mode: telegramTemplateParseMode,
 			text: renderTelegramTemplate(template, {}),
@@ -391,7 +417,7 @@ export async function answerMessage(
 	}
 	if (command.handler_type === "start" || command.handler_type === "help") {
 		if (!(await sendTemplate()))
-			await telegramCall(context.token, "sendMessage", {
+			await telegramCall(context, "sendMessage", {
 				chat_id: message.chat.id,
 				text: m.telegram_help({}, { locale }),
 			});
@@ -399,7 +425,7 @@ export async function answerMessage(
 	}
 	if (command.handler_type === "new") {
 		if (!(await sendTemplate()))
-			await telegramCall(context.token, "sendMessage", {
+			await telegramCall(context, "sendMessage", {
 				chat_id: message.chat.id,
 				text: m.telegram_inline_new_hint({}, { locale }),
 			});
@@ -413,7 +439,7 @@ export async function answerMessage(
 	const search = commandMatch[2]?.trim();
 	if (!search) {
 		if (!(await sendTemplate()))
-			await telegramCall(context.token, "sendMessage", {
+			await telegramCall(context, "sendMessage", {
 				chat_id: message.chat.id,
 				text: m.telegram_status_usage({}, { locale }),
 			});
@@ -426,7 +452,7 @@ export async function answerMessage(
 		search,
 		5,
 	);
-	await telegramCall(context.token, "sendMessage", {
+	await telegramCall(context, "sendMessage", {
 		chat_id: message.chat.id,
 		text: orders.length
 			? orders
@@ -471,7 +497,15 @@ export async function updateTelegramTargetMembership(
 	context: TelegramUpdateContext,
 	member: TelegramChatMemberUpdated,
 ) {
-	if (member.chat.type === "private") return;
+	if (member.chat.type === "private") {
+		// Blocking the Bot arrives as `kicked`; unblocking never re-enables.
+		if (member.new_chat_member.status === "kicked")
+			await disableBlockedTelegramTarget(context.db, {
+				botId: context.botId,
+				targetId: String(member.chat.id),
+			});
+		return;
+	}
 	const targetType =
 		member.chat.type === "channel" ? "channel" : ("group" as const);
 	const targetId = String(member.chat.id);
@@ -633,7 +667,7 @@ export async function answerCallback(
 ) {
 	const locale = telegramLocale(callback.from);
 	if (callback.data === "inline:pending") {
-		await telegramCall(context.token, "answerCallbackQuery", {
+		await telegramCall(context, "answerCallbackQuery", {
 			callback_query_id: callback.id,
 			text: m.telegram_inline_creating({}, { locale }),
 		});
@@ -643,7 +677,7 @@ export async function answerCallback(
 		new RegExp(`^(order|check):(${orderIdPattern.source.slice(1, -1)})$`, "i"),
 	);
 	if (!match) {
-		await telegramCall(context.token, "answerCallbackQuery", {
+		await telegramCall(context, "answerCallbackQuery", {
 			callback_query_id: callback.id,
 			text: m.telegram_unsupported_action({}, { locale }),
 		});
@@ -659,7 +693,7 @@ export async function answerCallback(
 		orderId,
 		1,
 	);
-	await telegramCall(context.token, "answerCallbackQuery", {
+	await telegramCall(context, "answerCallbackQuery", {
 		callback_query_id: callback.id,
 		text: order
 			? m.telegram_status({ status: order.status }, { locale })
@@ -669,7 +703,7 @@ export async function answerCallback(
 	if (order && action.toLowerCase() === "check")
 		await enqueuePaymentCheck(context, order.id, callback.from.id, locale);
 	if (order)
-		await telegramCall(context.token, "sendMessage", {
+		await telegramCall(context, "sendMessage", {
 			chat_id: chatId,
 			text: formatOrder(order, context.baseUrl, locale),
 			reply_markup: {
@@ -687,6 +721,19 @@ export async function answerCallback(
 				],
 			},
 		});
+}
+
+function findEnabledPrivateBinding(
+	db: D1Database,
+	botId: string,
+	telegramUserId: string,
+) {
+	return db
+		.prepare(
+			"SELECT id FROM telegram_notification_bindings WHERE bot_id = ? AND target_type = 'private' AND target_id = ? AND enabled = 1 LIMIT 1",
+		)
+		.bind(botId, telegramUserId)
+		.first<{ id: string }>();
 }
 
 async function findOrders(
@@ -835,7 +882,7 @@ async function enqueuePaymentCheck(
 			.run();
 		throw error;
 	}
-	await telegramCall(context.token, "sendMessage", {
+	await telegramCall(context, "sendMessage", {
 		chat_id: telegramUserId,
 		text: m.telegram_check_queued({}, { locale }),
 	});
@@ -881,19 +928,25 @@ function checkoutUrl(baseUrl: string, orderId: string) {
 }
 
 async function telegramCall(
-	token: string,
+	context: TelegramUpdateContext,
 	method: string,
 	body: Record<string, unknown>,
 ) {
-	const raw = createTelegramApi(token).raw[
-		method as keyof ReturnType<typeof createTelegramApi>["raw"]
-	] as (
-		payload: Record<string, unknown>,
-		signal?: AbortSignal,
-	) => Promise<unknown>;
 	try {
-		await raw(body, AbortSignal.timeout(8_000));
+		await callTelegramApi(context.token, method, body);
 	} catch (error) {
-		throw new TelegramApiRequestError(error);
+		// Positive chat ids are private user chats; a user who blocked the Bot
+		// keeps that binding disabled until an administrator re-enables it.
+		if (
+			error instanceof TelegramApiRequestError &&
+			error.rejection === "blocked_by_user" &&
+			typeof body.chat_id === "number" &&
+			body.chat_id > 0
+		)
+			await disableBlockedTelegramTarget(context.db, {
+				botId: context.botId,
+				targetId: String(body.chat_id),
+			});
+		throw error;
 	}
 }

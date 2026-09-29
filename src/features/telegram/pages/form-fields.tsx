@@ -1,5 +1,3 @@
-"use client";
-
 import { Check, Languages } from "lucide-react";
 import { useState } from "react";
 import Markdown from "react-markdown";

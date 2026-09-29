@@ -1,4 +1,7 @@
-import { createTelegramApi } from "#/features/telegram/server/client";
+import {
+	createTelegramApi,
+	telegramAdminError,
+} from "#/features/telegram/server/client";
 import { DomainError } from "#/lib/domain-error";
 import { decryptSecret, encryptSecret } from "#/lib/secrets";
 import { redactAuditValue } from "#/server/audit-redaction";
@@ -19,6 +22,7 @@ export async function createTelegramBot(
 	},
 ) {
 	const identity = await fetchTelegramIdentity(input.token);
+	await requireTelegramUsernameAvailable(db, identity.username);
 	const id = input.id ?? crypto.randomUUID();
 	const webhookSecret = generateWebhookSecret();
 	const now = input.now ?? Date.now();
@@ -117,6 +121,7 @@ export async function updateTelegramBot(
 	let webhookSecret: string | null = null;
 	if (input.token) {
 		username = (await fetchTelegramIdentity(input.token)).username;
+		await requireTelegramUsernameAvailable(db, username, input.id);
 		[oldToken, webhookSecret] = await Promise.all([
 			decryptSecret(current.token_encrypted, input.configSecret),
 			decryptSecret(current.webhook_secret_encrypted, input.configSecret),
@@ -268,8 +273,12 @@ export async function setTelegramBotEnabled(
 }
 
 export async function fetchTelegramIdentity(token: string) {
-	const identity = await createTelegramApi(token).getMe();
-	return { username: identity.username ?? null };
+	try {
+		const identity = await createTelegramApi(token).getMe();
+		return { username: identity.username ?? null };
+	} catch (error) {
+		throw telegramAdminError(error);
+	}
 }
 
 async function configureTelegramWebhook(
@@ -278,20 +287,49 @@ async function configureTelegramWebhook(
 	secretToken: string,
 ) {
 	const api = createTelegramApi(token);
-	if (url) {
-		await api.setWebhook(url, {
-			secret_token: secretToken,
-			allowed_updates: [
-				"message",
-				"inline_query",
-				"chosen_inline_result",
-				"callback_query",
-				"my_chat_member",
-			],
-		});
-		return;
+	try {
+		if (url) {
+			await api.setWebhook(url, {
+				secret_token: secretToken,
+				allowed_updates: [
+					"message",
+					"inline_query",
+					"chosen_inline_result",
+					"callback_query",
+					"my_chat_member",
+				],
+			});
+			return;
+		}
+		await api.deleteWebhook({ drop_pending_updates: false });
+	} catch (error) {
+		throw telegramAdminError(error);
 	}
-	await api.deleteWebhook({ drop_pending_updates: false });
+}
+
+/**
+ * One Telegram Bot must map to one row: a second row for the same token would
+ * silently take over its webhook. Usernames are Telegram-unique, so they stand
+ * in for the never-stored plaintext token.
+ */
+async function requireTelegramUsernameAvailable(
+	db: D1Database,
+	username: string | null,
+	excludeId?: string,
+) {
+	if (!username) return;
+	const existing = await db
+		.prepare(
+			"SELECT id FROM telegram_bots WHERE username = ? AND id <> ? LIMIT 1",
+		)
+		.bind(username, excludeId ?? "")
+		.first<{ id: string }>();
+	if (existing)
+		throw new DomainError(
+			"telegram_bot_exists",
+			409,
+			"A Telegram bot with this username already exists",
+		);
 }
 
 function telegramWebhookUrl(baseUrl: string, botId: string) {

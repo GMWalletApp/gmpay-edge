@@ -8,6 +8,7 @@ import {
 	telegramAuditStatement,
 	telegramSettingUpsert,
 } from "#/features/telegram/server/admin-context";
+import { setTelegramNotificationEnabled } from "#/features/telegram/server/notification-bindings";
 import {
 	requireTelegramResource,
 	requireTelegramResourceAvailable,
@@ -279,30 +280,7 @@ export const setTelegramNotificationEnabledFn = createServerFn({
 		const context = await telegramAdminContext(
 			systemPermission("telegram", "update"),
 		);
-		const current = await context.db
-			.prepare(
-				"SELECT id FROM telegram_notification_bindings WHERE id = ? LIMIT 1",
-			)
-			.bind(data.id)
-			.first<{ id: string }>();
-		requireTelegramResource(current, "notification");
-		const now = Date.now();
-		await context.db.batch([
-			context.db
-				.prepare(
-					"UPDATE telegram_notification_bindings SET enabled = ?, updated_at = ? WHERE id = ?",
-				)
-				.bind(data.enabled, now, data.id),
-			telegramAuditStatement(
-				context,
-				"telegram_target.enabled_changed",
-				"telegram_notification_target",
-				data.id,
-				{ enabled: data.enabled },
-				now,
-			),
-		]);
-		return data;
+		return setTelegramNotificationEnabled(context, data);
 	});
 
 const telegramDefaultsInput = z.object({

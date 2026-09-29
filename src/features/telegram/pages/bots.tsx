@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Pencil, Send, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { formBooleanValue, ModalForm } from "#/components/pro/form";
@@ -36,7 +34,7 @@ export function TelegramBotsPage() {
 	const [refreshKey, setRefreshKey] = useState(0);
 	const snapshotRef = useRef<{ key: string; at: number } | null>(null);
 	const [editingBot, setEditingBot] = useState<TelegramBotRecord | null>(null);
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		snapshotRef.current = null;
 		await Promise.all(
 			["bots", "notifications", "commands"].map((resource) =>
@@ -46,7 +44,7 @@ export function TelegramBotsPage() {
 			),
 		);
 		setRefreshKey((value) => value + 1);
-	}, [client]);
+	};
 	const request = useCallback(
 		async (state: ProTableState) => {
 			const search = String(
@@ -97,88 +95,85 @@ export function TelegramBotsPage() {
 		},
 		onError: showTelegramError,
 	});
-	const columns = useMemo<ColumnDef<TelegramBotRecord>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) => (
-					<Switch
-						aria-label={`${m.common_enabled()} · ${row.original.name}`}
-						checked={row.original.enabled}
-						disabled={enabled.isPending}
-						onCheckedChange={(value) =>
-							enabled.mutate({ data: { id: row.original.id, enabled: value } })
-						}
-					/>
-				),
-			},
-			{
-				accessorKey: "name",
-				header: m.telegram_bot(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<strong className="block">{row.original.name}</strong>
-						<span className="text-muted-foreground text-xs">
-							{row.original.username
-								? `@${row.original.username}`
-								: m.telegram_username_unavailable()}
-						</span>
-					</div>
-				),
-			},
-			{
-				accessorKey: "createdAt",
-				header: m.common_created(),
-				cell: ({ row }) => formatDateTime(row.original.createdAt),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end">
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<ProButton
-									size="icon-sm"
-									variant="ghost"
-									tooltip={m.common_actions()}
-								>
-									<MoreHorizontal />
-								</ProButton>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem onClick={() => setEditingBot(row.original)}>
-									<Pencil />
-									{m.common_edit()}
-								</DropdownMenuItem>
-								<DropdownMenuItem
-									disabled={test.isPending}
-									onClick={() => test.mutate({ data: { id: row.original.id } })}
-								>
-									<Send />
-									{m.telegram_test_connection()}
-								</DropdownMenuItem>
-								<DropdownMenuItem
-									variant="destructive"
-									disabled={remove.isPending}
-									onClick={() => {
-										if (window.confirm(m.telegram_delete_bot_confirm()))
-											remove.mutate({ data: { id: row.original.id } });
-									}}
-								>
-									<Trash2 />
-									{m.common_delete()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				),
-			},
-		],
-		[enabled, remove, test],
-	);
+	const columns: ColumnDef<TelegramBotRecord>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) => (
+				<Switch
+					aria-label={`${m.common_enabled()} · ${row.original.name}`}
+					checked={row.original.enabled}
+					disabled={enabled.isPending}
+					onCheckedChange={(value) =>
+						enabled.mutate({ data: { id: row.original.id, enabled: value } })
+					}
+				/>
+			),
+		},
+		{
+			accessorKey: "name",
+			header: m.telegram_bot(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<strong className="block">{row.original.name}</strong>
+					<span className="text-muted-foreground text-xs">
+						{row.original.username
+							? `@${row.original.username}`
+							: m.telegram_username_unavailable()}
+					</span>
+				</div>
+			),
+		},
+		{
+			accessorKey: "createdAt",
+			header: m.common_created(),
+			cell: ({ row }) => formatDateTime(row.original.createdAt),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<ProButton
+								size="icon-sm"
+								variant="ghost"
+								tooltip={m.common_actions()}
+							>
+								<MoreHorizontal />
+							</ProButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onClick={() => setEditingBot(row.original)}>
+								<Pencil />
+								{m.common_edit()}
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								disabled={test.isPending}
+								onClick={() => test.mutate({ data: { id: row.original.id } })}
+							>
+								<Send />
+								{m.telegram_test_connection()}
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								variant="destructive"
+								disabled={remove.isPending}
+								onClick={() => {
+									if (window.confirm(m.telegram_delete_bot_confirm()))
+										remove.mutate({ data: { id: row.original.id } });
+								}}
+							>
+								<Trash2 />
+								{m.common_delete()}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			),
+		},
+	];
 
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">
@@ -253,7 +248,7 @@ function CreateBot({ onCreated }: { onCreated: () => Promise<unknown> }) {
 			]}
 			initialValues={{ enabled: false }}
 			onFinish={async (values) => {
-				await createTelegramBotFn({
+				const result = await createTelegramBotFn({
 					data: {
 						name: String(values.name ?? ""),
 						token: String(values.token ?? ""),
@@ -261,7 +256,9 @@ function CreateBot({ onCreated }: { onCreated: () => Promise<unknown> }) {
 					},
 				});
 				await onCreated();
-				toast.success(m.telegram_bot_added());
+				if (result.synced === false)
+					toast.warning(m.telegram_bot_added_sync_failed());
+				else toast.success(m.telegram_bot_added());
 			}}
 			onFinishFailed={showTelegramError}
 		/>

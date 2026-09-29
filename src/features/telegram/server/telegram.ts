@@ -1,11 +1,19 @@
-import { createTelegramApi } from "#/features/telegram/server/client";
+import {
+	callTelegramApi,
+	TelegramApiRequestError,
+	telegramErrorCode,
+	telegramRequestTimeoutMs,
+} from "#/features/telegram/server/client";
+import { disableBlockedTelegramTarget } from "#/features/telegram/server/notification-bindings";
 import {
 	renderTelegramTemplate,
 	telegramTemplateParseMode,
 } from "#/features/telegram/template";
 import { parseTelegramTemplateTranslations } from "#/features/telegram/template-translations";
+import { isRecord } from "#/lib/is-record";
 import type { SupportedLocale } from "#/lib/locales";
 import { decryptSecret } from "#/lib/secrets";
+import { m } from "#/paraglide/messages";
 import { loadRuntimeConfig } from "#/server/runtime-config";
 
 type TelegramTarget = {
@@ -13,20 +21,37 @@ type TelegramTarget = {
 	bot_id: string;
 	template_translations: unknown;
 	recipient_id: string;
+	target_type: "private" | "group" | "channel";
 	token_encrypted: string;
 	locale: SupportedLocale;
 	events: string;
 };
 
+type TelegramDeliveryFailure = { targetId: string; errorCode: string };
+
+type NotifyTelegramOptions = {
+	delay?: (ms: number) => Promise<void>;
+	/** Flood-control retries are skipped once they could not finish by this time. */
+	deadlineAt?: number;
+};
+
+const deliveryConcurrency = 4;
+const maximumFloodControlRetries = 2;
+/** Fits inside the Worker `waitUntil` budget together with one final request. */
+const deliveryBudgetMs = 25_000;
+
 export async function notifyTelegram(
 	db: D1Database,
 	eventType: string,
 	payload: Record<string, unknown>,
+	options: NotifyTelegramOptions = {},
 ) {
+	const deadlineAt = options.deadlineAt ?? Date.now() + deliveryBudgetMs;
+	const delay = options.delay ?? waitMs;
 	const targets = await db
 		.prepare(
 			`SELECT target.id AS target_id, target.bot_id, target.template_translations, target.target_id AS recipient_id,
-		 target.locale, target.events, b.token_encrypted
+		 target.target_type, target.locale, target.events, b.token_encrypted
 		 FROM telegram_notification_bindings target
 		 JOIN telegram_bots b ON b.id = target.bot_id
 		 WHERE b.enabled = 1 AND target.enabled = 1`,
@@ -39,45 +64,71 @@ export async function notifyTelegram(
 	if (!selected.length) return { delivered: 0, failed: 0 };
 	const configSecret = (await loadRuntimeConfig(db)).integrationConfigSecret;
 	if (!configSecret) return { delivered: 0, failed: 0 };
-	const results = await Promise.allSettled(
-		selected.map(async (target) => {
-			const token = await decryptSecret(target.token_encrypted, configSecret);
-			const template = selectTelegramTemplate(
-				target.template_translations,
-				target.locale,
-			);
-			const text = template
-				? renderTelegramTemplate(template.content, payload)
-				: formatNotification(eventType, payload, target.locale);
-			await createTelegramApi(token).sendMessage(
-				target.recipient_id,
-				text,
-				template ? { parse_mode: telegramTemplateParseMode } : undefined,
-			);
-		}),
+	const tokens = new Map<string, Promise<string>>();
+	const tokenFor = (target: TelegramTarget) => {
+		const cached = tokens.get(target.bot_id);
+		if (cached) return cached;
+		const token = decryptSecret(target.token_encrypted, configSecret);
+		tokens.set(target.bot_id, token);
+		return token;
+	};
+	const failures: TelegramDeliveryFailure[] = [];
+	const blocked: TelegramTarget[] = [];
+	await forEachWithConcurrency(
+		selected,
+		deliveryConcurrency,
+		async (target) => {
+			try {
+				const template = selectTelegramTemplate(
+					target.template_translations,
+					target.locale,
+				);
+				await sendWithFloodControl(
+					await tokenFor(target),
+					{
+						chat_id: target.recipient_id,
+						text: template
+							? renderTelegramTemplate(template.content, payload)
+							: formatNotification(eventType, payload, target.locale),
+						...(template ? { parse_mode: telegramTemplateParseMode } : {}),
+					},
+					{ deadlineAt, delay },
+				);
+			} catch (error) {
+				failures.push({
+					targetId: target.target_id,
+					errorCode: telegramErrorCode(error),
+				});
+				if (
+					target.target_type === "private" &&
+					error instanceof TelegramApiRequestError &&
+					error.rejection === "blocked_by_user"
+				)
+					blocked.push(target);
+			}
+		},
 	);
-	await persistTelegramDeliveryFailures(db, eventType, selected, results);
+	for (const target of blocked)
+		await disableBlockedTelegramTarget(db, {
+			botId: target.bot_id,
+			targetId: target.recipient_id,
+		});
+	await persistTelegramDeliveryFailures(db, eventType, failures);
 	return {
-		delivered: results.filter((result) => result.status === "fulfilled").length,
-		failed: results.filter((result) => result.status === "rejected").length,
+		delivered: selected.length - failures.length,
+		failed: failures.length,
 	};
 }
 
 export async function persistTelegramDeliveryFailures(
 	db: D1Database,
 	eventType: string,
-	targets: readonly Pick<TelegramTarget, "target_id">[],
-	results: readonly PromiseSettledResult<unknown>[],
+	failures: readonly TelegramDeliveryFailure[],
 ) {
-	const now = Date.now();
-	const failures = results.flatMap((result, index) =>
-		result.status === "rejected" && targets[index]
-			? [{ targetId: targets[index].target_id }]
-			: [],
-	);
 	if (!failures.length) return 0;
+	const now = Date.now();
 	await db.batch(
-		failures.map(({ targetId }) =>
+		failures.map(({ targetId, errorCode }) =>
 			db
 				.prepare(
 					"INSERT INTO audit_logs (id, action, target_type, target_id, after, created_at) VALUES (?, 'telegram.delivery_failed', 'telegram_notification_target', ?, ?, ?)",
@@ -85,7 +136,7 @@ export async function persistTelegramDeliveryFailures(
 				.bind(
 					crypto.randomUUID(),
 					targetId,
-					JSON.stringify({ eventType }),
+					JSON.stringify({ eventType, errorCode }),
 					now,
 				),
 		),
@@ -93,45 +144,82 @@ export async function persistTelegramDeliveryFailures(
 	return failures.length;
 }
 
+async function sendWithFloodControl(
+	token: string,
+	message: Record<string, unknown>,
+	budget: { deadlineAt: number; delay: (ms: number) => Promise<void> },
+) {
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			await callTelegramApi(token, "sendMessage", message);
+			return;
+		} catch (error) {
+			const retryAfterMs =
+				error instanceof TelegramApiRequestError
+					? error.retryAfterMs
+					: undefined;
+			if (
+				retryAfterMs === undefined ||
+				attempt >= maximumFloodControlRetries ||
+				Date.now() + retryAfterMs + telegramRequestTimeoutMs > budget.deadlineAt
+			)
+				throw error;
+			await budget.delay(retryAfterMs);
+		}
+	}
+}
+
+async function forEachWithConcurrency<T>(
+	items: readonly T[],
+	limit: number,
+	worker: (item: T) => Promise<void>,
+) {
+	const queue = [...items];
+	await Promise.all(
+		Array.from({ length: Math.min(limit, queue.length) }, async () => {
+			for (let item = queue.shift(); item; item = queue.shift())
+				await worker(item);
+		}),
+	);
+}
+
+function waitMs(ms: number) {
+	return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 function formatNotification(
 	eventType: string,
 	payload: Record<string, unknown>,
 	locale: TelegramTarget["locale"],
 ) {
-	const payment = isObject(payload.payment) ? payload.payment : {};
-	const labels = notificationLabels[locale];
+	const payment = isRecord(payload.payment) ? payload.payment : {};
+	const options = { locale };
 	return [
 		`GMPay Edge · ${eventType}`,
-		`${labels.order}: ${String(payload.externalOrderId ?? payload.orderId ?? "—")}`,
-		`${labels.status}: ${String(payload.status ?? "—")}`,
-		`${labels.amount}: ${String(payload.amount ?? "—")} ${String(payload.currency ?? "")}`.trim(),
-		`${labels.payment}: ${String(payment.amount ?? "—")} ${String(payment.asset ?? "")}`.trim(),
+		m.telegram_notification_order(
+			{ order: String(payload.externalOrderId ?? payload.orderId ?? "—") },
+			options,
+		),
+		m.telegram_notification_status(
+			{ status: String(payload.status ?? "—") },
+			options,
+		),
+		m.telegram_notification_amount(
+			{
+				amount:
+					`${String(payload.amount ?? "—")} ${String(payload.currency ?? "")}`.trim(),
+			},
+			options,
+		),
+		m.telegram_notification_payment(
+			{
+				payment:
+					`${String(payment.amount ?? "—")} ${String(payment.asset ?? "")}`.trim(),
+			},
+			options,
+		),
 	].join("\n");
 }
-
-const notificationLabels = {
-	"en-US": {
-		order: "Order",
-		status: "Status",
-		amount: "Amount",
-		payment: "Payment",
-	},
-	"ja-JP": {
-		order: "注文",
-		status: "ステータス",
-		amount: "金額",
-		payment: "支払い",
-	},
-	"ko-KR": { order: "주문", status: "상태", amount: "금액", payment: "결제" },
-	"ru-RU": {
-		order: "Заказ",
-		status: "Статус",
-		amount: "Сумма",
-		payment: "Платёж",
-	},
-	"zh-CN": { order: "订单", status: "状态", amount: "金额", payment: "付款" },
-	"zh-TW": { order: "訂單", status: "狀態", amount: "金額", payment: "付款" },
-} as const;
 
 export function selectTelegramTemplate(
 	value: unknown,
@@ -152,8 +240,4 @@ function parseEvents(value: string): string[] {
 	} catch {
 		return [];
 	}
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

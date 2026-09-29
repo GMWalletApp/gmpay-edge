@@ -62,6 +62,9 @@ export async function inlinePaymentOptions(
 			decimals: number;
 			network: string;
 		}>();
+	// Several receiving methods usually share one asset; the rate is quoted once
+	// per asset so a keystroke costs one lookup per distinct pair, not per row.
+	const quotes = new Map<string, string | null>();
 	const options: Array<{
 		receivingMethodId: string;
 		asset: string;
@@ -69,25 +72,40 @@ export async function inlinePaymentOptions(
 		amount: string;
 	}> = [];
 	for (const row of rows.results) {
-		try {
-			const quote = await quoteWithExchangeRate(db, {
-				amount: draft.amount,
-				currency: draft.currency,
-				paymentAsset: row.code,
-				assetDecimals: row.decimals,
-			});
-			if (quote)
-				options.push({
-					receivingMethodId: row.receiving_method_id,
-					asset: row.code,
-					network: row.network,
-					amount: quote.paymentAmount,
-				});
-		} catch (error) {
-			if (!(error instanceof OrderServiceError)) throw error;
+		const pair = `${row.code}:${row.decimals}`;
+		let amount = quotes.get(pair);
+		if (amount === undefined) {
+			amount = await quotePaymentAmount(db, draft, row);
+			quotes.set(pair, amount);
 		}
+		if (amount !== null)
+			options.push({
+				receivingMethodId: row.receiving_method_id,
+				asset: row.code,
+				network: row.network,
+				amount,
+			});
 	}
 	return options;
+}
+
+async function quotePaymentAmount(
+	db: D1Database,
+	draft: NonNullable<ReturnType<typeof parseTelegramDraftQuery>>,
+	asset: { code: string; decimals: number },
+) {
+	try {
+		const quote = await quoteWithExchangeRate(db, {
+			amount: draft.amount,
+			currency: draft.currency,
+			paymentAsset: asset.code,
+			assetDecimals: asset.decimals,
+		});
+		return quote?.paymentAmount ?? null;
+	} catch (error) {
+		if (error instanceof OrderServiceError) return null;
+		throw error;
+	}
 }
 
 export function inlineOptionId(receivingMethodId: string) {

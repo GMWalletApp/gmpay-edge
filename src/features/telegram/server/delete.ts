@@ -1,6 +1,10 @@
 import { DomainError } from "#/lib/domain-error";
 
-export async function deleteTelegramBot(db: D1Database, id: string) {
+export async function deleteTelegramBot(
+	db: D1Database,
+	id: string,
+	audit?: D1PreparedStatement,
+) {
 	const bot = await db
 		.prepare("SELECT enabled FROM telegram_bots WHERE id = ? LIMIT 1")
 		.bind(id)
@@ -17,6 +21,9 @@ export async function deleteTelegramBot(db: D1Database, id: string) {
 			409,
 			"Disable the Telegram bot before deleting it",
 		);
-	await db.prepare("DELETE FROM telegram_bots WHERE id = ?").bind(id).run();
+	await db.batch([
+		db.prepare("DELETE FROM telegram_bots WHERE id = ?").bind(id),
+		...(audit ? [audit] : []),
+	]);
 	return { id };
 }

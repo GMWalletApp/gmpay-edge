@@ -1,9 +1,7 @@
-"use client";
-
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Settings2, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ProButton } from "#/components/pro/base/button";
 import { ModalForm } from "#/components/pro/form";
@@ -63,13 +61,13 @@ export function TelegramNotificationsPage() {
 	const [configuration, setConfiguration] =
 		useState<NotificationConfiguration>(emptyConfiguration);
 	const snapshotRef = useRef<{ key: string; at: number } | null>(null);
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		snapshotRef.current = null;
 		await client.invalidateQueries({
 			queryKey: ["admin", "telegram", "notifications"],
 		});
 		setRefreshKey((value) => value + 1);
-	}, [client]);
+	};
 	const request = useCallback(
 		async (state: ProTableState) => {
 			const search = String(
@@ -107,85 +105,82 @@ export function TelegramNotificationsPage() {
 		onSuccess: refresh,
 		onError: showTelegramError,
 	});
-	const columns = useMemo<ColumnDef<TelegramNotificationBindingRecord>[]>(
-		() => [
-			{
-				accessorKey: "enabled",
-				header: m.common_enabled(),
-				cell: ({ row }) => (
-					<Switch
-						aria-label={`${m.common_enabled()} · ${row.original.name}`}
-						checked={row.original.enabled}
-						disabled={toggle.isPending}
-						onCheckedChange={(enabled) =>
-							toggle.mutate({ data: { id: row.original.id, enabled } })
-						}
-					/>
-				),
-			},
-			{
-				accessorKey: "name",
-				header: m.common_name(),
-				meta: { search: true },
-				cell: ({ row }) => (
-					<div>
-						<div>{row.original.name}</div>
-						{row.original.targetUsername ? (
-							<div className="text-muted-foreground text-xs">
-								@{row.original.targetUsername}
-							</div>
-						) : null}
-					</div>
-				),
-			},
-			{ accessorKey: "botName", header: m.telegram_bot() },
-			{ accessorKey: "locale", header: m.telegram_locale() },
-			{
-				accessorKey: "targetId",
-				header: m.telegram_target_id(),
-				cell: ({ row }) => (
-					<div>
-						<Badge variant="outline">
-							{telegramOptionLabel(row.original.targetType)}
+	const columns: ColumnDef<TelegramNotificationBindingRecord>[] = [
+		{
+			accessorKey: "enabled",
+			header: m.common_enabled(),
+			cell: ({ row }) => (
+				<Switch
+					aria-label={`${m.common_enabled()} · ${row.original.name}`}
+					checked={row.original.enabled}
+					disabled={toggle.isPending}
+					onCheckedChange={(enabled) =>
+						toggle.mutate({ data: { id: row.original.id, enabled } })
+					}
+				/>
+			),
+		},
+		{
+			accessorKey: "name",
+			header: m.common_name(),
+			meta: { search: true },
+			cell: ({ row }) => (
+				<div>
+					<div>{row.original.name}</div>
+					{row.original.targetUsername ? (
+						<div className="text-muted-foreground text-xs">
+							@{row.original.targetUsername}
+						</div>
+					) : null}
+				</div>
+			),
+		},
+		{ accessorKey: "botName", header: m.telegram_bot() },
+		{ accessorKey: "locale", header: m.telegram_locale() },
+		{
+			accessorKey: "targetId",
+			header: m.telegram_target_id(),
+			cell: ({ row }) => (
+				<div>
+					<Badge variant="outline">
+						{telegramOptionLabel(row.original.targetType)}
+					</Badge>
+					<code className="ml-2 text-xs">{row.original.targetId}</code>
+				</div>
+			),
+		},
+		{
+			accessorKey: "events",
+			header: m.telegram_events(),
+			cell: ({ row }) => (
+				<div className="flex max-w-md flex-wrap gap-1">
+					{row.original.events.map((event) => (
+						<Badge key={event} variant="secondary">
+							{webhookEventLabel(event)}
 						</Badge>
-						<code className="ml-2 text-xs">{row.original.targetId}</code>
-					</div>
-				),
-			},
-			{
-				accessorKey: "events",
-				header: m.telegram_events(),
-				cell: ({ row }) => (
-					<div className="flex max-w-md flex-wrap gap-1">
-						{row.original.events.map((event) => (
-							<Badge key={event} variant="secondary">
-								{webhookEventLabel(event)}
-							</Badge>
-						))}
-					</div>
-				),
-			},
-			{
-				id: "actions",
-				header: m.common_actions(),
-				cell: ({ row }) => (
-					<div className="flex justify-end gap-1">
-						<EditNotification notification={row.original} onUpdated={refresh} />
-						<ProButton
-							size="icon-sm"
-							variant="ghost"
-							tooltip={m.common_delete()}
-							disabled={remove.isPending}
-							onClick={() => remove.mutate({ data: { id: row.original.id } })}
-						>
-							<Trash2 />
-						</ProButton>
-					</div>
-				),
-			},
-		],
-		[refresh, remove, toggle],
-	);
+					))}
+				</div>
+			),
+		},
+		{
+			id: "actions",
+			header: m.common_actions(),
+			cell: ({ row }) => (
+				<div className="flex justify-end gap-1">
+					<EditNotification notification={row.original} onUpdated={refresh} />
+					<ProButton
+						size="icon-sm"
+						variant="ghost"
+						tooltip={m.common_delete()}
+						disabled={remove.isPending}
+						onClick={() => remove.mutate({ data: { id: row.original.id } })}
+					>
+						<Trash2 />
+					</ProButton>
+				</div>
+			),
+		},
+	];
 
 	return (
 		<div className="flex min-h-0 w-full flex-1 flex-col gap-4">

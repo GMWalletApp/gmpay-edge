@@ -201,10 +201,12 @@ describe("Telegram bot updates", () => {
 			"fetch",
 			vi
 				.fn()
-				.mockResolvedValue(
-					Response.json(
-						{ ok: false, description: "Unauthorized" },
-						{ status: 401 },
+				.mockImplementation(() =>
+					Promise.resolve(
+						Response.json(
+							{ ok: false, error_code: 401, description: "Unauthorized" },
+							{ status: 401 },
+						),
 					),
 				),
 		);
@@ -218,7 +220,7 @@ describe("Telegram bot updates", () => {
 				baseUrl: "https://pay.example",
 				actorUserId: "actor",
 			}),
-		).rejects.toThrow("Unauthorized");
+		).rejects.toMatchObject({ code: "telegram_token_invalid", status: 400 });
 		expect(await readBot(db)).toEqual(before);
 	});
 
@@ -246,13 +248,65 @@ describe("Telegram bot updates", () => {
 				baseUrl: "https://pay.example",
 				actorUserId: "actor",
 			}),
-		).rejects.toThrow("Webhook rejected");
+		).rejects.toMatchObject({ code: "telegram_api_rejected", status: 502 });
 		const persisted = await db
 			.prepare(
 				"SELECT (SELECT COUNT(*) FROM telegram_bots WHERE id = 'create-failed') AS bots, (SELECT COUNT(*) FROM audit_logs WHERE target_id = 'create-failed') AS audits",
 			)
 			.first<{ bots: number; audits: number }>();
 		expect(persisted).toEqual({ bots: 0, audits: 0 });
+	});
+
+	it("rejects a second row for a Bot username that is already configured", async () => {
+		const configured = (await readBot(db))?.username;
+		expect(configured).toBeTruthy();
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(() =>
+				Promise.resolve(
+					Response.json({ ok: true, result: { username: configured } }),
+				),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(
+			createTelegramBot(db, {
+				id: "duplicate-username",
+				name: "Duplicate username",
+				token: "600:duplicate-username-token-with-enough-length",
+				enabled: true,
+				configSecret,
+				baseUrl: "https://pay.example",
+				actorUserId: "actor",
+			}),
+		).rejects.toMatchObject({ code: "telegram_bot_exists", status: 409 });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/getMe");
+		await expect(
+			db
+				.prepare(
+					"SELECT COUNT(*) AS count FROM telegram_bots WHERE username = ?",
+				)
+				.bind(configured)
+				.first<{ count: number }>(),
+		).resolves.toEqual({ count: 1 });
+	});
+
+	it("reports an unreachable Telegram Bot API with a stable code", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+		);
+		await expect(
+			createTelegramBot(db, {
+				id: "unreachable",
+				name: "Unreachable",
+				token: "700:unreachable-token-value-with-enough-length",
+				enabled: false,
+				configSecret,
+				baseUrl: "https://pay.example",
+				actorUserId: "actor",
+			}),
+		).rejects.toMatchObject({ code: "telegram_unreachable", status: 504 });
 	});
 
 	it("does not copy or modify the public catalogs when creating a bot", async () => {
@@ -423,9 +477,31 @@ describe("Telegram bot updates", () => {
 	});
 
 	it("keeps instance command and default notification content when a bot is deleted", async () => {
-		await expect(deleteTelegramBot(db, "bot-with-defaults")).resolves.toEqual({
-			id: "bot-with-defaults",
-		});
+		const audit = (actorUserId: string) =>
+			db
+				.prepare(
+					"INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, created_at) VALUES (?, ?, 'telegram_bot.deleted', 'telegram_bot', 'bot-with-defaults', 5)",
+				)
+				.bind(crypto.randomUUID(), actorUserId);
+		// The delete and its audit commit together: a failing audit keeps the row.
+		await expect(
+			deleteTelegramBot(db, "bot-with-defaults", audit("missing-actor")),
+		).rejects.toThrow();
+		await expect(
+			db
+				.prepare("SELECT id FROM telegram_bots WHERE id = 'bot-with-defaults'")
+				.first(),
+		).resolves.toEqual({ id: "bot-with-defaults" });
+		await expect(
+			deleteTelegramBot(db, "bot-with-defaults", audit("actor")),
+		).resolves.toEqual({ id: "bot-with-defaults" });
+		await expect(
+			db
+				.prepare(
+					"SELECT COUNT(*) AS count FROM audit_logs WHERE action = 'telegram_bot.deleted' AND target_id = 'bot-with-defaults'",
+				)
+				.first<{ count: number }>(),
+		).resolves.toEqual({ count: 1 });
 		const catalogs = await db
 			.prepare(
 				"SELECT (SELECT COUNT(*) FROM telegram_bot_commands) AS commands, (SELECT COUNT(*) FROM system_settings WHERE key = 'telegram.default_template_translations') AS defaults",

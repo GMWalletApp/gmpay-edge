@@ -21,6 +21,10 @@ describe("Telegram Server Function error presentation", () => {
 		],
 		["telegram_notification_exists", m.telegram_error_notification_exists()],
 		["telegram_command_exists", m.telegram_error_command_exists()],
+		["telegram_bot_exists", m.telegram_error_bot_exists()],
+		["telegram_token_invalid", m.telegram_error_token_invalid()],
+		["telegram_api_rejected", m.telegram_error_api_rejected()],
+		["telegram_unreachable", m.telegram_error_unreachable()],
 	] as const)("maps reviewed code %s to localized copy", (code, message) => {
 		expect(
 			telegramOperationErrorMessage(new ServerFunctionError(code, 409, code)),

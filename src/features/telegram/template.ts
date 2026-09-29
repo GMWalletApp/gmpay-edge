@@ -1,3 +1,5 @@
+import { isRecord } from "#/lib/is-record";
+
 export const telegramTemplateVariables = new Set([
 	"orderId",
 	"externalOrderId",
@@ -21,7 +23,7 @@ export function renderTelegramTemplate(
 	template: string,
 	payload: Record<string, unknown>,
 ) {
-	const payment = isObject(payload.payment) ? payload.payment : {};
+	const payment = isRecord(payload.payment) ? payload.payment : {};
 	const values: Record<string, unknown> = {
 		orderId: payload.orderId,
 		externalOrderId: payload.externalOrderId,
@@ -43,8 +45,4 @@ export function renderTelegramTemplate(
 
 export function escapeTelegramMarkdownValue(value: string) {
 	return value.replace(/([\\_*`[\]])/g, "\\$1");
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

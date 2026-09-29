@@ -4,6 +4,7 @@ import type { SystemPermission } from "#/features/access/system-rbac";
 import { DomainError } from "#/lib/domain-error";
 import { redactAuditValue } from "#/server/audit-redaction";
 import { getCloudflareEnv } from "#/server/db.server";
+import { requestId } from "#/server/http";
 import { loadRequestRuntimeConfig } from "#/server/runtime-config";
 
 export async function telegramAdminContext(permission: SystemPermission) {
@@ -31,7 +32,7 @@ export type TelegramAdminContext = Awaited<
 >;
 
 export function telegramAuditStatement(
-	context: TelegramAdminContext,
+	context: Pick<TelegramAdminContext, "db" | "user" | "request">,
 	action: string,
 	targetType: string,
 	targetId: string,
@@ -48,7 +49,7 @@ export function telegramAuditStatement(
 			action,
 			targetType,
 			targetId,
-			context.request.headers.get("x-request-id"),
+			requestId(context.request),
 			context.request.headers.get("cf-connecting-ip"),
 			after == null ? null : JSON.stringify(redactAuditValue(after)),
 			now,

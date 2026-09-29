@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { systemPermission } from "#/features/access/system-rbac";
+import { reconcileTelegramDefaults } from "#/features/telegram/defaults";
 import { telegramTemplateTranslationsInput } from "#/features/telegram/schema";
 import {
 	telegramAdminContext,
@@ -283,6 +284,29 @@ export const syncTelegramCommandsFn = createServerFn({
 		context.db,
 		context.runtime.integrationConfigSecret,
 	);
+});
+
+/**
+ * Fills built-in commands, six-locale replies, and notification defaults that
+ * an existing deployment is missing without touching administrator edits.
+ */
+export const reconcileTelegramDefaultsFn = createServerFn({
+	method: "POST",
+}).handler(async () => {
+	const context = await telegramAdminContext(
+		systemPermission("telegram", "update"),
+	);
+	const now = Date.now();
+	const result = await reconcileTelegramDefaults(context.db, now);
+	await telegramAuditStatement(
+		context,
+		"telegram.defaults_reconciled",
+		"telegram_defaults",
+		"start",
+		result,
+		now,
+	).run();
+	return result;
 });
 
 function commandRecord(row: TelegramCommandRow): TelegramCommandRecord {

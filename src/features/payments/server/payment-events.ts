@@ -14,7 +14,9 @@ export type WebhookDelivery = {
 	endpoint: WebhookEndpoint;
 };
 
-export type PaymentRuntime = Pick<Env, "DB" | "WEBHOOK_QUEUE">;
+export type PaymentRuntime = Pick<Env, "DB" | "WEBHOOK_QUEUE"> & {
+	waitUntil?: (promise: Promise<unknown>) => void;
+};
 
 export async function matchingWebhookEndpoints(
 	db: D1Database,
@@ -38,13 +40,19 @@ export async function dispatchPaymentNotifications(
 	deliveries: WebhookDelivery[],
 	eventType: string,
 ) {
-	const results = await Promise.allSettled([
-		enqueueWebhookDeliveries(env, eventId, deliveries),
-		notifyTelegram(env.DB, eventType, payload),
-	]);
-	if (results.some((result) => result.status === "rejected")) {
-		console.warn("A persisted order notification could not be dispatched");
-	}
+	const webhooks = enqueueWebhookDeliveries(env, eventId, deliveries).catch(
+		() => {
+			console.warn("A persisted order notification could not be dispatched");
+		},
+	);
+	const telegram = notifyTelegram(env.DB, eventType, payload).catch(() => {
+		console.warn("A persisted order Telegram notification could not be sent");
+	});
+	// Telegram fan-out is best-effort and must not hold the caller's response;
+	// queue consumers and Cron have no waitUntil and keep awaiting it inline.
+	if (env.waitUntil) env.waitUntil(telegram);
+	else await telegram;
+	await webhooks;
 }
 
 export async function paymentWebhookInstance(

@@ -148,7 +148,7 @@ describe("Telegram inline integration", () => {
 						: sql.includes("FROM telegram_bot_commands")
 							? { bind: () => ({ first: async () => null }) }
 							: sql.includes("FROM telegram_notification_bindings")
-								? { bind: () => ({ all: async () => ({ results: [] }) }) }
+								? bindingGate
 								: { bind: () => ({ first: async () => null }) },
 			),
 		} as unknown as D1Database;
@@ -176,13 +176,113 @@ describe("Telegram inline integration", () => {
 		expect(body.results[0].description).toBe("20 USDC · BASE");
 	});
 
+	it("quotes each asset pair once across receiving methods", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+		vi.stubGlobal("fetch", fetchMock);
+		const rows = [
+			{
+				receiving_method_id: "11111111-1111-4111-8111-111111111111",
+				code: "TRX",
+				decimals: 6,
+				network: "tron",
+			},
+			{
+				receiving_method_id: "22222222-2222-4222-8222-222222222222",
+				code: "TRX",
+				decimals: 6,
+				network: "tron",
+			},
+			{
+				receiving_method_id: "33333333-3333-4333-8333-333333333333",
+				code: "USDT",
+				decimals: 6,
+				network: "tron",
+			},
+		];
+		const prepare = vi.fn((sql: string) =>
+			sql.includes("FROM receiving_methods")
+				? { all: async () => ({ results: rows }) }
+				: sql.includes("FROM exchange_rates")
+					? {
+							bind: () => ({
+								all: async () => ({
+									results: [
+										{
+											base: "TRX",
+											quote: "USDT",
+											raw_rate: "0.25",
+											rate: "0.25",
+											source: "manual",
+											adjustment_bps: 0,
+											observed_at: 1,
+										},
+									],
+								}),
+							}),
+						}
+					: bindingGate,
+		);
+		await processTelegramUpdate({
+			db: { prepare } as unknown as D1Database,
+			botId: "22222222-2222-4222-8222-222222222222",
+			token: "bot-token",
+			baseUrl: "https://pay.example",
+			update: {
+				update_id: 33,
+				inline_query: { id: "dedupe", from: { id: 12345 }, query: "20 USD" },
+			},
+		});
+		const body = JSON.parse(
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+		);
+		expect(
+			body.results.map((result: { description: string }) => result.description),
+		).toEqual(["80 TRX · TRON", "80 TRX · TRON", "20 USDT · TRON"]);
+		expect(
+			prepare.mock.calls.filter(([sql]) => sql.includes("FROM exchange_rates")),
+		).toHaveLength(1);
+	});
+
+	it("answers unbound users with the binding hint instead of quotes", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+		vi.stubGlobal("fetch", fetchMock);
+		const db = database([], false);
+
+		await processTelegramUpdate({
+			db,
+			botId: "22222222-2222-4222-8222-222222222222",
+			token: "bot-token",
+			baseUrl: "https://pay.example",
+			update: {
+				update_id: 34,
+				inline_query: { id: "unbound", from: { id: 99999 }, query: "20 USD" },
+			},
+		});
+
+		const body = JSON.parse(
+			String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+		);
+		expect(body.results).toHaveLength(1);
+		expect(body.results[0]).toMatchObject({
+			id: "account-unbound",
+			input_message_content: {
+				message_text: expect.stringContaining("not bound"),
+			},
+		});
+		expect(db.prepare).toHaveBeenCalledTimes(1);
+		expect(db.bindings).toEqual([
+			"22222222-2222-4222-8222-222222222222",
+			"99999",
+		]);
+	});
+
 	it("returns an explanatory result when no funded payment option exists", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchMock);
 		const db = {
 			prepare: vi.fn((sql: string) =>
 				sql.includes("FROM telegram_notification_bindings")
-					? { bind: () => ({ all: async () => ({ results: [] }) }) }
+					? bindingGate
 					: { all: async () => ({ results: [] }) },
 			),
 		} as unknown as D1Database;
@@ -240,7 +340,11 @@ describe("Telegram inline integration", () => {
 				],
 			},
 		});
-		expect(db.prepare).not.toHaveBeenCalled();
+		// Only the binding gate touches D1; no receiving method or order query.
+		expect(db.prepare).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(db.prepare).mock.calls[0]?.[0]).toContain(
+			"FROM telegram_notification_bindings",
+		);
 	});
 
 	it("acknowledges the temporary inline keyboard while order creation is pending", async () => {
@@ -277,23 +381,34 @@ describe("Telegram inline integration", () => {
 	});
 });
 
-function database(rows: unknown[]) {
+function database(rows: unknown[], bound = true) {
 	const state = {
 		bindings: [] as unknown[],
 		prepare: vi.fn((sql: string) => ({
 			bind: (...values: unknown[]) => {
 				state.bindings = values;
-				return sql.includes("FROM telegram_bot_commands")
-					? {
-							first: async () => ({
-								command: "status",
-								handler_type: "status",
-								template_translations: {},
-							}),
-						}
-					: { all: async () => ({ results: rows }) };
+				return {
+					first: async () =>
+						sql.includes("FROM telegram_bot_commands")
+							? {
+									command: "status",
+									handler_type: "status",
+									template_translations: {},
+								}
+							: sql.includes("FROM telegram_notification_bindings") && bound
+								? { id: "binding" }
+								: null,
+					all: async () => ({ results: rows }),
+				};
 			},
 		})),
 	};
 	return state as unknown as D1Database & { bindings: unknown[] };
 }
+
+const bindingGate = {
+	bind: () => ({
+		first: async () => ({ id: "binding" }),
+		all: async () => ({ results: [] }),
+	}),
+};

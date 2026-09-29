@@ -224,15 +224,9 @@ describe("Telegram Inline payment creation", () => {
 
 	it("persists sanitized Telegram delivery failures for operations", async () => {
 		await expect(
-			persistTelegramDeliveryFailures(
-				db,
-				"order.paid",
-				[{ target_id: "target-a" }, { target_id: "target-b" }],
-				[
-					{ status: "fulfilled", value: undefined },
-					{ status: "rejected", reason: new Error("secret transport detail") },
-				],
-			),
+			persistTelegramDeliveryFailures(db, "order.paid", [
+				{ targetId: "target-b", errorCode: "telegram_transport_error" },
+			]),
 		).resolves.toBe(1);
 		const audit = await db
 			.prepare(
@@ -242,8 +236,155 @@ describe("Telegram Inline payment creation", () => {
 		expect(audit?.target_id).toBe("target-b");
 		expect(JSON.parse(audit?.after ?? "{}")).toEqual({
 			eventType: "order.paid",
+			errorCode: "telegram_transport_error",
 		});
-		expect(audit?.after).not.toContain("secret transport detail");
+		await expect(
+			persistTelegramDeliveryFailures(db, "order.paid", []),
+		).resolves.toBe(0);
+	});
+
+	it("re-sends an unparsable command template as plain text", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						ok: false,
+						error_code: 400,
+						description:
+							"Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 1",
+					},
+					{ status: 400 },
+				),
+			)
+			.mockResolvedValue(Response.json({ ok: true, result: {} }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await processTelegramUpdate({
+			db,
+			botId: "bot-a",
+			token: "bot-token",
+			baseUrl: "https://pay.example",
+			update: {
+				update_id: 40,
+				message: {
+					chat: { id: 60003, type: "private" },
+					from: { id: 60003, language_code: "zh-cn" },
+					text: "/help",
+				},
+			},
+		});
+
+		const bodies = fetchMock.mock.calls.map(([, init]) =>
+			JSON.parse(String((init as RequestInit).body)),
+		);
+		expect(bodies).toHaveLength(2);
+		expect(bodies[0]).toMatchObject({ chat_id: 60003, parse_mode: "Markdown" });
+		expect(bodies[1]).not.toHaveProperty("parse_mode");
+		expect(bodies[1].text).toBe(bodies[0].text);
+		expect(bodies[1].text).toContain("可用指令");
+	});
+
+	it("disables the private subscription once when the user has blocked the bot", async () => {
+		const fetchMock = vi.fn().mockImplementation(() =>
+			Promise.resolve(
+				Response.json(
+					{
+						ok: false,
+						error_code: 403,
+						description: "Forbidden: bot was blocked by the user",
+					},
+					{ status: 403 },
+				),
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const statusUpdate = (updateId: number) => ({
+			db,
+			botId: "bot-a",
+			token: "bot-token",
+			baseUrl: "https://pay.example",
+			update: {
+				update_id: updateId,
+				message: {
+					chat: { id: 12345, type: "private" as const },
+					from: { id: 12345 },
+					text: "/status nothing-here",
+				},
+			},
+		});
+		try {
+			await expect(
+				processTelegramUpdate(statusUpdate(41)),
+			).rejects.toMatchObject({
+				code: "api_rejected",
+				status: 403,
+				rejection: "blocked_by_user",
+			});
+			await expect(
+				processTelegramUpdate(statusUpdate(42)),
+			).rejects.toMatchObject({ status: 403 });
+			const binding = await db
+				.prepare(
+					"SELECT enabled FROM telegram_notification_bindings WHERE bot_id = 'bot-a' AND target_id = '12345'",
+				)
+				.first();
+			expect(binding).toEqual({ enabled: 0 });
+			const audits = await db
+				.prepare(
+					"SELECT after FROM audit_logs WHERE action = 'telegram_target.auto_disabled' AND target_id = '11111111-1111-4111-8111-111111111112'",
+				)
+				.all<{ after: string }>();
+			expect(audits.results.map((audit) => JSON.parse(audit.after))).toEqual([
+				{ targetType: "private", reason: "blocked_by_user" },
+			]);
+		} finally {
+			await db
+				.prepare(
+					"UPDATE telegram_notification_bindings SET enabled = 1 WHERE bot_id = 'bot-a' AND target_id = '12345'",
+				)
+				.run();
+		}
+	});
+
+	it("disables a private subscription when my_chat_member reports the user blocked the bot", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const membership = (updateId: number, status: string) => ({
+			db,
+			botId: "bot-a",
+			token: "bot-token",
+			baseUrl: "https://pay.example",
+			update: {
+				update_id: updateId,
+				my_chat_member: {
+					chat: { id: 12345, type: "private" as const },
+					from: { id: 12345 },
+					date: 1,
+					old_chat_member: {
+						status: status === "kicked" ? "member" : "kicked",
+					},
+					new_chat_member: { status },
+				},
+			},
+		});
+		try {
+			await processTelegramUpdate(membership(43, "kicked"));
+			await processTelegramUpdate(membership(44, "member"));
+			const binding = await db
+				.prepare(
+					"SELECT enabled FROM telegram_notification_bindings WHERE bot_id = 'bot-a' AND target_id = '12345'",
+				)
+				.first();
+			expect(binding).toEqual({ enabled: 0 });
+			expect(fetchMock).not.toHaveBeenCalled();
+		} finally {
+			await db
+				.prepare(
+					"UPDATE telegram_notification_bindings SET enabled = 1 WHERE bot_id = 'bot-a' AND target_id = '12345'",
+				)
+				.run();
+		}
 	});
 
 	it("queues an immediate provider check from a localized bound callback", async () => {
