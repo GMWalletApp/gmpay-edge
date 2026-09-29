@@ -26,7 +26,20 @@ docker compose run --rm --no-deps \
 空目标目录，不会覆盖非空目录。清单会校验每个文件；恢复还会执行 SQLite 完整性、
 外键和迁移校验和检查。
 
-备份包含凭据、用户数据、支付记录和私有上传。请加密保存、限制访问，并定期演练恢复。
+备份属于机密材料。数据库副本以明文包含运行时主密钥：`runtime.better_auth_secret`
+（会话签名）、`runtime.api_key_pepper`（商户 Secret 保护）和
+`runtime.integration_config_secret`（服务商、Telegram 与邮件凭据加密），以及它们保护的
+全部加密凭据、所有用户与支付记录和私有上传。任何能读取备份的人都可以伪造管理员会话
+并解密全部已存储凭据。`backup` 命令写出的目录未加密，因此备份离开主机前必须加密、只
+允许运维身份读取、不得以明文放在共享存储上、及时删除过期副本，并把任何泄露视为全部
+凭据失陷。例如：
+
+```bash
+tar --create --directory /srv/backups gmpay-2026-08-20 |
+  gpg --symmetric --cipher-algo AES256 --output /srv/backups/gmpay-2026-08-20.tar.gpg
+```
+
+请定期从解密后的归档演练恢复。
 
 ## 迁入 Cloudflare 导出数据
 

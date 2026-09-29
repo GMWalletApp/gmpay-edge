@@ -30,8 +30,24 @@ data directory. Restore accepts only a new or empty target and never overwrites
 a non-empty directory. The manifest verifies every file; restore also runs
 SQLite integrity, foreign-key, and migration-checksum checks.
 
-Backups contain credentials, user data, payment records, and private uploads.
-Encrypt them at rest, restrict access, and test restoration regularly.
+Backups are secret material. The database copy contains the runtime master
+secrets in plaintext: `runtime.better_auth_secret` (session signing),
+`runtime.api_key_pepper` (merchant secret protection), and
+`runtime.integration_config_secret` (provider, Telegram, and email credential
+encryption), together with every encrypted credential they protect, all user
+and payment records, and private uploads. Anyone who reads a backup can forge
+administrator sessions and decrypt every stored credential. The `backup`
+command writes the directory unencrypted, so encrypt it before it leaves the
+host, keep it readable only by the operator identity, never place it
+unencrypted on shared storage, delete superseded copies, and treat any exposure
+as a full credential compromise. For example:
+
+```bash
+tar --create --directory /srv/backups gmpay-2026-08-20 |
+  gpg --symmetric --cipher-algo AES256 --output /srv/backups/gmpay-2026-08-20.tar.gpg
+```
+
+Test restoration regularly from the decrypted archive.
 
 ## Import a Cloudflare export
 

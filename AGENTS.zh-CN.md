@@ -94,8 +94,9 @@
 ## 5. 支付模型、单位与状态
 
 - “支付方式”是内置链/交易所/钱包能力目录，不是业务启停开关。
-- “连接配置”只保存公共 RPC/API、HTTPS/WSS、优先级、健康和故障转移，不保存
-  UID、API Key、Secret、Passphrase、商户 ID、私钥或助记词。
+- “连接配置”只保存公共 RPC/API、HTTPS/WSS、优先级、健康和故障转移；可选的 RPC
+  API Key 加密保存在独立的 `payment_ingress_credentials` 表中，不写入连接行本身。
+  连接配置不保存 UID、Secret、Passphrase、商户 ID、私钥或助记词。
 - 内置 HTTPS 连接默认启用用于评估；WSS 默认停用且优先级为 `200`。链上可用仍
   要求健康连接；交易所/钱包公共连接不决定商户暴露。
 - “收款方式”保存具体只读账户/目标配置，可绑定多个资产，是运营人员控制收银台
@@ -193,7 +194,9 @@
 - Vite/Paraglide 负责消息生成。schema 未变化时，普通 dev 启动不重复生成 Drizzle
   migration。
 - 开发过程中只运行与改动契约直接相关的专项测试和检查，不在仍有可执行 TODO 时反复
-  运行全量质量门。所有本地可执行 TODO 完成后，才在同一最终代码树统一运行一次：
+  运行全量质量门。所有本地可执行 TODO 完成后，才在同一最终代码树统一运行一次。
+  `bun run typecheck` 会先生成 Paraglide 消息，因此该清单可在全新 clone 上复现；
+  `CI` 工作流对每个 Pull Request 和 `main` 推送运行同样的命令：
 
 ```bash
 bun run typecheck
@@ -205,10 +208,9 @@ bun run build:bun
 
 - 完成还要求当前浏览器/运行时、迁移、权限路径和文档证据。局部测试、历史结果或
   被跳过的真实平台套件都不能证明整个项目完成。
-- 发布由 semantic-release 驱动。`alpha` 从 `1.0.0-alpha.1` 开始，只更新完整版本和
-  `alpha` 容器标签；验证完成后合并到 `main`，再发布稳定 `1.0.0` 以及 major、minor、
-  `latest` 标签。发布会更新 `package.json` 和 `bun.lock`、创建带自动生成说明的 GitHub
-  Release 与 tag，再调用 Docker 工作流；原生 x64 与 Arm64 runner 会并行构建并 smoke
-  各自平台镜像，然后发布组合 manifest 与 provenance。稳定版发布后，工作流会删除匹配
-  的 alpha 预发布、Git tag 和 GHCR 版本。首次发布
+- 发布由 semantic-release 驱动，仅从 `main` 发布，不存在预发布通道。符合条件的
+  `main` 推送通过质量门后发布 `1.0.0` 这样的稳定版本，写入精确版本以及 major、
+  minor、`latest` 容器标签。发布会更新 `package.json` 和 `bun.lock`、创建带自动生成
+  说明的 GitHub Release 与 tag，再调用 Docker 工作流；原生 x64 与 Arm64 runner 会
+  并行构建并 smoke 各自平台镜像，然后发布组合 manifest 与 provenance。首次发布
   后由仓库所有者一次性设为 Public，工作流不修改 package 可见性。

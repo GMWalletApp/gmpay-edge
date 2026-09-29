@@ -25,9 +25,11 @@ POST /payments/gmpay/v1/order/create-transaction
 Fields:
 
 - `pid`, `order_id`, `currency`, `amount`, `notify_url`, `signature`;
+- `currency` is an active ISO 4217 fiat currency code (default `USD`);
 - `amount` accepts a positive JSON number or decimal string such as `12.5` or
-  `"12.50"`; strings preserve formatting exactly, while JSON numbers use their
-  parsed decimal representation for signing and minor-unit conversion.
+  `"12.50"` with at most 18 integer and 8 fraction digits; strings preserve
+  formatting exactly, while JSON numbers use their parsed decimal
+  representation for signing and minor-unit conversion.
 - optional `token` and `network`, which must be provided together;
 - optional `redirect_url` and `name`.
 
@@ -192,17 +194,19 @@ Responses use `status_code`, `message`, `data`, and `request_id`. An external
 order ID is unique within the creating API credential. Repeating it with the
 same credential cannot create a second order, while independent credentials may
 use their own business numbering. API scope and D1 rate-limit checks are
-enforced before order creation.
+enforced before order creation. Validation and business rejections are HTTP
+`400` unless noted below; every response uses the same envelope.
 
 | `status_code` | Meaning |
 | --- | --- |
+| `10001` | Order not found on query (HTTP `404`) |
 | `10002` | External order ID already exists |
-| `10003` | Requested receiving method is unavailable |
-| `10004` | Amount is invalid |
-| `10009` | Request parameters are invalid |
-| `10016` | Requested asset/network is unavailable |
+| `10003` | Requested receiving method is unavailable, or the hosted payment provider did not return a payment (`provider_unavailable`, HTTP `502`); the order and its external ID are rolled back so the request can be retried |
+| `10004` | Amount is invalid: not a positive decimal, or more than 18 integer / 8 fraction digits |
+| `10009` | Request parameters are invalid, including an unsupported `currency`, a `notify_url` that is not a public HTTPS endpoint, a non-HTTPS `redirect_url`, or `token` without `network`; a body above 64 KiB answers HTTP `413` with this code |
+| `10016` | Requested asset/network is unavailable, or no usable exchange rate exists for the order currency (`exchange_rate_unavailable`, HTTP `503`) |
 | `401` | PID, scope, or signature verification failed |
-| `429` | API credential rate limit exceeded |
+| `429` | API credential rate limit exceeded, or more than 20 failed authentications for one PID within a minute |
 | `500` | Unexpected gateway failure; use `request_id` when investigating |
 
 Treat a timeout as an unknown outcome: query your own persisted result before

@@ -186,7 +186,6 @@ Choose the image tag that fits your deployment:
 | Tag | Use |
 | --- | --- |
 | `latest` | Recommended stable release |
-| `alpha` | Latest prerelease for testing |
 | `1.0.0` | A fixed release that will not change unexpectedly |
 
 ### Docker Compose (recommended)
@@ -198,8 +197,9 @@ services:
   gmpay-edge:
     image: ghcr.io/gmwalletapp/gmpay-edge:latest
     restart: unless-stopped
+    # Plain HTTP for a reverse proxy on this host; see the deployment guide.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GMPAY_DATA_DIR: /var/lib/gmpay
     volumes:
@@ -214,9 +214,6 @@ docker compose pull
 docker compose up -d
 ```
 
-To test a prerelease, change `latest` to `alpha` in the `image` line before
-starting the service.
-
 ### Docker command
 
 If you do not use Compose, run the same service directly:
@@ -224,16 +221,21 @@ If you do not use Compose, run the same service directly:
 ```bash
 docker volume create gmpay-data
 docker run --detach --name gmpay-edge --restart unless-stopped \
-  --publish 3000:3000 \
+  --publish 127.0.0.1:3000:3000 \
   --env GMPAY_DATA_DIR=/var/lib/gmpay \
   --volume gmpay-data:/var/lib/gmpay \
   ghcr.io/gmwalletapp/gmpay-edge:latest
 ```
 
-Open `http://your-host:3000/install` after the container starts. Confirm the
-public address and Allowed Hosts, then create the first root user. Application,
-security, and email settings are managed in the admin interface; they do not
-need additional container environment variables.
+The container serves plain HTTP and the examples publish it only on the host's
+loopback interface. Put a TLS-terminating reverse proxy on the same host in
+front of it, as described in the
+[deployment guide](docs/en-US/DEPLOYMENT.md#reverse-proxy-and-tls), and open
+`/install` through the proxy's public address (`http://127.0.0.1:3000/install`
+for a local evaluation). Confirm the public address and Allowed Hosts, then
+create the first root user. Application, security, and email settings are
+managed in the admin interface; they do not need additional container
+environment variables.
 
 The named volume stores the database, uploaded files, queue state, and all other
 runtime data. Keep it when updating or recreating the container. Check the
@@ -251,19 +253,16 @@ and Cloudflare migration.
 
 ## Releases and container images
 
-Updates to `alpha` are prereleased by semantic-release as `1.0.0-alpha.1`,
-`alpha.2`, and so on using Conventional Commits. Alpha containers receive the
-exact version and moving `alpha` tags only. After testing, merge into `main` to
-publish stable `1.0.0`; stable containers also receive major, minor, and
-`latest` tags. Each release updates `package.json` and `bun.lock`, creates a
-GitHub Release with generated notes and a tag, then calls the independent Docker
-smoke and multi-architecture GHCR workflow. Native x64 and Arm64 runners build
-and smoke-test in parallel before publishing the combined manifest. After a
-stable publish, matching alpha GitHub prereleases, Git tags, and GHCR image
-versions are removed automatically.
+Every push to `main` runs the quality gate; semantic-release then publishes a
+stable release such as `1.0.0` when Conventional Commits require one. There is
+no prerelease channel. Each release updates `package.json` and `bun.lock`,
+creates a GitHub Release with generated notes and a tag, then calls the
+independent Docker smoke and multi-architecture GHCR workflow. Native x64 and
+Arm64 runners build and smoke-test in parallel before publishing the combined
+manifest with the exact version plus moving major, minor, and `latest` tags.
+Pull requests run the same gate in the `CI` workflow before they merge.
 
-The GHCR package is public, so release and prerelease images support
-unauthenticated pulls.
+The GHCR package is public, so release images support unauthenticated pulls.
 
 ## Keep a fork synchronized
 
@@ -392,12 +391,15 @@ Run `bun run hooks:install` once per clone to enable the local Lefthook
 Conventional Commit check. Its commitlint policy is declared in `package.json`.
 
 Use `bun run db:generate` only for an intentional Drizzle schema change and
-review the generated migration. Run `bun run generate-paraglide` before checks
-that import generated messages without starting Vite. `src/paraglide` is
-ignored and does not need to be committed.
+review the generated migration. `bun run typecheck` runs
+`bun run generate-paraglide` first, so the gate below works on a clean clone;
+run `bun run generate-paraglide` yourself before other checks that import
+generated messages without starting Vite. `src/paraglide` is ignored and does
+not need to be committed.
 
 Before submitting a completed change, run the final quality gate on the same
-working tree:
+working tree. The `CI` GitHub Actions workflow runs the same commands for every
+pull request and push to `main`:
 
 ```bash
 bun run typecheck
@@ -418,13 +420,11 @@ deployer-owned infrastructure during production acceptance.
 | --- | --- |
 | Deployment and production sign-off | [Deployment checklist](docs/en-US/DEPLOYMENT.md) |
 | Bun backup, restore, and Cloudflare import | [Bun data operations](docs/en-US/NODE_DATA_OPERATIONS.md) |
-| Cloudflare free-tier capacity and optimization | [Free-tier audit](docs/en-US/CLOUDFLARE_FREE_TIER.md) |
 | Merchant requests, signatures, errors, and EPay | [Merchant API](docs/en-US/MERCHANT_API.md) |
 | Provider configuration and receiving methods | [Payment methods](docs/en-US/PAYMENT_METHODS.md) |
 | Inbound endpoints and merchant delivery | [Webhooks](docs/en-US/WEBHOOKS.md) |
 | Bots, Inline orders, commands, and subscriptions | [Telegram](docs/en-US/TELEGRAM.md) |
 | Authentication, secrets, uploads, and response policy | [Security notes](docs/en-US/SECURITY.md) |
-| Implemented capabilities and required evidence | [Capability matrix](docs/en-US/CAPABILITY_MATRIX.md) |
 | Machine-readable API contract | [OpenAPI YAML](public/openapi.yaml) |
 | Runtime API reference | `/docs` on a running instance |
 

@@ -147,7 +147,6 @@ Workers 产物。
 | 标签 | 用途 |
 | --- | --- |
 | `latest` | 推荐使用的最新稳定版 |
-| `alpha` | 用于测试的最新预发布版 |
 | `1.0.0` | 不会意外变化的固定版本 |
 
 ### Docker Compose（推荐）
@@ -159,8 +158,9 @@ services:
   gmpay-edge:
     image: ghcr.io/gmwalletapp/gmpay-edge:latest
     restart: unless-stopped
+    # 明文 HTTP，供同一主机上的反向代理使用；参见部署指南。
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GMPAY_DATA_DIR: /var/lib/gmpay
     volumes:
@@ -175,8 +175,6 @@ docker compose pull
 docker compose up -d
 ```
 
-需要测试预发布版时，启动前将 `image` 中的 `latest` 改成 `alpha`。
-
 ### Docker 命令
 
 不使用 Compose 时，可以直接运行相同的服务：
@@ -184,15 +182,17 @@ docker compose up -d
 ```bash
 docker volume create gmpay-data
 docker run --detach --name gmpay-edge --restart unless-stopped \
-  --publish 3000:3000 \
+  --publish 127.0.0.1:3000:3000 \
   --env GMPAY_DATA_DIR=/var/lib/gmpay \
   --volume gmpay-data:/var/lib/gmpay \
   ghcr.io/gmwalletapp/gmpay-edge:latest
 ```
 
-容器启动后访问 `http://your-host:3000/install`，确认公网地址和 Allowed Hosts，再
-创建首位 root 用户。应用、安全和邮件设置均在后台维护，不需要增加其他容器环境
-变量。
+容器只提供明文 HTTP，示例也只把端口发布到宿主机的回环地址。请按
+[部署指南](docs/zh-CN/DEPLOYMENT.md#反向代理与-tls)在同一主机上前置一个终止 TLS
+的反向代理，并通过代理的公网地址打开 `/install`（本地评估可直接访问
+`http://127.0.0.1:3000/install`）。确认公网地址和 Allowed Hosts，再创建首位 root
+用户。应用、安全和邮件设置均在后台维护，不需要增加其他容器环境变量。
 
 具名卷会保存数据库、上传文件、队列状态和全部运行数据。更新或重新创建容器时不要
 删除该卷。使用 `curl --fail http://127.0.0.1:3000/healthz` 检查服务，使用
@@ -208,15 +208,14 @@ docker compose up -d
 
 ## 版本与容器镜像
 
-`alpha` 的更新先由 semantic-release 按 Conventional Commits 发布为
-`1.0.0-alpha.1`、`alpha.2` 等预发布版本；预发布镜像只写入完整版本和滚动
-`alpha` 标签。验证完成并合并到 `main` 后再发布稳定 `1.0.0`，稳定镜像同时写入
-major、minor 与 `latest` 标签。每次发布都会更新 `package.json` 和 `bun.lock`、创建
-带自动生成说明的 GitHub Release 与 tag，再调用独立的 Docker smoke 与多架构 GHCR
-工作流。原生 x64 与 Arm64 runner 会并行构建并 smoke，再发布组合 manifest。稳定版
-发布后，匹配的 alpha GitHub 预发布、Git tag 与 GHCR 镜像版本会自动删除。
+每次推送到 `main` 都会运行质量门；随后 semantic-release 按 Conventional Commits
+判断是否发布 `1.0.0` 这样的稳定版本，不存在预发布通道。每次发布都会更新
+`package.json` 和 `bun.lock`、创建带自动生成说明的 GitHub Release 与 tag，再调用
+独立的 Docker smoke 与多架构 GHCR 工作流。原生 x64 与 Arm64 runner 会并行构建并
+smoke，再发布组合 manifest，写入精确版本以及滚动的 major、minor 与 `latest` 标签。
+Pull Request 在合并前由 `CI` 工作流运行同一质量门。
 
-GHCR Package 已公开，正式版与预发布镜像均支持未登录拉取。
+GHCR Package 已公开，正式版镜像支持未登录拉取。
 
 ## 保持 Fork 自动同步
 
@@ -319,10 +318,12 @@ bun run build:bun
 Commit 检查；commitlint 策略声明在 `package.json` 中。
 
 只有在有意修改 Drizzle Schema 时才使用 `bun run db:generate`，并检查生成的 migration。
-在不启动 Vite、但需要导入生成消息的检查前，运行 `bun run generate-paraglide`。
-`src/paraglide` 已被忽略，不需要提交。
+`bun run typecheck` 会先执行 `bun run generate-paraglide`，因此下方质量门可以在全新
+clone 上直接运行；其他不启动 Vite、但需要导入生成消息的检查前，请自行运行
+`bun run generate-paraglide`。`src/paraglide` 已被忽略，不需要提交。
 
-提交完整改动前，应在同一最终工作区运行质量门：
+提交完整改动前，应在同一最终工作区运行质量门；`CI` GitHub Actions 工作流会对每个
+Pull Request 和 `main` 推送运行同样的命令：
 
 ```bash
 bun run typecheck
@@ -340,13 +341,11 @@ bun run build:bun
 | --- | --- |
 | 部署与生产签收 | [部署检查清单](docs/zh-CN/DEPLOYMENT.md) |
 | Bun 备份、恢复与 Cloudflare 迁入 | [Bun 数据运维](docs/zh-CN/NODE_DATA_OPERATIONS.md) |
-| Cloudflare 免费额度与优化 | [免费额度审计](docs/zh-CN/CLOUDFLARE_FREE_TIER.md) |
 | 商户请求、签名、错误和 EPay | [商户 API](docs/zh-CN/MERCHANT_API.md) |
 | Provider 配置与收款方式 | [支付方式](docs/zh-CN/PAYMENT_METHODS.md) |
 | 入站端点与商户投递 | [Webhook](docs/zh-CN/WEBHOOKS.md) |
 | Bot、Inline 下单、指令与订阅 | [Telegram](docs/zh-CN/TELEGRAM.md) |
 | 认证、密钥、上传与响应策略 | [安全说明](docs/zh-CN/SECURITY.md) |
-| 已实现能力与必需证据 | [能力矩阵](docs/zh-CN/CAPABILITY_MATRIX.md) |
 | 机器可读 API 合约 | [OpenAPI YAML](public/openapi.yaml) |
 | 运行时 API 文档 | 运行实例的 `/docs` |
 

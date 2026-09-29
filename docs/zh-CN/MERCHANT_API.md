@@ -20,6 +20,7 @@ POST /payments/gmpay/v1/order/create-transaction
 字段：
 
 - 必填：`pid`、`order_id`、`currency`、`amount`、`notify_url`、`signature`；
+- `currency` 必须是有效的 ISO 4217 法币代码（默认 `USD`）；`amount` 最多 18 位整数和 8 位小数；
 - `amount` 接受正数 JSON number 或十进制字符串，例如 `12.5` 或 `"12.50"`；字符串会原样保留格式，JSON number 则使用解析后的十进制表示参与签名和最小单位转换。
 - 可选：`token` 与 `network`，两者必须同时提供；
 - 可选：`redirect_url` 与 `name`。
@@ -154,17 +155,18 @@ EPay GET 回调使用同一 Secret 签名并要求纯文本 `ok`。EPay 字段�
 
 ## 错误与幂等
 
-响应包含 `status_code`、`message`、`data` 和 `request_id`。外部订单号在创建它的 API 凭证范围内唯一；同一凭证重试相同订单号不会创建第二个订单，不同凭证可以使用各自的业务编号。
+响应包含 `status_code`、`message`、`data` 和 `request_id`。外部订单号在创建它的 API 凭证范围内唯一；同一凭证重试相同订单号不会创建第二个订单，不同凭证可以使用各自的业务编号。校验与业务拒绝除下表特别说明外均为 HTTP `400`，所有响应使用同一 Envelope。
 
 | `status_code` | 含义 |
 | --- | --- |
+| `10001` | 查询的订单不存在（HTTP `404`） |
 | `10002` | 商户订单号已存在 |
-| `10003` | 请求的收款方式不可用 |
-| `10004` | 金额无效 |
-| `10009` | 请求参数无效 |
-| `10016` | 请求的资产/网络不可用 |
+| `10003` | 请求的收款方式不可用，或托管支付服务商未返回支付（`provider_unavailable`，HTTP `502`）；订单及其商户订单号会回滚，可直接重试 |
+| `10004` | 金额无效：不是正十进制数，或整数位超过 18 位、小数位超过 8 位 |
+| `10009` | 请求参数无效，包括不支持的 `currency`、非公网 HTTPS 的 `notify_url`、非 HTTPS 的 `redirect_url`，或只提供 `token` 未提供 `network`；超过 64 KiB 的请求体以该码返回 HTTP `413` |
+| `10016` | 请求的资产/网络不可用，或订单币种没有可用汇率（`exchange_rate_unavailable`，HTTP `503`） |
 | `401` | PID、Scope 或签名校验失败 |
-| `429` | API 凭证超过限流 |
+| `429` | API 凭证超过限流；同一 PID 一分钟内认证失败超过 20 次也会返回 |
 | `500` | 网关发生未预期错误；排查时使用 `request_id` |
 
 超时应视为未知结果。重试相同 `order_id` 不会重复创建，但会返回 `10002`，不会静默替换订单。权威 OpenAPI 合约为 [`public/openapi.yaml`](../../public/openapi.yaml)，运行时在 `/docs` 渲染。

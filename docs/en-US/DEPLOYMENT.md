@@ -47,7 +47,6 @@ supports `linux/amd64` and `linux/arm64`. No registry login is required.
 | Tag | Recommended use |
 | --- | --- |
 | `latest` | Latest stable release |
-| `alpha` | Latest prerelease for testing |
 | `1.0.0` | Fixed release for reproducible deployment |
 
 #### Docker Compose
@@ -59,8 +58,9 @@ services:
   gmpay-edge:
     image: ghcr.io/gmwalletapp/gmpay-edge:latest
     restart: unless-stopped
+    # Plain HTTP for a reverse proxy on this host; see "Reverse proxy and TLS".
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GMPAY_DATA_DIR: /var/lib/gmpay
     volumes:
@@ -75,8 +75,6 @@ docker compose pull
 docker compose up -d
 ```
 
-To test a prerelease, change `latest` to `alpha` before starting the service.
-
 #### Docker command
 
 If Compose is not available, run the container directly:
@@ -84,11 +82,66 @@ If Compose is not available, run the container directly:
 ```bash
 docker volume create gmpay-data
 docker run --detach --name gmpay-edge --restart unless-stopped \
-  --publish 3000:3000 \
+  --publish 127.0.0.1:3000:3000 \
   --env GMPAY_DATA_DIR=/var/lib/gmpay \
   --volume gmpay-data:/var/lib/gmpay \
   ghcr.io/gmwalletapp/gmpay-edge:latest
 ```
+
+#### Reverse proxy and TLS
+
+The container speaks plain HTTP, and the examples above publish it only on the
+host's loopback interface. Production traffic must reach it through a
+TLS-terminating reverse proxy on the same host or private network, or through
+TLS terminated by Bun itself.
+
+GMPay Edge derives the client address from the TCP peer of each connection.
+When the peer is a loopback, private, or link-local address (`127.0.0.0/8`,
+`::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`,
+`fc00::/7`, `fe80::/10`), the right-most `X-Forwarded-For` hop becomes the
+client address and `X-Forwarded-Proto: https` marks the request as HTTPS, which
+enables HSTS and secure cookies. Forwarded headers from any other peer are
+discarded, and an inbound `cf-connecting-ip` header is always replaced, so
+per-IP rate limits and audit records cannot be spoofed by clients. The proxy
+must therefore:
+
+- preserve the original `Host` header, which Allowed Hosts validates;
+- set `X-Forwarded-Proto` to the client-facing scheme (overwrite, do not append);
+- append the connecting client address to `X-Forwarded-For`;
+- when a CDN such as Cloudflare fronts the proxy, place the real client address
+  in the right-most position (for example nginx `set_real_ip_from` with the CDN
+  ranges and `real_ip_header CF-Connecting-IP`); otherwise every visitor shares
+  the CDN address.
+
+Caddy does all of this by default:
+
+```caddyfile
+pay.example {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+To terminate TLS in Bun without a proxy, set `NITRO_SSL_CERT` and
+`NITRO_SSL_KEY` to PEM file paths (or PEM contents) and publish the port
+directly; every peer is then public, and its socket address is the client
+address.
+
+`HOST`, `PORT`, and `NODE_ENV` are Nitro server variables baked into the image
+(`0.0.0.0`, `3000`, `production`); together with `NITRO_SSL_CERT` and
+`NITRO_SSL_KEY` they only shape the listener. Product behavior is configured
+exclusively by `GMPAY_DATA_DIR` and the authenticated admin settings.
 
 #### First-time setup
 
@@ -124,7 +177,7 @@ package script with its `backup`, `restore`, and `import-cloudflare` subcommands
 
 ## Cloudflare resources
 
-- [ ] Configure at least one provider under **Admin → Email delivery**. To use Cloudflare Email, bind Email Routing as `EMAIL` and confirm that the Workers-only provider appears. Send a live recovery email and confirm the 15-minute link works; the sign-in page deliberately returns a generic response when delivery is unavailable.
+- [ ] Configure at least one provider under **Admin → Email delivery**. To use Cloudflare Email, bind Email Routing as `EMAIL` and confirm that the Workers-only provider appears. Send a live recovery email and confirm the 15-minute link works; the sign-in page deliberately returns a generic response when delivery is unavailable. SMTP channels connect with implicit TLS on port 465; on any other port GMPay Edge first probes `EHLO` and refuses delivery unless `STARTTLS` is advertised, so credentials and messages never travel in plaintext, and certificate validation cannot be disabled. Prefer port 465 when the provider offers it.
 - [ ] Confirm the Workers build creates or reuses the `gmpay-edge` D1 database and links it as `DB`.
 - [ ] Build once and verify the Wrangler `assets.directory` publishes `dist/client`; static files are served by Cloudflare's platform asset handling without exposing an `ASSETS` binding to application code, while application and API routes continue through the Worker.
 - [ ] Confirm the deploy log reads `dist/server/wrangler.json` with `main: index.js` and `no_bundle: true`; Wrangler must not rebundle `src/server-entry.ts` or report unresolved `#tanstack-router-entry`/`#tanstack-start-entry` modules.
@@ -162,21 +215,26 @@ package script with its `backup`, `restore`, and `import-cloudflare` subcommands
 
 ## Automated releases
 
-Semantic-release runs after the quality gate on both release channels. `alpha`
-starts at `1.0.0-alpha.1` and publishes only full-version and moving `alpha`
-container tags. Once verified and merged, `main` publishes stable `1.0.0` plus
-major, minor, and `latest` tags. It updates `package.json` and `bun.lock`, creates
+Every push to `main` runs the quality gate; semantic-release then publishes a
+stable release such as `1.0.0` when Conventional Commits require one. There is
+no prerelease channel. A release updates `package.json` and `bun.lock`, creates
 the GitHub Release with generated notes and a tag, then calls the independent
 Docker smoke and multi-architecture publish workflow. Native x64 and Arm64
 runners build and smoke-test their platform images in parallel before the
-workflow assembles the published manifest. After a stable image and its
-provenance are published, matching alpha GitHub prereleases, remote Git tags,
-and GHCR image versions are deleted automatically.
+workflow assembles the published manifest with the exact version plus moving
+major, minor, and `latest` tags. Dependency ranges are carets, so the release
+step's lockfile-only install records the new package version without
+re-resolving dependencies. Pull requests run the same gate in the `CI`
+workflow.
 
 The `gmpay-edge` GHCR package is public. Release acceptance verifies an
 unauthenticated pull.
 
 ## Release gate
+
+`bun run typecheck` generates Paraglide messages first, so the list is
+reproducible from a clean clone; the `CI` workflow runs the same five commands
+for every pull request and push to `main`.
 
 - [ ] `bun run typecheck`
 - [ ] `bun run test`

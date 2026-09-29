@@ -16,10 +16,23 @@ GMPay Edge uses five payment layers:
 
 Payment methods are capability records and do not have an operational enable
 switch. Checkout exposure comes from enabled, validated receiving methods.
-Chain RPC API keys belong to payment access; exchange UID/API
-credentials and OKPay Shop ID belong to a receiving method. Built-in exchange
-and wallet public connections start enabled and cannot be disabled. They do not
-control checkout exposure and do not have chain-node health state.
+Chain RPC API keys belong to payment access and are stored in the separate
+encrypted credential table; exchange UID/API credentials and OKPay Shop ID
+belong to a receiving method, and public exchange/wallet connections hold only
+the API address and priority. Built-in exchange and wallet public connections
+start enabled and cannot be disabled; editing their API address keeps them
+enabled. They do not control checkout exposure and do not have chain-node
+health state.
+
+Provider API addresses belong to exchange/wallet connection configurations.
+Account identifiers and read-only credentials belong to each receiving method
+and are encrypted together; changing them keeps that method disabled until its
+target and provider identity pass validation again. Blockchain endpoint and RPC
+API-key configuration is accepted only on chain connection configurations.
+
+Required confirmations belong to the payment method. Provider-account adapters
+normally use `1`. Never use a withdrawal-enabled exchange key; GMPay Edge only
+needs account identity and incoming-history access.
 
 Fiat amounts use integer minor units, asset amounts use integer unit strings
 with explicit decimals, and internal durations use milliseconds. JavaScript
@@ -31,50 +44,7 @@ all assets attached to that method. Orders in another fiat currency are converte
 to USD with the current persisted rate before checkout exposure and allocation;
 provider- or chain-specific transfer minimums remain adapter validations.
 
-## Scan completeness and provider limits
-
-Production scanners do not assume that one provider response contains every payment. TRON follows TronGrid `meta.fingerprint` cursors, TON Center v3 uses `limit`/`offset`, Aptos Indexer uses GraphQL offsets, Solana follows `getSignaturesForAddress.before`, and OKX Funding Bills follows the official `after=billId` cursor. Binance Pay has no page cursor, so a full 100-row response causes deterministic time-window bisection until every sub-window is complete. EVM ERC-20 log ranges are split into contiguous provider-safe block windows. Every paginated adapter has a bounded request guard and fails visibly instead of silently accepting a truncated result or looping on a repeated cursor.
-
-The scheduled dispatcher orders active payments by `last_payment_scan_at`; it advances that value only after Cloudflare Queues accepts the complete batch. This rotates fairly through more active orders than the configured batch size and retries the same orders if enqueueing fails. Each order also stores a monotonic provider cursor after a complete successful scan. Empty or failed scans do not advance it, and previously detected unconfirmed transactions are refreshed by hash so confirmation and reorganization checks continue after the address cursor moves forward.
-
-Within each oldest-due batch, USDT orders are enqueued first; orders of the same priority retain their existing order. Priority does not change batch membership, so other assets continue to rotate fairly. Queue delivery and completion order are not guaranteed. Each scan uses only the asset and target in that order's immutable snapshot, and adapter caches are isolated by receiving method, asset, and target. An empty USDT scan cannot suppress an ETH payment, or vice versa.
-
-Paid and overpaid orders remain in the scan rotation for the configured `payments.reorg_monitor_ms` window (86,400,000 milliseconds, or 24 hours, by default). Confirmed transaction events are refreshed during this period. A first provider miss marks the chain event as `missing` without changing the order; recovery is silent, while a second consecutive miss records a reorganization and atomically removes the payment from the order aggregate.
-
-### Bounded I/O and retry budget
-
-Every adapter operation has one shared deadline: 8,000 ms by default and at most
-30,000 ms. Pagination, clock synchronization, a timestamp retry, transaction
-enrichment, and direct-lookup stages do not reset it. One payment method exposes
-at most eight enabled connections to a scan, ordered by health, priority, and ID;
-failover is sequential rather than speculative.
-
-The default hard request-count bounds per adapter operation are:
-
-| Adapter | Default maximum physical requests | Internal retry/concurrency |
-| --- | ---: | --- |
-| TRON scan | 1,051 | 50 pages, 1,000 rows, at most 3 block requests concurrently |
-| EVM token/native scan | 1,004 / 4,001 | 3,000-block lookback, at most 1,000 matching events; sequential ranges |
-| EVM direct lookup | 4 | Three initial reads in parallel, one block read, all under one deadline |
-| TON / Aptos scan | 50 | Sequential pages, no adapter retry |
-| Solana token/native scan | 1,801 / 1,050 | At most 16 token accounts and 1,000 signatures; sequential RPC |
-| Binance Pay history | 102 | 100 split windows plus at most one clock read and one timestamp retry |
-| OKX funding scan / direct lookup | 52 / 1,602 | 50 pages; direct lookup has at most 32 assets; one clock retry total |
-| OKPay create/query | 1 | No adapter retry |
-
-These are request ceilings, not expected request counts; the shared deadline
-normally terminates slow scans much earlier. The Payment Queue allows two
-concurrent consumer invocations and two concurrent payment messages per
-invocation, so at most four orders execute provider operations concurrently.
-Within that bound, TRON can issue at most 12 block-enrichment requests and an EVM
-scan can have at most eight HTTP/WSS operations in flight; the other adapters are
-sequential per order. A payment message has one initial delivery plus at most five
-platform retries before DLQ. Adapters do not retry transient failures themselves;
-Binance and OKX only repeat one signed request after a timestamp error, under the
-same deadline. This prevents adapter, failover, and Queue retry loops from becoming
-unbounded multipliers.
-
-## Common workflow
+## Default catalog and workflow
 
 A fresh installation creates every implemented rail/provider, the built-in asset
 catalog, payment methods, connection templates, common local
@@ -93,6 +63,51 @@ immediately removes that asset/network from the public payment catalog while
 leaving the system payment method intact. Re-enabling revalidates the stored target
 through the current adapter. Active orders keep an immutable payment snapshot;
 changing or disabling the method cannot rewrite historical payment details.
+
+## Scan completeness and provider limits
+
+Production scanners do not assume that one provider response contains every payment. TRON follows TronGrid `meta.fingerprint` cursors, TON Center v3 uses `limit`/`offset`, Aptos Indexer uses GraphQL offsets, Solana follows `getSignaturesForAddress.before`, and OKX Funding Bills follows the official `after=billId` cursor. Binance Pay has no page cursor, so a full 100-row response causes deterministic time-window bisection until every sub-window is complete. EVM ERC-20 log ranges are split into contiguous provider-safe block windows. Every history walk is bounded below by the order's creation time minus a 15-minute clock-skew margin (TronGrid `min_timestamp`, TON Center `start_utime`/`start_lt`, Aptos `transaction_timestamp`, Solana `blockTime`, Binance/OKX start time), so a shared address's lifetime history never enters a scan. Every paginated adapter has a bounded row and page guard; when the guard is reached the adapter returns the newest rows as a marked truncated scan instead of failing, and a repeated provider cursor still fails visibly.
+
+The scheduled dispatcher orders active payments by `last_payment_scan_at`; it advances that value only after Cloudflare Queues accepts the complete batch. This rotates fairly through more active orders than the configured batch size and retries the same orders if enqueueing fails. Each order also stores a monotonic provider cursor after a complete successful scan. Empty or failed scans do not advance it; a truncated scan advances it only to the block the adapter fully covered (EVM), or not at all when the unscanned remainder is older than the returned rows (TRON, TON, Aptos, Solana). An EVM cursor that fell behind the log lookback or the native block window resumes at the window edge and moves to the scanned chain head. A transfer that cannot be attributed to one shared-address order is written to the audit log as `payment.scan_unattributed` (once per transfer per day) and caps the cursor at its block so a later scan re-discovers it. Previously detected unconfirmed transactions are refreshed by hash on every scan, including scans whose address discovery failed, so confirmation and reorganization checks never stall behind a provider fault. Only `network`, `authentication`, `rate_limit`, and `invalid_response` faults change a connection's health; per-order scan limits and logic errors are recorded as `payment.scan_failed` without touching it.
+
+Within each oldest-due batch, USDT orders are enqueued first; orders of the same priority retain their existing order. Priority does not change batch membership, so other assets continue to rotate fairly. Queue delivery and completion order are not guaranteed. Each scan uses only the asset and target in that order's immutable snapshot, and adapter caches are isolated by receiving method, asset, and target. An empty USDT scan cannot suppress an ETH payment, or vice versa.
+
+Paid and overpaid orders remain in the scan rotation for the configured `payments.reorg_monitor_ms` window (86,400,000 milliseconds, or 24 hours, by default). Confirmed transaction events are refreshed during this period. A first provider miss marks the chain event as `missing` without changing the order; recovery is silent, while a second consecutive miss records a reorganization and atomically removes the payment from the order aggregate.
+
+### Bounded I/O and retry budget
+
+Every adapter operation has one shared deadline: 8,000 ms by default and at most
+30,000 ms. Pagination, clock synchronization, a timestamp retry, transaction
+enrichment, and direct-lookup stages do not reset it. One payment method exposes
+at most eight enabled connections to a scan, ordered by health, priority, and ID;
+failover is sequential rather than speculative. Every provider response body is
+capped at 8 MiB before it is parsed; a larger or hostile response fails the
+operation instead of being buffered.
+
+The default hard request-count bounds per adapter operation are:
+
+| Adapter | Default maximum physical requests | Internal retry/concurrency |
+| --- | ---: | --- |
+| TRON scan | 2,051 | 50 pages, 1,000 rows, one Transfer-event read per transaction, at most 3 block/event requests concurrently |
+| EVM token/native scan | 1,004 / 1,121 | 3,000-block log lookback, 120-block native window, at most 1,000 matching events; sequential ranges |
+| EVM direct lookup | 4 | Three initial reads in parallel, one block read, all under one deadline |
+| TON / Aptos scan | 50 | Sequential pages, no adapter retry |
+| Solana token/native scan | 1,801 / 1,050 | At most 16 token accounts and 1,000 signatures; sequential RPC |
+| Binance Pay history | 102 | 100 split windows plus at most one clock read and one timestamp retry |
+| OKX funding scan / direct lookup | 52 / 1,602 | 50 pages; direct lookup has at most 32 assets; one clock retry total |
+| OKPay create/query | 1 | No adapter retry |
+
+These are request ceilings, not expected request counts; the shared deadline
+normally terminates slow scans much earlier. The Payment Queue allows two
+concurrent consumer invocations and two concurrent payment messages per
+invocation, so at most four orders execute provider operations concurrently.
+Within that bound, TRON can issue at most 12 block-enrichment requests and an EVM
+scan can have at most eight HTTP/WSS operations in flight; the other adapters are
+sequential per order. A payment message has one initial delivery plus at most five
+platform retries before DLQ. Adapters do not retry transient failures themselves;
+Binance and OKX only repeat one signed request after a timestamp error, under the
+same deadline. This prevents adapter, failover, and Queue retry loops from becoming
+unbounded multipliers.
 
 ## Alchemy inbound notification
 
@@ -155,6 +170,18 @@ USDC use built-in 1:1 parity and are not stored as redundant snapshots. Crypto
 asset rates store asset/USDT observations; fiat rates store USD/fiat
 observations.
 
+Quoting uses a direct observation of the order currency and payment asset when
+one exists; USD, USDT, and USDC are interchangeable on either side, so a `USD`
+order quotes `ETH` from `ETH/USDT`. Other fiat currencies bridge through USD:
+the payable amount is `amount ÷ USD/fiat ÷ asset/USDT`, computed once with
+exact integer arithmetic and rounded up. The order snapshot records the product
+of the leg rates as raw and final rate, the sum of their basis-point
+adjustments, the oldest observation time, and both sources joined with `+`. A
+synchronized rate is quotable only until its `expires_at`; afterwards quoting
+reports the rate as unavailable until the next successful sync or a manual
+update. Catalog defaults seeded with `observed_at = 0` remain quotable until
+the first synchronization replaces them.
+
 Each rate page has its own sync settings. Crypto settings select Binance or OKX
 and an automatic interval. Fiat settings select a provider (currently
 `exchangerate.host`), its API Key, an automatic interval, and an adjustment in
@@ -173,19 +200,48 @@ decimal arithmetic before writing the final value. Both lists display “Origina
 rate” and “Rate”, without source or basis-point columns. Manually editing either
 category changes only the final `rate`; it preserves the last provider raw value,
 source, and observation time. The next successful synchronization updates both
-values again. There is no independent rate-policy or sync-source table.
+values again. Crypto synchronization requests one batch quote per provider and
+writes the results in one D1 batch; a missing pair never overwrites its previous
+value and records a safe failure summary. There is no independent rate-policy or
+sync-source table.
 
-Provider API addresses belong to exchange/wallet connection configurations. Account
-identifiers and read-only credentials belong to each receiving method and are
-encrypted together; changing them keeps that method disabled until its target
-and provider identity pass validation again. Blockchain endpoint and RPC API-key
-configuration is accepted only on chain connection configurations.
+## Exchange-rate synchronization
 
-When scheduled detection is delayed, the payer can choose **Paid but not confirmed?** in checkout and submit the provider transaction identifier. The server does not trust this claim: it loads the transaction from the configured adapter, verifies the order's receiving target, network, and asset, and only then sends the normalized event through the normal idempotent accounting path. Submissions are bounded to five attempts per order and client address per minute when KV is available.
+Binance Spot and OKX Spot observations use bounded concurrency so one slow
+ticker does not serialize every pair. Each crypto pair is isolated: a failed or
+malformed provider response never overwrites its previous observation. Fiat
+sync normalizes the provider's USD quote table and upserts valid three-letter
+currency rows while preserving both raw and adjusted values.
 
-Required confirmations belong to the payment method. Provider-account adapters normally use `1`. Never use a withdrawal-enabled exchange key; GMPay Edge only needs account identity and incoming-history access.
+Every refresh returns configured, updated, and failed counts. Partial failures
+write one structured audit summary containing only the source, pair, and stable
+error code; provider response bodies are not persisted. Successful scheduled
+runs do not create per-minute audit noise, while administrator-triggered runs
+are always attributed to their actor, request ID, and source IP.
 
-## TRON, TRX, and TRC20
+## Chain networks
+
+Chain connection configurations (“RPC nodes”) share one management model. New
+RPC nodes are saved disabled. Test the node from its row action before enabling
+it; enablement itself repeats the live health check and is rejected on failure.
+Enabled nodes are checked again by scheduled maintenance, with current latency
+and healthy/unhealthy state shown in the RPC table.
+
+The built-in HTTPS templates are enabled at installation so scheduled health
+checks can evaluate them immediately. They are not exposed to orders until a
+check reports healthy and an enabled, validated receiving method selects the
+corresponding payment method. Built-in WSS templates remain disabled at
+priority 200. Reconciliation fills missing catalog defaults and preserves
+operator-edited rows.
+
+RPC nodes can be edited without deleting references. Leaving the API Key field
+blank preserves the stored value; the explicit clear switch removes it. Changes
+to the network, endpoint URL, or API Key invalidate the previous health result,
+disable the node atomically, and require a new successful test before it can be
+enabled. Name and priority-only changes keep the current enabled and health
+state. Audit metadata records whether a credential changed but never its value.
+
+### TRON, TRX, and TRC20
 
 - Adapter: `tron`
 - Seeded RPC: `https://api.trongrid.io`
@@ -202,28 +258,9 @@ RPC node fields:
 }
 ```
 
-New RPC nodes are saved disabled. Test the node from its row action before
-enabling it; enablement itself repeats the live health check and is rejected on
-failure. Enabled nodes are checked again by scheduled maintenance, with current
-latency and healthy/unhealthy state shown in the RPC table.
+The adapter reads TRX transactions and TRC20 transfers, validates destination, asset and amount, tracks block confirmations, rejects failed transactions, and identifies canonical block changes. TRC20 transfers are accepted only from the token contract seeded on the asset: the TronGrid history query carries `contract_address`, every row's `token_info.address` and every Transfer event's contract are compared with that address, and the asset code comes from the configuration, never from the provider's token symbol, so a look-alike token that only shares the `USDT` symbol is ignored. Each TRC20 transfer is identified by its real Transfer event index (one event read per transaction), so two same-token transfers in one transaction stay distinct and hash refreshes resolve the same event. Confirmations count from the solidified head (`/walletsolidity/getnowblock`); a payer-submitted TRC20 hash additionally requires `receipt.result = SUCCESS`. Each observed transfer resolves the `blockID` at its own block height (deduplicated per scan), rather than using the moving chain-head hash, so confirmation growth cannot be mistaken for a reorganization. The API key belongs to the RPC node, not the global runtime settings.
 
-The built-in HTTPS templates are enabled at installation so scheduled health
-checks can evaluate them immediately. They are not exposed to orders until a
-check reports healthy and an enabled, validated receiving method selects the
-corresponding payment method. Built-in WSS templates remain disabled at
-priority 200. Reconciliation fills missing catalog defaults and preserves
-operator-edited rows.
-
-RPC nodes can be edited without deleting references. Leaving the API Key field
-blank preserves the stored value; the explicit clear switch removes it. Changes
-to the network, endpoint URL, or API Key invalidate the previous health result,
-disable the node atomically, and require a new successful test before it can be
-enabled. Name and priority-only changes keep the current enabled and health
-state. Audit metadata records whether a credential changed but never its value.
-
-The adapter reads TRX transactions and TRC20 transfers, validates destination, asset and amount, tracks block confirmations, rejects failed transactions, and identifies canonical block changes. Each observed transfer resolves the `blockID` at its own block height (deduplicated per scan), rather than using the moving chain-head hash, so confirmation growth cannot be mistaken for a reorganization. The API key belongs to the RPC node, not the global runtime settings.
-
-## Ethereum, Base, BNB Smart Chain, and Polygon
+### Ethereum, Base, BNB Smart Chain, and Polygon
 
 - Adapter: `evm`
 - Receiving target: a 20-byte `0x` address
@@ -239,9 +276,9 @@ Configure one JSON-RPC connection configuration for each network. The runtime co
 }
 ```
 
-The shared EVM adapter scans native transfers and ERC20/BEP20 `Transfer` logs. A payer-submitted transaction hash is resolved against the payment method's configured token contract, receiving address, and optional log index instead of trusting the receipt's first `Transfer` event; native payments ignore unrelated token logs. Verify every token contract and decimal value against the issuer before production use. Built-in HTTPS templates start enabled for health evaluation but remain unavailable to orders until they are healthy and an enabled, validated receiving method exists. EVM connections also support secure `wss://` JSON-RPC. WSS templates start disabled at priority 200; when enabled, the selected WSS subscription runs concurrently with the authoritative HTTP poll. A rejected or dropped subscription records WSS health without discarding the HTTP result, and the next bounded queue scan reconnects from the persisted cursor.
+The shared EVM adapter scans native transfers and ERC20/BEP20 `Transfer` logs. A payer-submitted transaction hash is resolved against the payment method's configured token contract, receiving address, and optional log index instead of trusting the receipt's first `Transfer` event; native payments ignore unrelated token logs. Verify every token contract and decimal value against the issuer before production use. Built-in HTTPS templates start enabled for health evaluation but remain unavailable to orders until they are healthy and an enabled, validated receiving method exists. EVM connections also support secure `wss://` JSON-RPC. WSS templates start disabled at priority 200; when enabled, the selected WSS subscription runs concurrently with the authoritative HTTP poll. A rejected or dropped subscription records WSS health without discarding the HTTP result, and the next bounded queue scan reconnects from the persisted cursor. A pushed log is accepted only when the fetched transaction receipt carries the identical log for the configured token contract. WSS endpoints do not receive the bearer API key header; embed a provider key in the `wss://` URL as the provider documents. Native ETH/BNB/MATIC transfers need one full block read per block, so polling covers only the most recent 120 blocks per scan and resumes from the persisted cursor; a scan that falls behind that window skips the gap, and native payments outside it are recovered through payer-submitted hashes, Alchemy notifications, or WSS rather than polling.
 
-## TON
+### TON
 
 - Adapter: `ton`
 - Default API: `https://toncenter.com/api/v3`
@@ -249,9 +286,9 @@ The shared EVM adapter scans native transfers and ERC20/BEP20 `Transfer` logs. A
 - Native asset: GRAM, 9 decimals
 - Seeded token: Jetton USDT
 
-Configure the TON Center v3 endpoint and optional API key on the RPC node. Native inbound messages and Jetton transfers are normalized separately. Confirm the Jetton master stored on the asset before enabling the channel.
+Configure the TON Center v3 endpoint and optional API key on the RPC node. Native inbound messages and Jetton transfers are normalized separately. Raw `workchain:hex` and user-friendly (bounceable or not) addresses are normalized to one canonical form before comparison, so the seeded Jetton master and the operator's `EQ…`/`UQ…` target match the raw addresses toncenter returns. Execution success is read from toncenter's own fields — `transaction_aborted` for Jetton transfers, `description.aborted`, `compute_ph.success`, `action.success`, and `in_msg.bounced` for native transfers — and a missing attestation fails closed. Confirm the Jetton master stored on the asset, and the live v3 response shape, before enabling the channel.
 
-## Aptos
+### Aptos
 
 - Adapter: `aptos`
 - Default indexer: `https://api.mainnet.aptoslabs.com/v1/graphql`
@@ -261,7 +298,7 @@ Configure the TON Center v3 endpoint and optional API key on the RPC node. Nativ
 
 The RPC node URL is used as the GraphQL indexer endpoint. The adapter scans successful fungible-asset activities, treats the transaction version as the transaction lookup identifier, and uses the Indexer's stable `event_index` for chain-event idempotency. Query result positions are never used as payment identity. Confirm the asset type and decimals before production use.
 
-## Solana
+### Solana
 
 - Adapter: `solana`
 - Default RPC: `https://api.mainnet-beta.solana.com`
@@ -271,7 +308,9 @@ The RPC node URL is used as the GraphQL indexer endpoint. The adapter scans succ
 
 The adapter discovers token accounts owned by the receiving wallet, scans signatures, parses SPL transfers, and requires finalized commitment by default. Production traffic should use a dedicated RPC provider; the built-in HTTPS template starts enabled for evaluation but does not expose Solana at checkout without a healthy connection and an enabled receiving method.
 
-## Binance
+## Exchanges and digital wallets
+
+### Binance
 
 - Adapter: `exchange`
 - Provider/network code: `binance`
@@ -288,9 +327,9 @@ The connection configuration stores the API address. Each receiving method store
 }
 ```
 
-The default API address is `https://api-gcp.binance.com`. Before enablement, the adapter verifies access to the exact signed Pay-history endpoint used by detection. Binance does not expose the receiver UID through an unrelated Spot-account probe, so GMPay Edge validates the numeric configured UID and accepts only Pay-history rows whose `receiverInfo.binanceId` and asset match that receiving method. Restrict the key by IP and grant only the Pay-history read permission; the adapter never performs trades or withdrawals.
+The default API address is `https://api-gcp.binance.com`. Before enablement, the adapter verifies access to the exact signed Pay-history endpoint used by detection. Binance does not expose the receiver UID through an unrelated Spot-account probe, so GMPay Edge validates the numeric configured UID and accepts only Pay-history rows whose `receiverInfo.binanceId` and asset match that receiving method. A direct lookup of a Pay transaction that GMPay Edge has already observed walks only one lookback window on either side of that observation; only an unknown identifier falls back to the provider's full 90-day retention. Restrict the key by IP and grant only the Pay-history read permission; the adapter never performs trades or withdrawals.
 
-## OKX
+### OKX
 
 - Adapter: `exchange`
 - Provider/network code: `okx`
@@ -312,7 +351,7 @@ The default API address is `https://www.okx.com`. The signed account response mu
 
 Use the regional API domain assigned to the account when it differs from the global default (for example `us.okx.com` or `eea.okx.com`).
 
-## OKPay
+### OKPay
 
 - Adapter: `wallet`
 - Provider/network code: `okpay`
@@ -328,9 +367,11 @@ The connection configuration stores the API address. Each receiving method store
 }
 ```
 
-The default API address is `https://api.okaypay.me/shop`. GMPay Edge creates a hosted payment URL, stores the provider order ID, validates signed callbacks, and also polls transfer status. The public callback is `/api/providers/okpay/notify`. The callback does not trust order status, amount, asset, shop identity, or signature supplied by the client without adapter validation.
+The default API address is `https://api.okaypay.me/shop`. GMPay Edge creates a hosted payment URL, stores the provider order ID, validates signed callbacks, and also polls transfer status. If the provider does not return a hosted payment, GMPay Edge rolls back the payment selection—and a merchant order created by the same request—so the external order ID can be retried, and answers with `provider_unavailable` (`10003`). The public callback is `/api/providers/okpay/notify`. The callback does not trust order status, amount, asset, shop identity, or signature supplied by the client without adapter validation.
 
 Built-in connection templates without verified credentials remain disabled. Configure any required API key, run the live health check, and only then enable an operational receiving method. Seeded support metadata is not evidence that a deployment is ready to accept funds.
+
+## Address locks and late payments
 
 Receiving-method amount locks also have a reuse quarantine. Completing, cancelling,
 or expiring an order releases its active reservation, but the same target, asset,
@@ -340,25 +381,32 @@ for an old order from being attributed to a newer order that reused the same amo
 Changing the monitoring window affects newly allocated orders; immutable order
 snapshots and existing lock deadlines are not rewritten.
 
-If an existing development installation predates a newly added default, run **Admin → Operations → Reset payment defaults**. The operation uses insert-if-missing semantics, restores missing rails, assets, connection templates, payment methods, rates, and sync settings without re-enabling or overwriting operator configuration. It is safe to run repeatedly.
+An order whose payments already cover the full amount (`confirming`) is never
+expired; it settles when the required confirmations arrive or returns to
+`pending` after a reorganization. Confirmation updates of a payment that is
+already attributed to an expired or cancelled order bypass the late-payment
+policy: the order completes when the payment confirms, and otherwise keeps its
+terminal status while the payment rows and balance follow the chain. Late
+transfers held for review are stored as `pending_review` and stay outside the
+order balance until an administrator accepts them; rejection leaves the balance
+unchanged. Confirmation growth on an already confirmed payment only refreshes
+the stored confirmations and never emits another order event or rewrites
+`paid_at`.
 
-## Exchange-rate synchronization
+A concurrent selection that loses the order-version race is reported as
+`order_conflict` and is not retried as an amount collision.
 
-Binance Spot and OKX Spot observations use bounded concurrency so one slow
-ticker does not serialize every pair. Each crypto pair is isolated: a failed or
-malformed provider response never overwrites its previous observation. Fiat
-sync normalizes the provider's USD quote table and upserts valid three-letter
-currency rows while preserving both raw and adjusted values.
+## Payer-initiated review
 
-Every refresh returns configured, updated, and failed counts. Partial failures
-write one structured audit summary containing only the source, pair, and stable
-error code; provider response bodies are not persisted. Successful scheduled
-runs do not create per-minute audit noise, while administrator-triggered runs
-are always attributed to their actor, request ID, and source IP.
+When scheduled detection is delayed, the payer can choose **Paid but not confirmed?** in checkout and submit the provider transaction identifier. The server does not trust this claim: it loads the transaction from the configured adapter, verifies the order's receiving target, network, and asset, and only then sends the normalized event through the normal idempotent accounting path. Submissions are limited to five attempts per order and client address per minute by the D1 rate limiter.
+
+## Restoring defaults
+
+If an existing installation predates a newly added default, run **Admin → Operations → Reset payment defaults**. The operation uses insert-if-missing semantics, restores missing rails, assets, connection templates, payment methods, rates, and sync settings without re-enabling or overwriting operator configuration. It is safe to run repeatedly.
 
 ## Secrets and logs
 
-Exchange and wallet credentials are encrypted with their receiving method; provider API addresses and chain RPC API keys live in connection configuration. API responses and audit logs never expose provider secrets, signing keys, or Webhook secrets. Wallet private keys and seed phrases are not accepted by any adapter.
+Exchange and wallet credentials are encrypted with their receiving method; provider API addresses and chain RPC API keys live in connection configuration, the latter in the separate encrypted credential table. API responses and audit logs never expose provider secrets, signing keys, or Webhook secrets. Wallet private keys and seed phrases are not accepted by any adapter.
 
 ## Production verification checklist
 
@@ -366,7 +414,7 @@ Exchange and wallet credentials are encrypted with their receiving method; provi
 - Confirm the receiving target belongs to the deployment operator.
 - Use read-only provider credentials and IP allowlists.
 - Run the adapter health check and a low-value live payment.
-- Verify pending, confirmation, paid, underpaid, overpaid, expiry, and late-arrival behavior.
+- Verify pending, confirmation, paid, underpaid, overpaid, expiry, late-arrival, and reorganization behavior.
 - Verify Webhook signature validation, retry, and duplicate-event handling.
 - Review audit logs after every configuration change.
 

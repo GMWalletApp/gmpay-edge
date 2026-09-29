@@ -129,8 +129,10 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - “Payment methods” is the built-in chain/exchange/wallet capability catalog; it
   is not an operational enable switch.
 - “Connection configuration” stores public RPC/API endpoints, HTTPS/WSS,
-  priority, health, and failover. It never stores UID, API key, secret,
-  passphrase, merchant ID, private key, or seed phrase.
+  priority, health, and failover. An optional RPC API key is stored encrypted
+  in the separate `payment_ingress_credentials` table, never on the connection
+  row. It never stores UID, secret, passphrase, merchant ID, private key, or
+  seed phrase.
 - Built-in HTTPS connections start enabled for evaluation; WSS starts disabled
   at priority `200`. Chain availability still requires a healthy connection.
   Exchange/wallet public connections do not decide merchant exposure.
@@ -262,7 +264,9 @@ checklist scope; old or unrelated checklist items never become active implicitly
 - During active development, run focused tests and checks for the changed
   contract. Do not repeatedly run the full quality gate while executable TODOs
   remain. After all locally executable TODOs are complete, run once on the same
-  final current tree:
+  final current tree. `bun run typecheck` generates Paraglide messages first, so
+  the list is reproducible from a clean clone, and the `CI` workflow runs the
+  same commands for every pull request and push to `main`:
 
 ```bash
 bun run typecheck
@@ -275,14 +279,13 @@ bun run build:bun
 - Completion additionally requires current browser/runtime evidence, migration
   evidence, permission-path coverage, and documentation. A partial gate, old
   result, or skipped live platform suite is not completion evidence.
-- Releases use semantic-release. `alpha` starts with `1.0.0-alpha.1` and only
-  updates full-version and `alpha` container tags; verified changes merge to
-  `main` for stable `1.0.0` and major, minor, and `latest` tags. A release updates
-  `package.json` and `bun.lock`, creates the GitHub Release with generated notes
-  and a tag, then calls the Docker workflow for `linux/amd64` and `linux/arm64`.
-  Native x64 and Arm64 runners build and smoke-test their platform images in
-  parallel before the workflow publishes the combined manifest and provenance.
-  After a stable publish, the workflow removes matching alpha prereleases, Git
-  tags, and GHCR versions.
+- Releases use semantic-release from `main` only; there is no prerelease
+  channel. A qualifying push to `main` passes the quality gate and publishes a
+  stable version such as `1.0.0` with the exact version plus major, minor, and
+  `latest` container tags. A release updates `package.json` and `bun.lock`,
+  creates the GitHub Release with generated notes and a tag, then calls the
+  Docker workflow for `linux/amd64` and `linux/arm64`. Native x64 and Arm64
+  runners build and smoke-test their platform images in parallel before the
+  workflow publishes the combined manifest and provenance.
   Package visibility is set to public once by a repository owner after the first
   publish, not mutated by workflow.
