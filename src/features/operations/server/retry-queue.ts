@@ -4,12 +4,13 @@ import {
 	recoverWebhookOutbox,
 } from "#/features/webhooks/server/outbox";
 import { DomainError } from "#/lib/domain-error";
+import type { ReadDatabase } from "#/server/read-replica";
 
 /**
  * Dead-lettered messages of the Bun durable queue by queue name. Cloudflare
  * dead letters live in the DLQ outside D1, so the count is unavailable there.
  */
-export async function loadDeadQueueMessageCounts(db: D1Database) {
+export async function loadDeadQueueMessageCounts(db: ReadDatabase) {
 	const table = await db
 		.prepare(
 			"SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'node_queue_messages' LIMIT 1",

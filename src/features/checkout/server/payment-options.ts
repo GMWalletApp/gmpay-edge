@@ -3,6 +3,7 @@ import { orderIdPathSchema } from "#/features/orders/schema";
 import { initializeOkPayOrder } from "#/features/orders/server/okpay-hosted";
 import { checkReceivingMethodReadiness } from "#/features/payment-settings/server/check-method-readiness";
 import {
+	createExchangeRateQuoter,
 	quoteUsdAmountMinor,
 	quoteWithExchangeRate,
 } from "#/features/payment-settings/server/rates";
@@ -14,6 +15,7 @@ import { DomainError } from "#/lib/domain-error";
 import { decimalToUnits, unitsToDecimal } from "#/lib/money";
 import { minorToDecimal } from "#/lib/units";
 import { loadOperationalSettings } from "#/server/operational-settings";
+import type { ReadDatabase } from "#/server/read-replica";
 
 export const paymentOptionInput = z.object({
 	orderId: orderIdPathSchema,
@@ -47,7 +49,7 @@ type OrderForSelection = {
 };
 
 export async function listCheckoutPaymentOptions(
-	db: D1Database,
+	db: ReadDatabase,
 	orderId: string,
 ) {
 	const id = orderIdPathSchema.parse(orderId);
@@ -103,11 +105,13 @@ export async function listCheckoutPaymentOptions(
 		(method) =>
 			method.min_amount_minor !== null || method.max_amount_minor !== null,
 	);
+	const quoter = await createExchangeRateQuoter(db, {
+		amount: order.amount,
+		currency: order.currency,
+		paymentAssets: rows.results.map((asset) => asset.code),
+	});
 	const orderAmountUsdMinor = limitsRequireRate
-		? await quoteUsdAmountMinor(db, {
-				amount: order.amount,
-				currency: order.currency,
-			})
+		? quoter.usdAmountMinor()
 		: null;
 	const options = [];
 	let quoteUnavailable = false;
@@ -121,9 +125,7 @@ export async function listCheckoutPaymentOptions(
 		)
 			continue;
 		try {
-			const quote = await quoteWithExchangeRate(db, {
-				amount: order.amount,
-				currency: order.currency,
+			const quote = quoter.quote({
 				paymentAsset: asset.code,
 				assetDecimals: asset.decimals,
 			});
@@ -359,7 +361,7 @@ function selectedResult(
 	};
 }
 
-async function readOrder(db: D1Database, id: string) {
+async function readOrder(db: ReadDatabase, id: string) {
 	const row = await db
 		.prepare(
 			`SELECT o.id, o.external_order_id, o.status, o.amount_minor,

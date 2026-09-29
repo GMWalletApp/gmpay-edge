@@ -6,6 +6,7 @@ import { systemPermission } from "#/features/access/system-rbac";
 import { resolveLatePaymentAsAdmin } from "#/features/payments/server/admin-actions";
 import { DomainError } from "#/lib/domain-error";
 import { getCloudflareEnv } from "#/server/db.server";
+import { readDatabase } from "#/server/read-replica";
 
 const adminPaymentsListSchema = z.object({
 	pageIndex: z.number().int().min(0).default(0),
@@ -163,5 +164,5 @@ async function adminPaymentsDb(
 			503,
 			"Payment service is unavailable",
 		);
-	return db;
+	return readDatabase(request, db);
 }

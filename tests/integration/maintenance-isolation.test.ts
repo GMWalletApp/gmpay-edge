@@ -1,7 +1,13 @@
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { RETENTION_INTERVAL_MS } from "#/features/operations/schedule";
 import { runMaintenance } from "#/server/scheduled";
 import { applyMigrations } from "./migrations";
+
+/** The next tick that falls on a retention minute, strictly after `now`. */
+function nextRetentionMinute(now: number) {
+	return (Math.floor(now / RETENTION_INTERVAL_MS) + 1) * RETENTION_INTERVAL_MS;
+}
 
 describe("scheduled maintenance isolation", () => {
 	let miniflare: Miniflare;
@@ -230,8 +236,9 @@ describe("scheduled maintenance isolation", () => {
 		expect(JSON.parse(cleanup?.result ?? "null")).toEqual({ affectedRows: 0 });
 	});
 
-	it("runs retention cleanup whenever expired rows exist", async () => {
+	it("runs retention cleanup on a retention minute when expired rows exist", async () => {
 		const now = Date.now();
+		const retentionMinute = nextRetentionMinute(now);
 		const expiredAt = now - 366 * 86_400_000;
 		const expiredTaskAt = now - 91 * 86_400_000;
 		await db.batch([
@@ -287,11 +294,27 @@ describe("scheduled maintenance isolation", () => {
 		const expire = vi.fn().mockResolvedValue(0);
 		const recoverWebhooks = vi.fn().mockResolvedValue({ queued: 0, failed: 0 });
 
-		await runMaintenance({ DB: db } as unknown as Env, "* * * * *", {
-			expire,
-			recoverWebhooks,
-			loadDueWork: forcedDueWork(),
-		});
+		// Retention is gated to every fifth minute; an ordinary tick skips it.
+		await runMaintenance(
+			{ DB: db } as unknown as Env,
+			"* * * * *",
+			{ expire, recoverWebhooks, loadDueWork: forcedDueWork() },
+			retentionMinute + 60_000,
+		);
+		const skipped = await db
+			.prepare(
+				"SELECT COUNT(*) AS count FROM operation_task_runs WHERE task = 'retention_cleanup' AND started_at >= ?",
+			)
+			.bind(retentionMinute)
+			.first<{ count: number }>();
+		expect(skipped?.count).toBe(0);
+
+		await runMaintenance(
+			{ DB: db } as unknown as Env,
+			"* * * * *",
+			{ expire, recoverWebhooks, loadDueWork: forcedDueWork() },
+			retentionMinute,
+		);
 
 		expect(expire).not.toHaveBeenCalled();
 		expect(recoverWebhooks).not.toHaveBeenCalled();
@@ -375,17 +398,23 @@ describe("scheduled maintenance isolation", () => {
 			.first<{ count: number }>();
 
 		let ticks = 0;
+		const retentionMinute = nextRetentionMinute(now);
 		while ((await remaining()) > 0 && ticks < 5) {
-			await runMaintenance({ DB: db } as unknown as Env, "* * * * *", {
-				expire: vi.fn(),
-				recoverWebhooks: vi.fn(),
-				loadDueWork: forcedDueWork(),
-			});
+			await runMaintenance(
+				{ DB: db } as unknown as Env,
+				"* * * * *",
+				{
+					expire: vi.fn(),
+					recoverWebhooks: vi.fn(),
+					loadDueWork: forcedDueWork(),
+				},
+				retentionMinute + ticks * RETENTION_INTERVAL_MS,
+			);
 			ticks += 1;
 		}
 
-		// One bounded chunk (at most 2000 rows) per tick, so the backlog needs a
-		// second tick and each tick is a tracked run.
+		// One bounded chunk (at most 2000 rows) per retention minute, so the
+		// backlog needs a second retention run and each run is tracked.
 		expect(ticks).toBeGreaterThanOrEqual(2);
 		await expect(remaining()).resolves.toBe(0);
 		const runsAfter = await db
@@ -411,11 +440,16 @@ describe("scheduled maintenance isolation", () => {
 			.bind(now - 1, now, now)
 			.run();
 
-		await runMaintenance({ DB: db } as unknown as Env, "* * * * *", {
-			expire: vi.fn(),
-			recoverWebhooks: vi.fn(),
-			loadDueWork: forcedDueWork(),
-		});
+		await runMaintenance(
+			{ DB: db } as unknown as Env,
+			"* * * * *",
+			{
+				expire: vi.fn(),
+				recoverWebhooks: vi.fn(),
+				loadDueWork: forcedDueWork(),
+			},
+			nextRetentionMinute(now),
+		);
 
 		const remaining = await db
 			.prepare(

@@ -28,31 +28,83 @@ type QuoteLeg = { observed: ObservedRate; invert: boolean };
 
 const dollarParityAssets = new Set(["USD", "USDT", "USDC"]);
 
-export async function quoteUsdAmountMinor(
-	db: D1Database,
-	input: { amount: string; currency: string; now?: number },
-): Promise<string | null> {
-	const quote = await quoteWithExchangeRate(db, {
-		...input,
-		paymentAsset: "USD",
-		assetDecimals: 2,
-	});
-	return quote ? decimalToUnits(quote.paymentAmount, 2).toString() : null;
-}
+export type ExchangeRateQuoter = {
+	/** Quotes the shared order amount in one of the preloaded payment assets. */
+	quote(input: {
+		paymentAsset: string;
+		assetDecimals: number;
+	}): ExchangeRateQuote | null;
+	/** The order amount in USD minor units, used for receiving limits. */
+	usdAmountMinor(): string | null;
+};
 
 /**
- * Quotes `amount` of `currency` in `paymentAsset`. A direct observation of the
- * pair is used when present (USD, USDT and USDC are interchangeable on either
- * side); other fiat currencies bridge through USD with the catalog's USD/fiat
- * and asset/USDT rows. Built-in catalog defaults are seeded with
- * `observed_at = 0` and stay quotable until the first synchronization replaces
- * them; every observed rate is usable only inside its validity window.
+ * Loads every observation that can quote `currency` in any of `paymentAssets`
+ * with a single query, so a checkout with many payment options costs one D1
+ * round instead of one per option. A direct observation of a pair is used
+ * when present (USD, USDT and USDC are interchangeable on either side); other
+ * fiat currencies bridge through USD with the catalog's USD/fiat and
+ * asset/USDT rows. Built-in catalog defaults are seeded with `observed_at = 0`
+ * and stay quotable until the first synchronization replaces them; every
+ * observed rate is usable only inside its validity window.
  *
  * A composite quote records the product of its leg rates, the sum of their
  * basis-point adjustments, the oldest observation time and both sources.
  */
+export async function createExchangeRateQuoter(
+	db: Pick<D1Database, "prepare">,
+	input: {
+		amount: string;
+		currency: string;
+		paymentAssets: readonly string[];
+		now?: number;
+	},
+): Promise<ExchangeRateQuoter> {
+	const now = input.now ?? Date.now();
+	const symbols = [
+		...new Set([
+			input.currency,
+			...input.paymentAssets,
+			"USD",
+			...dollarParityAssets,
+		]),
+	];
+	// Dollar-parity assets quoted in a dollar currency need no observation.
+	const observed = symbols.every((symbol) => sameUnit(input.currency, symbol))
+		? []
+		: await loadObservedRates(db, symbols, now);
+	const quote = (paymentAsset: string, assetDecimals: number) =>
+		quoteFromObservations(observed, {
+			amount: input.amount,
+			currency: input.currency,
+			paymentAsset,
+			assetDecimals,
+			now,
+		});
+	return {
+		quote: ({ paymentAsset, assetDecimals }) =>
+			quote(paymentAsset, assetDecimals),
+		usdAmountMinor: () => {
+			const usd = quote("USD", 2);
+			return usd ? decimalToUnits(usd.paymentAmount, 2).toString() : null;
+		},
+	};
+}
+
+export async function quoteUsdAmountMinor(
+	db: Pick<D1Database, "prepare">,
+	input: { amount: string; currency: string; now?: number },
+): Promise<string | null> {
+	const quoter = await createExchangeRateQuoter(db, {
+		...input,
+		paymentAssets: ["USD"],
+	});
+	return quoter.usdAmountMinor();
+}
+
+/** Quotes `amount` of `currency` in `paymentAsset`; see `createExchangeRateQuoter`. */
 export async function quoteWithExchangeRate(
-	db: D1Database,
+	db: Pick<D1Database, "prepare">,
 	input: {
 		amount: string;
 		currency: string;
@@ -61,23 +113,46 @@ export async function quoteWithExchangeRate(
 		now?: number;
 	},
 ): Promise<ExchangeRateQuote | null> {
-	const now = input.now ?? Date.now();
-	if (sameUnit(input.currency, input.paymentAsset))
-		return parityQuote(input.amount, input.assetDecimals, now);
+	const quoter = await createExchangeRateQuoter(db, {
+		...input,
+		paymentAssets: [input.paymentAsset],
+	});
+	return quoter.quote(input);
+}
 
-	const symbols = [input.currency, input.paymentAsset, ...dollarParityAssets];
+async function loadObservedRates(
+	db: Pick<D1Database, "prepare">,
+	symbols: readonly string[],
+	now: number,
+) {
+	const placeholders = symbols.map(() => "?").join(", ");
 	const observed = await db
 		.prepare(
 			`SELECT base, quote, raw_rate, rate, source, adjustment_bps, observed_at
 			 FROM exchange_rates
 			 WHERE raw_rate IS NOT NULL AND rate IS NOT NULL
 			 AND (observed_at = 0 OR expires_at > ?)
-			 AND base IN (?, ?, ?, ?, ?) AND quote IN (?, ?, ?, ?, ?)
+			 AND base IN (${placeholders}) AND quote IN (${placeholders})
 			 ORDER BY observed_at DESC`,
 		)
 		.bind(now, ...symbols, ...symbols)
 		.all<ObservedRate>();
-	const legs = quoteLegs(observed.results, input.currency, input.paymentAsset);
+	return observed.results;
+}
+
+function quoteFromObservations(
+	rates: readonly ObservedRate[],
+	input: {
+		amount: string;
+		currency: string;
+		paymentAsset: string;
+		assetDecimals: number;
+		now: number;
+	},
+): ExchangeRateQuote | null {
+	if (sameUnit(input.currency, input.paymentAsset))
+		return parityQuote(input.amount, input.assetDecimals, input.now);
+	const legs = quoteLegs(rates, input.currency, input.paymentAsset);
 	if (
 		!legs ||
 		legs.some(

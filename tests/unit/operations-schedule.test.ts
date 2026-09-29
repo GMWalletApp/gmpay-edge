@@ -45,12 +45,12 @@ describe("operations task schedules", () => {
 
 	const now = Date.parse("2026-07-13T02:30:30.000Z");
 
-	it("computes the next minute schedules for every non-rate task", () => {
+	it("computes the next minute schedule and the five-minute retention schedule", () => {
 		expect(nextTaskExecutionAt("order_expiration", null, rates, now)).toBe(
 			"2026-07-13T02:31:00.000Z",
 		);
 		expect(nextTaskExecutionAt("retention_cleanup", null, rates, now)).toBe(
-			"2026-07-13T02:31:00.000Z",
+			"2026-07-13T02:35:00.000Z",
 		);
 		expect(
 			nextTaskExecutionAt(
@@ -59,7 +59,7 @@ describe("operations task schedules", () => {
 				rates,
 				Date.parse("2026-07-13T00:00:00.000Z"),
 			),
-		).toBe("2026-07-13T00:01:00.000Z");
+		).toBe("2026-07-13T00:05:00.000Z");
 	});
 
 	it("uses each category's persisted rate interval", () => {

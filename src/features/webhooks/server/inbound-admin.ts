@@ -1,6 +1,7 @@
 import { DomainError } from "#/lib/domain-error";
+import type { ReadDatabase } from "#/server/read-replica";
 
-export async function loadInboundWebhookReceipt(db: D1Database, id: string) {
+export async function loadInboundWebhookReceipt(db: ReadDatabase, id: string) {
 	const row = await db
 		.prepare(`SELECT id, endpoint_code, request_id, external_request_id, method, request_path,
 			signature_status, processing_status, response_status, duration_ms,

@@ -19,6 +19,7 @@ import type { WebhookQueueMessage } from "#/features/webhooks/types";
 import { DomainError } from "#/lib/domain-error";
 import { getCloudflareEnv } from "#/server/db.server";
 import { requestId } from "#/server/http";
+import { readDatabase } from "#/server/read-replica";
 
 const webhookListSchema = z.object({
 	pageIndex: z.number().int().min(0).default(0),
@@ -30,7 +31,7 @@ const webhookListSchema = z.object({
 export const listInboundWebhookEndpointsFn = createServerFn({
 	method: "GET",
 }).handler(async () => {
-	const { db } = await adminContext(
+	const { readDb: db } = await adminContext(
 		systemPermission("webhooks", "read"),
 		"webhook_inbound_unavailable",
 	);
@@ -61,7 +62,7 @@ export const listInboundWebhookEndpointsFn = createServerFn({
 export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 	.validator((input) => webhookListSchema.parse(input))
 	.handler(async ({ data }) => {
-		const { db } = await adminContext(
+		const { readDb: db } = await adminContext(
 			systemPermission("webhooks", "read"),
 			"webhook_inbound_unavailable",
 		);
@@ -132,7 +133,7 @@ export const listInboundWebhookReceiptsFn = createServerFn({ method: "GET" })
 export const getInboundWebhookReceiptFn = createServerFn({ method: "GET" })
 	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
-		const { db } = await adminContext(
+		const { readDb: db } = await adminContext(
 			systemPermission("webhooks", "read"),
 			"webhook_inbound_unavailable",
 		);
@@ -142,7 +143,9 @@ export const getInboundWebhookReceiptFn = createServerFn({ method: "GET" })
 export const listAdminWebhooksFn = createServerFn({ method: "GET" })
 	.validator((input) => webhookListSchema.parse(input))
 	.handler(async ({ data }) => {
-		const { db } = await adminContext(systemPermission("webhooks", "read"));
+		const { readDb: db } = await adminContext(
+			systemPermission("webhooks", "read"),
+		);
 		const search = data.search ? `%${data.search}%` : null;
 		const filters: string[] = [];
 		const parameters: Array<string | number> = [];
@@ -224,7 +227,9 @@ export const listAdminWebhooksFn = createServerFn({ method: "GET" })
 export const getAdminWebhookDeliveryFn = createServerFn({ method: "GET" })
 	.validator((input: { id: string }) => z.object({ id: z.uuid() }).parse(input))
 	.handler(async ({ data }) => {
-		const { db } = await adminContext(systemPermission("webhooks", "read"));
+		const { readDb: db } = await adminContext(
+			systemPermission("webhooks", "read"),
+		);
 		return loadAdminWebhookDelivery(db, data.id);
 	});
 
@@ -302,5 +307,11 @@ async function adminContext(
 			"Inbound webhook storage is unavailable",
 		);
 	if (!env.DB) throw new Error("D1 binding DB is unavailable");
-	return { db: env.DB, env, request, user };
+	return {
+		db: env.DB,
+		readDb: readDatabase(request, env.DB),
+		env,
+		request,
+		user,
+	};
 }

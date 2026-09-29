@@ -23,6 +23,7 @@ import { redactedAuditJson } from "#/server/audit-redaction";
 import { getCloudflareEnv } from "#/server/db.server";
 import { requestId } from "#/server/http";
 import { loadOperationalSettings } from "#/server/operational-settings";
+import { readDatabase } from "#/server/read-replica";
 
 const auditQuery = z.object({
 	page: z.number().int().min(1).default(1),
@@ -62,7 +63,9 @@ export type AuditLogRecord = {
 export const listAuditLogsFn = createServerFn({ method: "GET" })
 	.validator((input: z.input<typeof auditQuery>) => auditQuery.parse(input))
 	.handler(async ({ data }) => {
-		const { db } = await adminContext(systemPermission("audit", "read"));
+		const { readDb: db } = await adminContext(
+			systemPermission("audit", "read"),
+		);
 		const pattern = `%${data.search}%`;
 		const filters: string[] = [];
 		const bindings: Array<string | number> = [];
@@ -138,7 +141,9 @@ export const exportAuditLogsFn = createServerFn({ method: "POST" }).handler(
 export const getOperationsOverviewFn = createServerFn({
 	method: "GET",
 }).handler(async () => {
-	const { db } = await adminContext(systemPermission("operations", "read"));
+	const { readDb: db } = await adminContext(
+		systemPermission("operations", "read"),
+	);
 	const [taskRuns, cryptoRates, fiatRates] = await Promise.all([
 		loadLatestOperationTaskRuns(
 			db,
@@ -186,7 +191,7 @@ export const runOperationsTaskFn = createServerFn({ method: "POST" })
 
 export const getQueueOverviewFn = createServerFn({ method: "GET" }).handler(
 	async () => {
-		const { db, env } = await adminContext(
+		const { readDb: db, env } = await adminContext(
 			systemPermission("operations", "read"),
 		);
 		const [webhooks, payments, rejectedMessages, dispatchRuns, deadMessages] =
@@ -293,5 +298,11 @@ async function adminContext(permission: SystemPermission) {
 			503,
 			"D1 binding DB is unavailable",
 		);
-	return { db: env.DB, env, request, user };
+	return {
+		db: env.DB,
+		readDb: readDatabase(request, env.DB),
+		env,
+		request,
+		user,
+	};
 }
