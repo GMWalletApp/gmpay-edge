@@ -96,7 +96,7 @@
     "@tanstack/react-store": "^0.11.1",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/store": "^0.11.1",
-    "@visulima/email": "^2.1.7",
+    "@visulima/email": "^3.0.20",
     "better-auth": "^1.7.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

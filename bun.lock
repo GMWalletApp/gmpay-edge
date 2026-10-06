@@ -25,7 +25,7 @@
         "@tanstack/react-store": "^0.11.1",
         "@tanstack/react-table": "^8.21.3",
         "@tanstack/store": "^0.11.1",
-        "@visulima/email": "^2.1.7",
+        "@visulima/email": "^3.0.20",
         "better-auth": "^1.7.6",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
@@ -979,7 +979,7 @@
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.3.3", "", {}, "sha512-60YRaenCQcVjYEKOcG824+DRGGIQ3VKErcBoAEDJZz5bKIs2ZG+X/H9Nk+Q6EVkwJk5QNApxbrc5QtBSwtrXAg=="],
 
-    "@visulima/email": ["@visulima/email@2.1.9", "", { "dependencies": { "html-to-text": "^10.0.0", "ical-generator": "11.1.0", "lru-cache": "11.5.2", "mime": "^4.1.0" }, "peerDependencies": { "@opentelemetry/api": "^1.0.0 || ^2.0.0", "@react-email/render": "^2.1.0", "@vue-email/render": "0.0.9", "asn1js": ">=3.0.10", "fast-xml-parser": "^4.5.0 || ^5.0.0", "handlebars": ">=4.7.9", "jsx-email": "^2.0.0", "juice": "^11.0.0 || ^12.0.0", "liquidjs": "^10.0.0", "mjml": ">=5.4.0", "nodemailer": ">=7", "pkijs": ">=3.4.0", "unstorage": "^1.13.0" }, "optionalPeers": ["@opentelemetry/api", "@react-email/render", "@vue-email/render", "asn1js", "fast-xml-parser", "handlebars", "jsx-email", "juice", "liquidjs", "mjml", "nodemailer", "pkijs", "unstorage"] }, "sha512-pqw5yWC5uPEleMKwGodBoat+KbDjij1O3iw6ANPC9TMHAKQwAI+gHUdwuxxU5AQItK7E6prycUY1ZsqacBxjKw=="],
+    "@visulima/email": ["@visulima/email@3.0.20", "", { "dependencies": { "html-to-text": "^10.0.0", "ical-generator": "11.1.0", "lru-cache": "11.5.2", "mime": "^4.1.0" }, "peerDependencies": { "@opentelemetry/api": "^1.0.0 || ^2.0.0", "@react-email/render": "^2.1.0", "@vue-email/render": "0.0.9", "asn1js": ">=3.0.10", "fast-xml-parser": "^4.5.0 || ^5.0.0", "handlebars": ">=4.7.9", "jsx-email": "^2.0.0", "juice": "^11.0.0 || ^12.0.0", "liquidjs": "^10.0.0", "mjml": ">=5.4.0", "nodemailer": ">=7", "pkijs": ">=3.4.0", "unstorage": "^1.13.0" }, "optionalPeers": ["@opentelemetry/api", "@react-email/render", "@vue-email/render", "asn1js", "fast-xml-parser", "handlebars", "jsx-email", "juice", "liquidjs", "mjml", "nodemailer", "pkijs", "unstorage"] }, "sha512-P4TCYgkSnNY5HmEIqIvCjmF7Mjn4vrUkpd/kgvgiBpv+5vtQog6cYjkty5zPxQO6T7cN0WE6hMV6aJj73T5Tuw=="],
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@6.1.1", "", { "dependencies": { "@rolldown/pluginutils": "^1.0.1" }, "peerDependencies": { "@rolldown/plugin-babel": "^0.1.7 || ^0.2.0", "babel-plugin-react-compiler": "^1.0.0", "oxc-transform-react": "^0.145.0", "vite": "^8.0.0" }, "optionalPeers": ["@rolldown/plugin-babel", "babel-plugin-react-compiler", "oxc-transform-react"] }, "sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw=="],
 
