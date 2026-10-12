@@ -10,6 +10,7 @@ type QueuedDelivery = {
 };
 
 const ENQUEUE_LEASE_MS = 5 * 60_000;
+const ENQUEUE_FAILURE_RETRY_MS = 15 * 60_000;
 
 export class WebhookOutboxRecoveryError extends DomainError {
 	constructor(readonly result: { queued: number; failed: number }) {
@@ -86,7 +87,13 @@ export async function recoverWebhookOutbox(
 				`UPDATE webhook_deliveries SET next_attempt_at = ?, updated_at = ?
 				 WHERE id = ? AND status = ? AND attempt_count = ?`,
 			)
-				.bind(now, now, row.id, status, row.attempt_count)
+				.bind(
+					now + ENQUEUE_FAILURE_RETRY_MS,
+					now,
+					row.id,
+					status,
+					row.attempt_count,
+				)
 				.run();
 			failed += 1;
 		}
