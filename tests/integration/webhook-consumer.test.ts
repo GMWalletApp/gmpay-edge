@@ -412,6 +412,8 @@ describe("Webhook queue consumer on D1", () => {
 			processWebhookMessage(db, duplicate.message, fetcher),
 		]);
 		expect(fetcher).toHaveBeenCalledTimes(1);
+		expect(first.retry).not.toHaveBeenCalled();
+		expect(duplicate.retry).not.toHaveBeenCalled();
 		await expect(delivery(db, "delivery-concurrent")).resolves.toMatchObject({
 			status: "succeeded",
 			attempt_count: 1,
@@ -520,6 +522,32 @@ describe("Webhook queue consumer on D1", () => {
 		]);
 		expect(first.queued + second.queued).toBe(1);
 		expect(send).toHaveBeenCalledOnce();
+	});
+
+	it("backs off the outbox after Queue rejects an enqueue", async () => {
+		const now = Date.now();
+		await seedDelivery(db, "enqueue-backoff", "queued", 0, null);
+		const send = vi.fn().mockRejectedValue(new Error("Queue unavailable"));
+		const env = { DB: db, WEBHOOK_QUEUE: { send } } as unknown as Pick<
+			Env,
+			"DB" | "WEBHOOK_QUEUE"
+		>;
+		const result = await recoverWebhookOutbox(env, now);
+		expect(result.failed).toBeGreaterThanOrEqual(1);
+		await expect(delivery(db, "delivery-enqueue-backoff")).resolves.toMatchObject({
+			status: "queued",
+			attempt_count: 0,
+			next_attempt_at: now + 15 * 60_000,
+		});
+		send.mockClear();
+		await recoverWebhookOutbox(env, now + 60_000);
+		expect(
+			send.mock.calls.some(
+				([message]) =>
+					(message as WebhookQueueMessage).deliveryId ===
+					"delivery-enqueue-backoff",
+			),
+		).toBe(false);
 	});
 
 	it("recovers a delivery stranded in delivering once its consumer lease expired", async () => {
@@ -662,12 +690,12 @@ describe("Webhook queue consumer on D1", () => {
 			resolveHostname: dnsFailure,
 		});
 		expect(fetcher).not.toHaveBeenCalled();
-		expect(first.retry).toHaveBeenCalledWith({ delaySeconds: 15 });
-		expect(first.ack).not.toHaveBeenCalled();
+		expect(first.retry).not.toHaveBeenCalled();
+		expect(first.ack).toHaveBeenCalledOnce();
 		const released = await delivery(db, "delivery-transient");
 		expect(released).toMatchObject({ status: "queued", attempt_count: 0 });
 		expect(Number(released?.next_attempt_at)).toBeGreaterThanOrEqual(
-			now + 15_000 + 5 * 60_000,
+			now + 15 * 60_000,
 		);
 
 		await db
@@ -680,7 +708,8 @@ describe("Webhook queue consumer on D1", () => {
 		await processWebhookMessage(db, second.message, fetcher, undefined, {
 			resolveHostname: dnsFailure,
 		});
-		expect(second.retry).toHaveBeenCalledWith({ delaySeconds: 15 });
+		expect(second.retry).not.toHaveBeenCalled();
+		expect(second.ack).toHaveBeenCalledOnce();
 		await expect(delivery(db, "delivery-transient")).resolves.toMatchObject({
 			status: "failed",
 			attempt_count: 1,
