@@ -47,8 +47,9 @@ const callbackSnapshotSchema = z.object({
 // DoH resolution (3s) and the surrounding D1 round trips run inside the lease
 // in addition to the merchant fetch timeout.
 const CLAIM_LEASE_MARGIN_MS = 15_000;
-// Queue redelivery delay for infrastructure failures; the attempt is not consumed.
-const TRANSIENT_RETRY_DELAY_MS = 15_000;
+// Keep infrastructure failures in D1 until the next outbox sweep. This bounds
+// Queue reads even when the same dependency remains unavailable all day.
+const TRANSIENT_RETRY_DELAY_MS = 15 * 60_000;
 const ENQUEUE_LEASE_MS = 5 * 60_000;
 
 /** A permanent delivery-configuration failure that consumes an attempt. */
@@ -94,35 +95,14 @@ export async function processWebhookMessage(
 		)
 		.run();
 	if ((claimed.meta.changes ?? 0) !== 1) {
-		const current = await db
-			.prepare(
-				"SELECT status, attempt_count, next_attempt_at FROM webhook_deliveries WHERE id = ?",
-			)
-			.bind(message.body.deliveryId)
-			.first<{
-				status: string;
-				attempt_count: number;
-				next_attempt_at: number | null;
-			}>();
-		if (
-			!current ||
-			current.status === "succeeded" ||
-			current.status === "dead" ||
-			(current.status === "failed" && current.attempt_count >= attempt)
-		) {
-			message.ack();
-		} else {
-			const delay = Math.max(
-				1,
-				Math.ceil(
-					((current.next_attempt_at ?? startedAt + 5_000) - startedAt) / 1000,
-				),
-			);
-			message.retry({ delaySeconds: delay });
-		}
+		// A live row is already leased or waiting for its due time. The persisted
+		// outbox will re-enqueue it; retrying this envelope only burns Queue reads.
+		message.ack();
 		return { success: false as const, errorCode: "delivery_not_claimed" };
 	}
 	let result: WebhookDeliveryResult;
+	let stage: "resolve_delivery" | "resolve_hostname" | "deliver" =
+		"resolve_delivery";
 	try {
 		const delivery = await resolveWebhookDelivery(
 			db,
@@ -132,6 +112,7 @@ export async function processWebhookMessage(
 		const resolveHostname =
 			context.resolveHostname ??
 			(fetcher === fetch ? resolveWebhookHostname : undefined);
+		stage = "resolve_hostname";
 		if (
 			resolveHostname &&
 			!(await assertSafeResolvedWebhookUrl(delivery.url, resolveHostname))
@@ -139,13 +120,21 @@ export async function processWebhookMessage(
 			throw new WebhookConfigurationError(
 				"Webhook delivery hostname did not resolve publicly",
 			);
+		stage = "deliver";
 		result = await deliverWebhook(delivery, fetcher, settings.webhookTimeoutMs);
 	} catch (error) {
 		if (!(error instanceof WebhookConfigurationError)) {
-			// D1 read or DoH lookup failure: nothing reached the merchant, so hand the
-			// claim back and let the Queue redeliver the same attempt number.
+			// D1 read or DoH lookup failure: nothing reached the merchant. Keep the
+			// application attempt number and let the persisted outbox retry later.
+			console.error(
+				JSON.stringify({
+					event: "webhook_transient_failure",
+					stage,
+					errorName: error instanceof Error ? error.name : "UnknownError",
+				}),
+			);
 			await releaseWebhookClaim(db, message.body.deliveryId, attempt);
-			message.retry({ delaySeconds: TRANSIENT_RETRY_DELAY_MS / 1_000 });
+			message.ack();
 			return { success: false as const, errorCode: "transient_failure" };
 		}
 		result = {
@@ -246,9 +235,8 @@ export async function processWebhookMessage(
 
 /**
  * Returns a claimed delivery to its pre-claim state (`queued` for the first
- * attempt, otherwise `failed`) without recording an attempt. The row stays
- * leased past the Queue redelivery delay so the outbox sweep only takes over
- * when the redelivery does not arrive.
+ * attempt, otherwise `failed`) without recording an attempt. The row becomes
+ * due after a bounded cooldown so the outbox can safely re-enqueue it.
  */
 async function releaseWebhookClaim(
 	db: D1Database,
@@ -266,7 +254,7 @@ async function releaseWebhookClaim(
 		.bind(
 			attempt,
 			attempt,
-			now + TRANSIENT_RETRY_DELAY_MS + ENQUEUE_LEASE_MS,
+			now + TRANSIENT_RETRY_DELAY_MS,
 			now,
 			deliveryId,
 			attempt,
