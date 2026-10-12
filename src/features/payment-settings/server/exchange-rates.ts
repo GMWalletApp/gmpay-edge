@@ -734,17 +734,17 @@ function providerSymbol(
 	base: string,
 	quote: string,
 ) {
-	const marketBase = providerMarketAsset(base);
-	const marketQuote = providerMarketAsset(quote);
+	const marketBase = providerMarketAsset(source, base);
+	const marketQuote = providerMarketAsset(source, quote);
 	return source === "okx"
 		? `${marketBase}-${marketQuote}`.toUpperCase()
 		: `${marketBase}${marketQuote}`.toUpperCase();
 }
 
-function providerMarketAsset(asset: string) {
+function providerMarketAsset(source: "binance" | "okx", asset: string) {
 	const normalized = asset.toUpperCase();
 	if (normalized === "MATIC") return "POL";
-	if (normalized === "GRAM") return "TON";
+	if (source === "binance" && normalized === "GRAM") return "TON";
 	return normalized;
 }
 
@@ -791,3 +791,4 @@ function validAdjustmentBps(value: unknown) {
 		? value
 		: 0;
 }
+
