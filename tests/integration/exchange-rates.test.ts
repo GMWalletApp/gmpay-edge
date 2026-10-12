@@ -246,6 +246,30 @@ describe("exchange-rate refresh", () => {
 		);
 	});
 
+	it("loads all seven built-in crypto pairs from current OKX market symbols", async () => {
+		const pairs = ["TRX", "ETH", "BNB", "MATIC", "GRAM", "APT", "SOL"].map(
+			(base) => ({ id: base.toLowerCase(), base, quote: "USDT" }),
+		);
+		const request = vi.fn((_input: string) =>
+			Promise.resolve(
+				Response.json({
+					code: "0",
+					data: ["TRX", "ETH", "BNB", "POL", "GRAM", "APT", "SOL"].map(
+						(symbol, index) => ({ instId: `${symbol}-USDT`, last: String(index + 1) }),
+					),
+				}),
+			),
+		);
+		const prices = await fetchCryptoRateQuotes("okx", pairs, request);
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0]).toBe(
+			"https://www.okx.com/api/v5/market/tickers?instType=SPOT",
+		);
+		expect([...prices]).toEqual(
+			pairs.map((pair, index) => [pair.id, String(index + 1)]),
+		);
+	});
+
 	it("falls back to another official Binance endpoint when the Worker endpoint is blocked", async () => {
 		const request = vi
 			.fn()
@@ -440,3 +464,4 @@ describe("exchange-rate refresh", () => {
 		).rejects.toThrow("API error 101");
 	});
 });
+
