@@ -183,9 +183,12 @@ update. Catalog defaults seeded with `observed_at = 0` remain quotable until
 the first synchronization replaces them.
 
 Each rate page has its own sync settings. Crypto settings select Binance or OKX
-and an automatic interval. Fiat settings select a provider (currently
-`exchangerate.host`), its API Key, an automatic interval, and an adjustment in
-basis points. Each category has an independent automatic-sync switch. The
+and an automatic interval. Fiat settings select a provider
+(`exchangerate.host` with its API Key, or the keyless AllRatesToday ECB
+reference-rate feed), an automatic interval, and an adjustment in basis points.
+AllRatesToday publishes about 30 currencies once per day; other fiat rows keep
+their last rate until it expires. Its terms ask for the attribution
+"Exchange rates by AllRatesToday" where rates are displayed. Each category has an independent automatic-sync switch. The
 one-minute Cron skips disabled categories and otherwise executes only when the
 saved interval is due. **Run now** first saves the current settings and then
 bypasses both the automatic-sync switch and due-time check.

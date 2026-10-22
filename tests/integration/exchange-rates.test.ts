@@ -10,6 +10,7 @@ import {
 } from "vitest";
 import {
 	fetchCryptoRateQuotes,
+	fetchAllRatesTodayFiatRates,
 	fetchExchangeRateQuote,
 	fetchFiatRates,
 	refreshExchangeRates,
@@ -420,6 +421,58 @@ describe("exchange-rate refresh", () => {
 				requestCount: 1,
 			}),
 		);
+	});
+
+	it("refreshes fiat rates from the keyless AllRatesToday source", async () => {
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const now = 1_800_002_000_000;
+		const request = vi.fn((_url: string, _init?: RequestInit) =>
+			Promise.resolve(
+				Response.json({
+					result: "success",
+					base_code: "USD",
+					rates: { USD: 1, CNY: 7.1, EUR: 0.86 },
+				}),
+			),
+		);
+		await expect(
+			refreshExchangeRates(db, request, now, {
+				category: "fiat",
+				configuration: {
+					enabled: true,
+					provider: "allratestoday",
+					intervalMs: 86_400_000,
+					adjustmentBps: 0,
+					credentials: { apiKey: "" },
+					lastSyncedAt: null,
+				},
+			}),
+		).resolves.toMatchObject({ configured: 2, updated: 2, failed: 0 });
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0]).toBe(
+			"https://allratestoday.com/api/open/latest/USD",
+		);
+		const rows = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' AND quote IN ('CNY', 'EUR', 'JPY') ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		expect(rows.results).toEqual([
+			{ quote: "CNY", raw_rate: "7.1", source: "allratestoday" },
+			{ quote: "EUR", raw_rate: "0.86", source: "allratestoday" },
+			{ quote: "JPY", raw_rate: "155.2", source: "exchangerate_host" },
+		]);
+		await expect(
+			fetchAllRatesTodayFiatRates(() =>
+				Promise.resolve(
+					Response.json(
+						{ result: "error", "error-type": "unsupported-code" },
+						{ status: 400 },
+					),
+				),
+			),
+		).rejects.toThrow("HTTP 400");
 	});
 
 	it("surfaces exchangerate.host API errors without exposing credentials", async () => {
