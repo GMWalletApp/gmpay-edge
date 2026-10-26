@@ -14,6 +14,7 @@ import {
 	fetchExchangeRateQuote,
 	fetchFiatRates,
 	refreshExchangeRates,
+	refreshRateCategoryIfDue,
 	saveRateSyncConfiguration,
 } from "#/features/payment-settings/server/exchange-rates";
 import { applyMigrations } from "./migrations";
@@ -473,6 +474,86 @@ describe("exchange-rate refresh", () => {
 				),
 			),
 		).rejects.toThrow("HTTP 400");
+	});
+
+	it("keeps prior fiat rows and reports a structured failure when AllRatesToday is rate limited or down", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const before = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(new Response("slow down", { status: 429 })),
+				1_800_003_000_000,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "http_429" }],
+		});
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.reject(new Error("socket hang up")),
+				1_800_003_000_001,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "provider_error" }],
+		});
+		const after = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		expect(after.results).toEqual(before.results);
+	});
+
+	it("runs the keyless provider on schedule without an API key but still gates exchangerate.host on one", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const request = vi.fn(() =>
+			Promise.resolve(
+				Response.json({ result: "success", rates: { USD: 1, EUR: 0.86 } }),
+			),
+		);
+		const base = {
+			enabled: true,
+			intervalMs: 86_400_000,
+			adjustmentBps: 0,
+			credentials: { apiKey: "" },
+			lastSyncedAt: null,
+		};
+		await expect(
+			refreshRateCategoryIfDue(db, "fiat", request, 1_800_004_000_000, {
+				...base,
+				provider: "exchangerate_host",
+			}),
+		).resolves.toBeNull();
+		expect(request).not.toHaveBeenCalled();
+		await expect(
+			refreshRateCategoryIfDue(db, "fiat", request, 1_800_004_000_000, {
+				...base,
+				provider: "allratestoday",
+			}),
+		).resolves.toMatchObject({ failed: 0 });
+		expect(request).toHaveBeenCalledTimes(1);
 	});
 
 	it("surfaces exchangerate.host API errors without exposing credentials", async () => {
