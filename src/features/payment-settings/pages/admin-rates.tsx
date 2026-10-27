@@ -142,6 +142,21 @@ export function RatesPage({ view }: { view: View }) {
 				}}
 				table={{ stickyHeader: true }}
 			/>
+			{view === "fiat" &&
+			page.data?.syncSettings?.category === "fiat" &&
+			page.data.syncSettings.provider === "allratestoday" ? (
+				// Required by the keyless feed's terms wherever its rates are shown.
+				<p className="text-muted-foreground text-xs">
+					<a
+						href="https://allratestoday.com"
+						target="_blank"
+						rel="noreferrer"
+						className="underline underline-offset-2"
+					>
+						Exchange rates by AllRatesToday
+					</a>
+				</p>
+			) : null}
 			<ModalForm
 				open={Boolean(editingRate)}
 				onOpenChange={(open) => {

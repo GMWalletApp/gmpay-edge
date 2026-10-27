@@ -187,8 +187,14 @@ and an automatic interval. Fiat settings select a provider
 (`exchangerate.host` with its API Key, or the keyless AllRatesToday ECB
 reference-rate feed), an automatic interval, and an adjustment in basis points.
 AllRatesToday publishes about 30 currencies once per day; other fiat rows keep
-their last rate until it expires. Its terms ask for the attribution
-"Exchange rates by AllRatesToday" where rates are displayed. Each category has an independent automatic-sync switch. The
+their last rate until it expires. Its payload must declare `base_code: "USD"`
+and a publication time: `observed_at` is that publication time (not the fetch
+time) and `expires_at` is 12 hours after the announced next update, so a
+Friday table stays quotable over the weekend but a snapshot the provider keeps
+re-serving never gains fresh validity; snapshots older than five days are
+refused. Its terms ask for the attribution "Exchange rates by AllRatesToday"
+where rates are displayed, which the fiat rates page shows while that provider
+is selected. Each category has an independent automatic-sync switch. The
 one-minute Cron skips disabled categories and otherwise executes only when the
 saved interval is due. **Run now** first saves the current settings and then
 bypasses both the automatic-sync switch and due-time check.

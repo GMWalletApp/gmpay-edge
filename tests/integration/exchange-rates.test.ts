@@ -428,11 +428,15 @@ describe("exchange-rate refresh", () => {
 		vi.spyOn(Math, "random").mockReturnValue(0);
 		vi.spyOn(console, "info").mockImplementation(() => undefined);
 		const now = 1_800_002_000_000;
+		// Published one hour before the sync; next table announced for +24h.
+		const publishedUnix = Math.floor(now / 1000) - 3_600;
 		const request = vi.fn((_url: string, _init?: RequestInit) =>
 			Promise.resolve(
 				Response.json({
 					result: "success",
 					base_code: "USD",
+					time_last_update_unix: publishedUnix,
+					time_next_update_unix: publishedUnix + 86_400,
 					rates: { USD: 1, CNY: 7.1, EUR: 0.86 },
 				}),
 			),
@@ -464,6 +468,17 @@ describe("exchange-rate refresh", () => {
 			{ quote: "EUR", raw_rate: "0.86", source: "allratestoday" },
 			{ quote: "JPY", raw_rate: "155.2", source: "exchangerate_host" },
 		]);
+		// observed_at is the provider's publication time, not the fetch time,
+		// and validity ends 12h after the announced next update.
+		const timing = await db
+			.prepare(
+				"SELECT observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+			)
+			.first<{ observed_at: number; expires_at: number }>();
+		expect(timing).toEqual({
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000 + 12 * 3_600_000,
+		});
 		await expect(
 			fetchAllRatesTodayFiatRates(() =>
 				Promise.resolve(
@@ -474,6 +489,159 @@ describe("exchange-rate refresh", () => {
 				),
 			),
 		).rejects.toThrow("HTTP 400");
+	});
+
+	it("refuses AllRatesToday payloads with a wrong or missing base and leaves stored USD rows untouched", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const now = 1_800_002_500_000;
+		const publishedUnix = Math.floor(now / 1000) - 600;
+		const before = await db
+			.prepare(
+				"SELECT quote, raw_rate, source, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all();
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		const payloads = [
+			// EUR table served where a USD one was requested
+			{
+				result: "success",
+				base_code: "EUR",
+				time_last_update_unix: publishedUnix,
+				rates: { USD: 1.16, CNY: 8.3 },
+			},
+			// base omitted entirely
+			{
+				result: "success",
+				time_last_update_unix: publishedUnix,
+				rates: { USD: 1, CNY: 7.1 },
+			},
+			// publication time missing
+			{ result: "success", base_code: "USD", rates: { USD: 1, CNY: 7.1 } },
+		];
+		for (const payload of payloads) {
+			await expect(
+				refreshExchangeRates(
+					db,
+					() => Promise.resolve(Response.json(payload)),
+					now,
+					configuration,
+				),
+			).resolves.toMatchObject({
+				updated: 0,
+				failed: 1,
+				failures: [{ source: "allratestoday", code: "provider_error" }],
+			});
+		}
+		const after = await db
+			.prepare(
+				"SELECT quote, raw_rate, source, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all();
+		expect(after.results).toEqual(before.results);
+	});
+
+	it("does not renew validity when AllRatesToday keeps serving the same snapshot, and refuses stale ones", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		const firstSync = 1_800_010_000_000;
+		const publishedUnix = Math.floor(firstSync / 1000) - 3_600;
+		const snapshot = {
+			result: "success",
+			base_code: "USD",
+			time_last_update_unix: publishedUnix,
+			time_next_update_unix: publishedUnix + 86_400,
+			rates: { USD: 1, EUR: 0.87 },
+		};
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				firstSync,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		const read = () =>
+			db
+				.prepare(
+					"SELECT raw_rate, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+				)
+				.first<{ raw_rate: string; observed_at: number; expires_at: number }>();
+		const stored = await read();
+		expect(stored).toEqual({
+			raw_rate: "0.87",
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000 + 12 * 3_600_000,
+		});
+		// Two days later the provider still serves the identical snapshot:
+		// the row keeps its original observation and expiry (now in the past)
+		// instead of being re-published as a fresh 24h observation.
+		const secondSync = firstSync + 2 * 86_400_000;
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				secondSync,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 0, failed: 0 });
+		expect(await read()).toEqual(stored);
+		// Six days later the same snapshot is refused outright.
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				firstSync + 6 * 86_400_000,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "provider_error" }],
+		});
+		expect(await read()).toEqual(stored);
+		// A genuinely newer publication replaces it.
+		const newerUnix = publishedUnix + 86_400;
+		await expect(
+			refreshExchangeRates(
+				db,
+				() =>
+					Promise.resolve(
+						Response.json({
+							...snapshot,
+							time_last_update_unix: newerUnix,
+							time_next_update_unix: newerUnix + 86_400,
+							rates: { USD: 1, EUR: 0.88 },
+						}),
+					),
+				secondSync,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		expect(await read()).toEqual({
+			raw_rate: "0.88",
+			observed_at: newerUnix * 1000,
+			expires_at: (newerUnix + 86_400) * 1000 + 12 * 3_600_000,
+		});
 	});
 
 	it("keeps prior fiat rows and reports a structured failure when AllRatesToday is rate limited or down", async () => {
@@ -530,7 +698,12 @@ describe("exchange-rate refresh", () => {
 		vi.spyOn(console, "info").mockImplementation(() => undefined);
 		const request = vi.fn(() =>
 			Promise.resolve(
-				Response.json({ result: "success", rates: { USD: 1, EUR: 0.86 } }),
+				Response.json({
+					result: "success",
+					base_code: "USD",
+					time_last_update_unix: 1_800_004_000 - 3_600,
+					rates: { USD: 1, EUR: 0.86 },
+				}),
 			),
 		);
 		const base = {

@@ -39,10 +39,32 @@ const fiatRatesSchema = z.looseObject({
 		.optional(),
 });
 
+// The open endpoint is asked for a USD table; anything else is rejected at
+// this boundary so a wrong-base payload can never be stored as USD quotes.
 const allRatesTodayLatestSchema = z.looseObject({
 	result: z.literal("success"),
+	base_code: z.literal("USD"),
 	rates: z.record(z.string(), z.number().positive()),
+	time_last_update_unix: z.number().int().positive(),
+	time_next_update_unix: z.number().int().positive().optional(),
 });
+
+// Snapshots older than this are refused rather than re-published as fresh.
+// The ECB table behind the endpoint is daily on business days, so the
+// longest legitimate gap (a long weekend) is well inside it.
+const ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS = 5 * 24 * 60 * 60_000;
+// Validity granted after the provider's announced next update, so a table
+// published on Friday stays quotable over the weekend until Monday's refresh
+// without any single snapshot being extended past its own announced horizon.
+const ALLRATESTODAY_NEXT_UPDATE_GRACE_MS = 12 * 60 * 60_000;
+
+export type AllRatesTodayFiatSnapshot = {
+	rates: Record<string, string>;
+	/** Provider publication time (ms since epoch), not the fetch time. */
+	observedAt: number;
+	/** When the snapshot stops being quotable (ms since epoch). */
+	expiresAt: number;
+};
 
 class ExchangeRateProviderError extends Error {
 	readonly failureCode: `http_${number}` | "provider_error";
@@ -446,28 +468,37 @@ export async function refreshExchangeRates(
 				context.apiKey ?? fiatConfiguration?.credentials.apiKey ?? null;
 			if (fiatProvider === "exchangerate_host" && !apiKey)
 				throw new Error("exchangerate_host API Key is not configured");
-			const rates = await observeProviderOperation(
+			const fetched = await observeProviderOperation(
 				{
 					adapter: fiatProvider,
 					operation: "sync_fiat_rates",
 					classifyError: classifyExchangeRateError,
 				},
-				(counters) => {
+				async (counters) => {
 					counters.request();
-					return fiatProvider === "allratestoday"
-						? fetchAllRatesTodayFiatRates(request)
-						: fetchFiatRates(
-								"USD",
-								[],
-								request,
-								"https://api.exchangerate.host",
-								apiKey,
-							);
+					if (fiatProvider === "allratestoday")
+						return fetchAllRatesTodayFiatRates(request, now);
+					// exchangerate.host keeps its existing policy: the fetch
+					// time is the observation and rows live for 24h.
+					return {
+						rates: await fetchFiatRates(
+							"USD",
+							[],
+							request,
+							"https://api.exchangerate.host",
+							apiKey,
+						),
+						observedAt: now,
+						expiresAt: now + 24 * 60 * 60_000,
+					} satisfies AllRatesTodayFiatSnapshot;
 				},
 			);
-			const snapshots = Object.entries(rates)
+			const snapshots = Object.entries(fetched.rates)
 				.filter(([quote]) => /^[A-Z]{3}$/.test(quote) && quote !== "USD")
 				.map(([quote, rawRate]) => ({ quote, rawRate }));
+			// A snapshot the provider already published cannot move a row's
+			// observed_at/expires_at forward again: the upsert only wins when
+			// the incoming publication time is newer than the stored one.
 			const results = await db.batch(
 				snapshots.map((snapshot) =>
 					db
@@ -480,7 +511,9 @@ export async function refreshExchangeRates(
 							 raw_rate = excluded.raw_rate, rate = excluded.rate,
 							 source = excluded.source, adjustment_bps = excluded.adjustment_bps,
 							 observed_at = excluded.observed_at, expires_at = excluded.expires_at,
-							 updated_at = excluded.updated_at`,
+							 updated_at = excluded.updated_at
+							 WHERE excluded.observed_at > exchange_rates.observed_at
+							    OR excluded.source <> exchange_rates.source`,
 						)
 						.bind(
 							`rate-usd-${snapshot.quote.toLowerCase()}`,
@@ -492,8 +525,8 @@ export async function refreshExchangeRates(
 							),
 							fiatProvider,
 							fiatConfiguration?.adjustmentBps ?? 0,
-							now,
-							now + 24 * 60 * 60_000,
+							fetched.observedAt,
+							fetched.expiresAt,
 							now,
 							now,
 						),
@@ -691,7 +724,8 @@ export async function fetchAllRatesTodayFiatRates(
 		input: string,
 		init?: RequestInit,
 	) => Promise<Response>,
-) {
+	now = Date.now(),
+): Promise<AllRatesTodayFiatSnapshot> {
 	const response = await request(
 		"https://allratestoday.com/api/open/latest/USD",
 		{
@@ -705,12 +739,29 @@ export async function fetchAllRatesTodayFiatRates(
 			response.status,
 		);
 	const payload = allRatesTodayLatestSchema.parse(await response.json());
-	return Object.fromEntries(
-		Object.entries(payload.rates).map(([quote, rate]) => [
-			quote.toUpperCase(),
-			String(rate),
-		]),
-	);
+	const observedAt = payload.time_last_update_unix * 1000;
+	if (observedAt > now + 60 * 60_000)
+		throw new ExchangeRateProviderError(
+			"allratestoday snapshot is timestamped in the future",
+		);
+	if (now - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS)
+		throw new ExchangeRateProviderError(
+			"allratestoday snapshot is stale (older than 5 days)",
+		);
+	const announcedNext = payload.time_next_update_unix
+		? payload.time_next_update_unix * 1000
+		: observedAt + 24 * 60 * 60_000;
+	return {
+		rates: Object.fromEntries(
+			Object.entries(payload.rates).map(([quote, rate]) => [
+				quote.toUpperCase(),
+				String(rate),
+			]),
+		),
+		observedAt,
+		expiresAt:
+			Math.max(announcedNext, observedAt) + ALLRATESTODAY_NEXT_UPDATE_GRACE_MS,
+	} satisfies AllRatesTodayFiatSnapshot;
 }
 
 function defaultRateSourceUrl(source: "binance" | "okx") {
