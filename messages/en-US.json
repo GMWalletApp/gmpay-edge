@@ -806,6 +806,7 @@
 	"rates_edit_rate": "Edit rate",
 	"rates_edit_rate_description": "Set the final local rate. Manual values are not adjusted again by basis points",
 	"rates_sync_now": "Run now",
+	"rates_attribution_allratestoday": "Exchange rates by AllRatesToday",
 	"jobs_task_name": "Task",
 	"jobs_schedule": "Schedule",
 	"jobs_schedule_every": "Every {time}",

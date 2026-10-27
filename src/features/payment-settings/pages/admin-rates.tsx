@@ -153,7 +153,7 @@ export function RatesPage({ view }: { view: View }) {
 						rel="noreferrer"
 						className="underline underline-offset-2"
 					>
-						Exchange rates by AllRatesToday
+						{m.rates_attribution_allratestoday()}
 					</a>
 				</p>
 			) : null}

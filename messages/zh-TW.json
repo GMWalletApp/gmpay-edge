@@ -806,6 +806,7 @@
 	"rates_edit_rate": "編輯匯率",
 	"rates_edit_rate_description": "設定本地最終匯率；手動值不會再次套用基點調整",
 	"rates_sync_now": "立即執行",
+	"rates_attribution_allratestoday": "匯率資料由 AllRatesToday 提供",
 	"jobs_task_name": "任務",
 	"jobs_schedule": "排程",
 	"jobs_schedule_every": "每{time}",

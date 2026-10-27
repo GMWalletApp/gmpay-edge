@@ -808,6 +808,7 @@
   "rates_edit_rate": "요금 수정",
   "rates_edit_rate_description": "최종 현지 요금을 설정하세요. 수동 값은 기준점에 따라 다시 조정되지 않습니다.",
   "rates_sync_now": "지금 실행",
+  "rates_attribution_allratestoday": "환율 제공: AllRatesToday",
   "jobs_task_name": "작업",
   "jobs_schedule": "일정",
   "jobs_schedule_every": "{time}마다",

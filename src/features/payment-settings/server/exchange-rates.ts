@@ -498,7 +498,10 @@ export async function refreshExchangeRates(
 				.map(([quote, rawRate]) => ({ quote, rawRate }));
 			// A snapshot the provider already published cannot move a row's
 			// observed_at/expires_at forward again: the upsert only wins when
-			// the incoming publication time is newer than the stored one.
+			// the incoming publication time is newer than the stored one. The
+			// same publication with a changed adjustment still recomputes
+			// rate/adjustment_bps from its (identical) raw rate, keeping the
+			// stored observation and expiry.
 			const results = await db.batch(
 				snapshots.map((snapshot) =>
 					db
@@ -510,10 +513,16 @@ export async function refreshExchangeRates(
 							 ON CONFLICT(category, base, quote) DO UPDATE SET
 							 raw_rate = excluded.raw_rate, rate = excluded.rate,
 							 source = excluded.source, adjustment_bps = excluded.adjustment_bps,
-							 observed_at = excluded.observed_at, expires_at = excluded.expires_at,
+							 observed_at = excluded.observed_at,
+							 expires_at = CASE
+							   WHEN excluded.observed_at > exchange_rates.observed_at
+							     OR excluded.source <> exchange_rates.source
+							   THEN excluded.expires_at ELSE exchange_rates.expires_at END,
 							 updated_at = excluded.updated_at
 							 WHERE excluded.observed_at > exchange_rates.observed_at
-							    OR excluded.source <> exchange_rates.source`,
+							    OR excluded.source <> exchange_rates.source
+							    OR (excluded.observed_at = exchange_rates.observed_at
+							        AND excluded.adjustment_bps <> exchange_rates.adjustment_bps)`,
 						)
 						.bind(
 							`rate-usd-${snapshot.quote.toLowerCase()}`,
@@ -751,6 +760,13 @@ export async function fetchAllRatesTodayFiatRates(
 	const announcedNext = payload.time_next_update_unix
 		? payload.time_next_update_unix * 1000
 		: observedAt + 24 * 60 * 60_000;
+	if (
+		announcedNext <= observedAt ||
+		announcedNext - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS
+	)
+		throw new ExchangeRateProviderError(
+			"allratestoday next update is not within 5 days after publication",
+		);
 	return {
 		rates: Object.fromEntries(
 			Object.entries(payload.rates).map(([quote, rate]) => [
@@ -759,8 +775,12 @@ export async function fetchAllRatesTodayFiatRates(
 			]),
 		),
 		observedAt,
-		expiresAt:
-			Math.max(announcedNext, observedAt) + ALLRATESTODAY_NEXT_UPDATE_GRACE_MS,
+		// Never quotable past the five-day publication-age horizon, whatever
+		// the provider announces, even if later syncs fail or are disabled.
+		expiresAt: Math.min(
+			announcedNext + ALLRATESTODAY_NEXT_UPDATE_GRACE_MS,
+			observedAt + ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS,
+		),
 	} satisfies AllRatesTodayFiatSnapshot;
 }
 

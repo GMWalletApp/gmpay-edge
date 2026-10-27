@@ -806,6 +806,7 @@
 	"rates_edit_rate": "编辑汇率",
 	"rates_edit_rate_description": "设置本地最终汇率；手动值不会再次应用基点调整",
 	"rates_sync_now": "立即执行",
+	"rates_attribution_allratestoday": "汇率数据由 AllRatesToday 提供",
 	"jobs_task_name": "任务",
 	"jobs_schedule": "调度",
 	"jobs_schedule_every": "每{time}",

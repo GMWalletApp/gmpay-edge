@@ -808,6 +808,7 @@
   "rates_edit_rate": "Изменить цену",
   "rates_edit_rate_description": "Установите окончательный местный тариф. Значения, введенные вручную, больше не корректируются по базисным пунктам.",
   "rates_sync_now": "Беги сейчас",
+  "rates_attribution_allratestoday": "Курсы валют предоставлены AllRatesToday",
   "jobs_task_name": "Задача",
   "jobs_schedule": "Расписание",
   "jobs_schedule_every": "Периодичность: {time}",

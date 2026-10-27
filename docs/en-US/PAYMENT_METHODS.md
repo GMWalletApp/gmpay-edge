@@ -191,8 +191,11 @@ their last rate until it expires. Its payload must declare `base_code: "USD"`
 and a publication time: `observed_at` is that publication time (not the fetch
 time) and `expires_at` is 12 hours after the announced next update, so a
 Friday table stays quotable over the weekend but a snapshot the provider keeps
-re-serving never gains fresh validity; snapshots older than five days are
-refused. Its terms ask for the attribution "Exchange rates by AllRatesToday"
+re-serving never gains fresh validity. Expiry is capped at five days after
+publication; snapshots older than five days, and responses whose next update
+is not after the publication or is more than five days later, are refused. Run
+now on an unchanged snapshot reapplies a changed adjustment to its raw rate
+without extending its expiry. Its terms ask for the attribution "Exchange rates by AllRatesToday"
 where rates are displayed, which the fiat rates page shows while that provider
 is selected. Each category has an independent automatic-sync switch. The
 one-minute Cron skips disabled categories and otherwise executes only when the
