@@ -808,6 +808,7 @@
   "rates_edit_rate": "編集速度",
   "rates_edit_rate_description": "最終的なローカルレートを設定します。手動値はベーシスポイントによって再調整されません",
   "rates_sync_now": "今すぐ実行",
+  "rates_attribution_allratestoday": "為替レート提供: AllRatesToday",
   "jobs_task_name": "タスク",
   "jobs_schedule": "スケジュール",
   "jobs_schedule_every": "{time}ごと",

@@ -1,6 +1,7 @@
 import type { AdapterErrorKind } from "./chains/types";
 
 const providerAdapterIds = [
+	"allratestoday",
 	"aptos",
 	"binance",
 	"evm",

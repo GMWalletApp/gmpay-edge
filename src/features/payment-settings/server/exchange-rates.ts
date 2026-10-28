@@ -39,6 +39,33 @@ const fiatRatesSchema = z.looseObject({
 		.optional(),
 });
 
+// The open endpoint is asked for a USD table; anything else is rejected at
+// this boundary so a wrong-base payload can never be stored as USD quotes.
+const allRatesTodayLatestSchema = z.looseObject({
+	result: z.literal("success"),
+	base_code: z.literal("USD"),
+	rates: z.record(z.string(), z.number().positive()),
+	time_last_update_unix: z.number().int().positive(),
+	time_next_update_unix: z.number().int().positive().optional(),
+});
+
+// Snapshots older than this are refused rather than re-published as fresh.
+// The ECB table behind the endpoint is daily on business days, so the
+// longest legitimate gap (a long weekend) is well inside it.
+const ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS = 5 * 24 * 60 * 60_000;
+// Validity granted after the provider's announced next update, so a table
+// published on Friday stays quotable over the weekend until Monday's refresh
+// without any single snapshot being extended past its own announced horizon.
+const ALLRATESTODAY_NEXT_UPDATE_GRACE_MS = 12 * 60 * 60_000;
+
+export type AllRatesTodayFiatSnapshot = {
+	rates: Record<string, string>;
+	/** Provider publication time (ms since epoch), not the fetch time. */
+	observedAt: number;
+	/** When the snapshot stops being quotable (ms since epoch). */
+	expiresAt: number;
+};
+
 class ExchangeRateProviderError extends Error {
 	readonly failureCode: `http_${number}` | "provider_error";
 
@@ -50,6 +77,7 @@ class ExchangeRateProviderError extends Error {
 }
 
 export type RateSyncCategory = "crypto" | "fiat";
+export type FiatRateProvider = "exchangerate_host" | "allratestoday";
 export type CryptoRateSyncConfiguration = {
 	enabled: boolean;
 	provider: "binance" | "okx";
@@ -59,7 +87,7 @@ export type CryptoRateSyncConfiguration = {
 };
 export type FiatRateSyncConfiguration = {
 	enabled: boolean;
-	provider: "exchangerate_host";
+	provider: FiatRateProvider;
 	intervalMs: number;
 	adjustmentBps: number;
 	credentials: { apiKey: string };
@@ -162,7 +190,10 @@ export function parseRateSyncConfiguration(
 				: {};
 		return {
 			enabled: record.enabled === true,
-			provider: "exchangerate_host",
+			provider:
+				record.provider === "allratestoday"
+					? "allratestoday"
+					: "exchangerate_host",
 			intervalMs,
 			adjustmentBps: validAdjustmentBps(record.adjustmentBps),
 			credentials: {
@@ -297,7 +328,8 @@ export async function refreshRateCategoryIfDue(
 		(await loadRateSyncConfiguration(db, "fiat"));
 	if (
 		!fiatConfiguration.enabled ||
-		!fiatConfiguration.credentials.apiKey ||
+		(fiatConfiguration.provider === "exchangerate_host" &&
+			!fiatConfiguration.credentials.apiKey) ||
 		(fiatConfiguration.lastSyncedAt !== null &&
 			now - fiatConfiguration.lastSyncedAt < fiatConfiguration.intervalMs)
 	)
@@ -349,6 +381,7 @@ export async function refreshExchangeRates(
 			: null;
 	const provider =
 		context.provider ?? cryptoConfiguration?.provider ?? "binance";
+	const fiatProvider = fiatConfiguration?.provider ?? "exchangerate_host";
 	const configured = await db
 		.prepare(
 			"SELECT id, base, quote FROM exchange_rates WHERE category = ? ORDER BY base, quote",
@@ -360,7 +393,7 @@ export async function refreshExchangeRates(
 	const allFailures: Array<{
 		id: string;
 		pair: string;
-		source: "binance" | "okx" | "exchangerate_host";
+		source: "binance" | "okx" | FiatRateProvider;
 		code: string;
 	}> = [];
 	if (category === "crypto") {
@@ -433,28 +466,42 @@ export async function refreshExchangeRates(
 		try {
 			const apiKey =
 				context.apiKey ?? fiatConfiguration?.credentials.apiKey ?? null;
-			if (!apiKey)
+			if (fiatProvider === "exchangerate_host" && !apiKey)
 				throw new Error("exchangerate_host API Key is not configured");
-			const rates = await observeProviderOperation(
+			const fetched = await observeProviderOperation(
 				{
-					adapter: "exchangerate_host",
+					adapter: fiatProvider,
 					operation: "sync_fiat_rates",
 					classifyError: classifyExchangeRateError,
 				},
-				(counters) => {
+				async (counters) => {
 					counters.request();
-					return fetchFiatRates(
-						"USD",
-						[],
-						request,
-						"https://api.exchangerate.host",
-						apiKey,
-					);
+					if (fiatProvider === "allratestoday")
+						return fetchAllRatesTodayFiatRates(request, now);
+					// exchangerate.host keeps its existing policy: the fetch
+					// time is the observation and rows live for 24h.
+					return {
+						rates: await fetchFiatRates(
+							"USD",
+							[],
+							request,
+							"https://api.exchangerate.host",
+							apiKey,
+						),
+						observedAt: now,
+						expiresAt: now + 24 * 60 * 60_000,
+					} satisfies AllRatesTodayFiatSnapshot;
 				},
 			);
-			const snapshots = Object.entries(rates)
+			const snapshots = Object.entries(fetched.rates)
 				.filter(([quote]) => /^[A-Z]{3}$/.test(quote) && quote !== "USD")
 				.map(([quote, rawRate]) => ({ quote, rawRate }));
+			// A snapshot the provider already published cannot move a row's
+			// observed_at/expires_at forward again: the upsert only wins when
+			// the incoming publication time is newer than the stored one. The
+			// same publication with a changed adjustment still recomputes
+			// rate/adjustment_bps from its (identical) raw rate, keeping the
+			// stored observation and expiry.
 			const results = await db.batch(
 				snapshots.map((snapshot) =>
 					db
@@ -462,12 +509,20 @@ export async function refreshExchangeRates(
 							`INSERT INTO exchange_rates
 							 (id, category, base, quote, raw_rate, rate, source, adjustment_bps,
 							  observed_at, expires_at, created_at, updated_at)
-							 VALUES (?, 'fiat', 'USD', ?, ?, ?, 'exchangerate_host', ?, ?, ?, ?, ?)
+							 VALUES (?, 'fiat', 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 							 ON CONFLICT(category, base, quote) DO UPDATE SET
 							 raw_rate = excluded.raw_rate, rate = excluded.rate,
 							 source = excluded.source, adjustment_bps = excluded.adjustment_bps,
-							 observed_at = excluded.observed_at, expires_at = excluded.expires_at,
-							 updated_at = excluded.updated_at`,
+							 observed_at = excluded.observed_at,
+							 expires_at = CASE
+							   WHEN excluded.observed_at > exchange_rates.observed_at
+							     OR excluded.source <> exchange_rates.source
+							   THEN excluded.expires_at ELSE exchange_rates.expires_at END,
+							 updated_at = excluded.updated_at
+							 WHERE excluded.observed_at > exchange_rates.observed_at
+							    OR excluded.source <> exchange_rates.source
+							    OR (excluded.observed_at = exchange_rates.observed_at
+							        AND excluded.adjustment_bps <> exchange_rates.adjustment_bps)`,
 						)
 						.bind(
 							`rate-usd-${snapshot.quote.toLowerCase()}`,
@@ -477,9 +532,10 @@ export async function refreshExchangeRates(
 								snapshot.rawRate,
 								fiatConfiguration?.adjustmentBps ?? 0,
 							),
+							fiatProvider,
 							fiatConfiguration?.adjustmentBps ?? 0,
-							now,
-							now + 24 * 60 * 60_000,
+							fetched.observedAt,
+							fetched.expiresAt,
 							now,
 							now,
 						),
@@ -494,7 +550,7 @@ export async function refreshExchangeRates(
 			allFailures.push({
 				id: "fiat",
 				pair: "USD/fiat",
-				source: "exchangerate_host",
+				source: fiatProvider,
 				code: exchangeRateErrorCode(error),
 			});
 		}
@@ -668,6 +724,64 @@ export async function fetchFiatRates(
 	return Object.fromEntries(
 		entries.map(([quote, rate]) => [quote.toUpperCase(), String(rate)]),
 	);
+}
+
+// Keyless ECB reference rates (about 30 currencies, published daily).
+// Currencies it does not publish keep their previous rate until it expires.
+export async function fetchAllRatesTodayFiatRates(
+	request: (input: string, init?: RequestInit) => Promise<Response> = fetch as (
+		input: string,
+		init?: RequestInit,
+	) => Promise<Response>,
+	now = Date.now(),
+): Promise<AllRatesTodayFiatSnapshot> {
+	const response = await request(
+		"https://allratestoday.com/api/open/latest/USD",
+		{
+			headers: { accept: "application/json" },
+			signal: AbortSignal.timeout(8_000),
+		},
+	);
+	if (!response.ok)
+		throw new ExchangeRateProviderError(
+			`allratestoday returned HTTP ${response.status}`,
+			response.status,
+		);
+	const payload = allRatesTodayLatestSchema.parse(await response.json());
+	const observedAt = payload.time_last_update_unix * 1000;
+	if (observedAt > now + 60 * 60_000)
+		throw new ExchangeRateProviderError(
+			"allratestoday snapshot is timestamped in the future",
+		);
+	if (now - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS)
+		throw new ExchangeRateProviderError(
+			"allratestoday snapshot is stale (older than 5 days)",
+		);
+	const announcedNext = payload.time_next_update_unix
+		? payload.time_next_update_unix * 1000
+		: observedAt + 24 * 60 * 60_000;
+	if (
+		announcedNext <= observedAt ||
+		announcedNext - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS
+	)
+		throw new ExchangeRateProviderError(
+			"allratestoday next update is not within 5 days after publication",
+		);
+	return {
+		rates: Object.fromEntries(
+			Object.entries(payload.rates).map(([quote, rate]) => [
+				quote.toUpperCase(),
+				String(rate),
+			]),
+		),
+		observedAt,
+		// Never quotable past the five-day publication-age horizon, whatever
+		// the provider announces, even if later syncs fail or are disabled.
+		expiresAt: Math.min(
+			announcedNext + ALLRATESTODAY_NEXT_UPDATE_GRACE_MS,
+			observedAt + ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS,
+		),
+	} satisfies AllRatesTodayFiatSnapshot;
 }
 
 function defaultRateSourceUrl(source: "binance" | "okx") {

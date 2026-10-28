@@ -85,7 +85,7 @@ const saveRateSyncSettingsInput = z.discriminatedUnion("category", [
 	z.object({
 		category: z.literal("fiat"),
 		enabled: z.boolean(),
-		provider: z.literal("exchangerate_host"),
+		provider: z.enum(["exchangerate_host", "allratestoday"]),
 		intervalMs: z.number().int().min(300_000).max(2_592_000_000),
 		adjustmentBps: z.number().int().min(-9_999).max(100_000),
 		apiKey: z.string().trim().max(512).optional(),
@@ -139,7 +139,8 @@ export const saveRateSyncSettingsFn = createServerFn({ method: "POST" })
 		}
 		const current = await loadRateSyncConfiguration(context.db, "fiat");
 		const apiKey = data.apiKey?.trim() || current.credentials.apiKey;
-		if (!apiKey) throw paymentSettingsError("fiat_rate_credentials_required");
+		if (data.provider === "exchangerate_host" && !apiKey)
+			throw paymentSettingsError("fiat_rate_credentials_required");
 		const configuration = {
 			...current,
 			enabled: data.enabled,
@@ -174,7 +175,7 @@ export const saveRateSyncSettingsFn = createServerFn({ method: "POST" })
 				configuration,
 				...rateSyncAuditContext(context),
 			});
-		return { saved: true, hasCredentials: true };
+		return { saved: true, hasCredentials: Boolean(apiKey) };
 	});
 
 async function auditRateSyncSettings(

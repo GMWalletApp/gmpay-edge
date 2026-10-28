@@ -142,6 +142,21 @@ export function RatesPage({ view }: { view: View }) {
 				}}
 				table={{ stickyHeader: true }}
 			/>
+			{view === "fiat" &&
+			page.data?.syncSettings?.category === "fiat" &&
+			page.data.syncSettings.provider === "allratestoday" ? (
+				// Required by the keyless feed's terms wherever its rates are shown.
+				<p className="text-muted-foreground text-xs">
+					<a
+						href="https://allratestoday.com"
+						target="_blank"
+						rel="noreferrer"
+						className="underline underline-offset-2"
+					>
+						{m.rates_attribution_allratestoday()}
+					</a>
+				</p>
+			) : null}
 			<ModalForm
 				open={Boolean(editingRate)}
 				onOpenChange={(open) => {
@@ -222,14 +237,18 @@ function RateSyncSettingsForm({
 										{ label: "Binance", value: "binance" },
 										{ label: "OKX", value: "okx" },
 									]
-								: [{ label: "exchangerate.host", value: "exchangerate_host" }],
+								: [
+										{ label: "exchangerate.host", value: "exchangerate_host" },
+										{ label: "AllRatesToday", value: "allratestoday" },
+									],
 					},
 				},
 				{
 					name: "apiKey",
 					label: m.api_key_secret(),
 					valueType: "password",
-					hidden: category !== "fiat",
+					hidden: (values) =>
+						category !== "fiat" || values.provider === "allratestoday",
 					required:
 						category === "fiat" &&
 						!(settings?.category === "fiat" && settings.hasCredentials),
@@ -293,7 +312,10 @@ function RateSyncSettingsForm({
 					await onSave({
 						category,
 						enabled,
-						provider: "exchangerate_host",
+						provider:
+							values.provider === "allratestoday"
+								? "allratestoday"
+								: "exchangerate_host",
 						intervalMs: Number(values.intervalValue ?? 86_400) * 1_000,
 						adjustmentBps: Number(values.adjustmentBps ?? 0),
 						apiKey: String(values.apiKey ?? "").trim() || undefined,

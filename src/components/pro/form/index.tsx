@@ -99,7 +99,7 @@ interface ProSchemaFormItem {
 		| "segmented";
 	required?: boolean;
 	disabled?: boolean;
-	hidden?: boolean;
+	hidden?: boolean | ((values: ProSchemaFormValues) => boolean);
 	tooltip?: ReactNode;
 	description?: ReactNode;
 	extra?: ReactNode;
@@ -503,7 +503,9 @@ function ProSchemaFields({
 	return (
 		<div className={cn("space-y-4", className)}>
 			{schema.map((item) => {
-				if (item.hidden) return null;
+				const hidden =
+					typeof item.hidden === "function" ? item.hidden(values) : item.hidden;
+				if (hidden) return null;
 
 				const field = {
 					value: values[item.name],
