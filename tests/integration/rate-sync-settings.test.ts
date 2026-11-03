@@ -60,6 +60,7 @@ describe("rate sync settings", () => {
 				provider: "exchangerate_host",
 				intervalMs: 86_400_000,
 				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
 				credentials: { apiKey: "fiat-test-key" },
 				lastSyncedAt: null,
 			},
@@ -87,6 +88,7 @@ describe("rate sync settings", () => {
 			lastSyncedAt: 1_000,
 		});
 		await expect(loadRateSyncConfiguration(db, "fiat")).resolves.toMatchObject({
+			publicationValidityMs: 86_400_000,
 			credentials: { apiKey: "fiat-test-key" },
 			lastSyncedAt: 1_000,
 		});

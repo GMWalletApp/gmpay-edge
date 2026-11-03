@@ -50,6 +50,7 @@ const save = saveRateSyncSettingsFn as unknown as (input: {
 	provider: "exchangerate_host" | "allratestoday";
 	intervalMs: number;
 	adjustmentBps: number;
+	publicationValidityMs?: number;
 	apiKey?: string;
 	runNow?: boolean;
 }) => Promise<unknown>;
@@ -119,6 +120,7 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 		const stored = await loadRateSyncConfiguration(db, "fiat");
 		expect(stored).toMatchObject({
 			provider: "allratestoday",
+			publicationValidityMs: 86_400_000,
 			credentials: { apiKey: "" },
 		});
 		const audit = await db
@@ -157,6 +159,7 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 		);
 		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
 			provider: "allratestoday",
+			publicationValidityMs: 86_400_000,
 			credentials: { apiKey: "secret-key" },
 		});
 
@@ -169,6 +172,7 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 		});
 		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
 			provider: "exchangerate_host",
+			publicationValidityMs: 86_400_000,
 			credentials: { apiKey: "secret-key" },
 		});
 		const audits = await db
@@ -203,6 +207,95 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 		});
 	});
 
+	it("defaults the AllRatesToday validity to 24h, stores a configured duration and audits it", async () => {
+		await expect(save({ ...base, provider: "allratestoday" })).resolves.toEqual(
+			{ saved: true, hasCredentials: false },
+		);
+		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
+			provider: "allratestoday",
+			publicationValidityMs: 86_400_000,
+		});
+		await expect(
+			save({
+				...base,
+				provider: "allratestoday",
+				publicationValidityMs: 72 * 3_600_000,
+			}),
+		).resolves.toEqual({ saved: true, hasCredentials: false });
+		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
+			publicationValidityMs: 72 * 3_600_000,
+		});
+		const audits = await db
+			.prepare(
+				"SELECT after FROM audit_logs WHERE action = 'rate_sync.settings_updated' ORDER BY created_at",
+			)
+			.all<{ after: string }>();
+		expect(
+			audits.results.map((row) => JSON.parse(row.after).publicationValidityMs),
+		).toEqual([86_400_000, 72 * 3_600_000]);
+	});
+
+	it("rejects an AllRatesToday validity outside 1h..7d at the server boundary and keeps the stored duration", async () => {
+		await save({
+			...base,
+			provider: "allratestoday",
+			publicationValidityMs: 48 * 3_600_000,
+		});
+		// The input schema rejects before the handler runs (synchronously in
+		// this plain-handler harness), so the refusal is awaited through a
+		// promise.
+		for (const publicationValidityMs of [
+			0,
+			3_600_000 - 1,
+			7 * 86_400_000 + 1,
+			1.5 * 3_600_000 + 0.5,
+			-86_400_000,
+		])
+			await expect(
+				Promise.resolve().then(() =>
+					save({ ...base, provider: "allratestoday", publicationValidityMs }),
+				),
+			).rejects.toThrow(/Too (small|big)|expected int/);
+		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
+			publicationValidityMs: 48 * 3_600_000,
+		});
+		// The bounds themselves are accepted.
+		await expect(
+			save({
+				...base,
+				provider: "allratestoday",
+				publicationValidityMs: 3_600_000,
+			}),
+		).resolves.toMatchObject({ saved: true });
+		await expect(
+			save({
+				...base,
+				provider: "allratestoday",
+				publicationValidityMs: 7 * 86_400_000,
+			}),
+		).resolves.toMatchObject({ saved: true });
+		// A stored out-of-range value (e.g. hand-edited) reads back as 24h.
+		await db
+			.prepare(
+				"UPDATE system_settings SET value = ? WHERE key = 'rates.fiat_sync'",
+			)
+			.bind(
+				JSON.stringify({
+					enabled: true,
+					provider: "allratestoday",
+					intervalMs: 86_400_000,
+					adjustmentBps: 0,
+					publicationValidityMs: 30 * 86_400_000,
+					credentials: { apiKey: "" },
+					lastSyncedAt: null,
+				}),
+			)
+			.run();
+		expect(await loadRateSyncConfiguration(db, "fiat")).toMatchObject({
+			publicationValidityMs: 86_400_000,
+		});
+	});
+
 	it("does not reach the provider when exchangerate.host is selected without a key, even with run now", async () => {
 		await saveRateSyncConfiguration(
 			db,
@@ -212,6 +305,7 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 				provider: "allratestoday",
 				intervalMs: 86_400_000,
 				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
 				credentials: { apiKey: "" },
 				lastSyncedAt: null,
 			},

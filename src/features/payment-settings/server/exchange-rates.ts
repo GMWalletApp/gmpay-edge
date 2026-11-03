@@ -41,22 +41,33 @@ const fiatRatesSchema = z.looseObject({
 
 // The open endpoint is asked for a USD table; anything else is rejected at
 // this boundary so a wrong-base payload can never be stored as USD quotes.
+// `time_last_update_unix` is the provider's publication time and becomes the
+// stored observation; the announced next update is not used for validity.
 const allRatesTodayLatestSchema = z.looseObject({
 	result: z.literal("success"),
 	base_code: z.literal("USD"),
 	rates: z.record(z.string(), z.number().positive()),
 	time_last_update_unix: z.number().int().positive(),
-	time_next_update_unix: z.number().int().positive().optional(),
 });
 
-// Snapshots older than this are refused rather than re-published as fresh.
-// The ECB table behind the endpoint is daily on business days, so the
-// longest legitimate gap (a long weekend) is well inside it.
-const ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS = 5 * 24 * 60 * 60_000;
-// Validity granted after the provider's announced next update, so a table
-// published on Friday stays quotable over the weekend until Monday's refresh
-// without any single snapshot being extended past its own announced horizon.
-const ALLRATESTODAY_NEXT_UPDATE_GRACE_MS = 12 * 60 * 60_000;
+// How long an AllRatesToday publication stays quotable, measured from its
+// publication time (never from the fetch time). The default is a strict 24
+// hours: the ECB table behind the feed is published once per business day,
+// so at the default the last table stops being quotable over weekends and
+// holidays until the next one is published. Administrators may configure a
+// different duration within these bounds.
+export const ALLRATESTODAY_DEFAULT_VALIDITY_MS = 24 * 60 * 60_000;
+export const ALLRATESTODAY_MIN_VALIDITY_MS = 60 * 60_000;
+export const ALLRATESTODAY_MAX_VALIDITY_MS = 7 * 24 * 60 * 60_000;
+
+export function validAllRatesTodayValidityMs(value: unknown) {
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= ALLRATESTODAY_MIN_VALIDITY_MS &&
+		value <= ALLRATESTODAY_MAX_VALIDITY_MS
+		? value
+		: ALLRATESTODAY_DEFAULT_VALIDITY_MS;
+}
 
 export type AllRatesTodayFiatSnapshot = {
 	rates: Record<string, string>;
@@ -90,6 +101,11 @@ export type FiatRateSyncConfiguration = {
 	provider: FiatRateProvider;
 	intervalMs: number;
 	adjustmentBps: number;
+	/**
+	 * AllRatesToday only: quotable duration measured from the provider's
+	 * publication time. exchangerate.host keeps its fixed fetch-time + 24h.
+	 */
+	publicationValidityMs: number;
 	credentials: { apiKey: string };
 	lastSyncedAt: number | null;
 };
@@ -121,6 +137,7 @@ export const defaultFiatRateSync: FiatRateSyncConfiguration = {
 	provider: "exchangerate_host",
 	intervalMs: 86_400_000,
 	adjustmentBps: 0,
+	publicationValidityMs: ALLRATESTODAY_DEFAULT_VALIDITY_MS,
 	credentials: { apiKey: "" },
 	lastSyncedAt: null,
 };
@@ -196,6 +213,9 @@ export function parseRateSyncConfiguration(
 					: "exchangerate_host",
 			intervalMs,
 			adjustmentBps: validAdjustmentBps(record.adjustmentBps),
+			publicationValidityMs: validAllRatesTodayValidityMs(
+				record.publicationValidityMs,
+			),
 			credentials: {
 				apiKey:
 					typeof credentials.apiKey === "string" ? credentials.apiKey : "",
@@ -248,6 +268,7 @@ export async function loadRatesPageData(
 			provider: configuration.provider,
 			intervalMs: configuration.intervalMs,
 			adjustmentBps: configuration.adjustmentBps,
+			publicationValidityMs: configuration.publicationValidityMs,
 			lastSyncedAt: configuration.lastSyncedAt,
 			hasCredentials: Boolean(configuration.credentials.apiKey),
 		},
@@ -477,7 +498,11 @@ export async function refreshExchangeRates(
 				async (counters) => {
 					counters.request();
 					if (fiatProvider === "allratestoday")
-						return fetchAllRatesTodayFiatRates(request, now);
+						return fetchAllRatesTodayFiatRates(
+							request,
+							now,
+							fiatConfiguration?.publicationValidityMs,
+						);
 					// exchangerate.host keeps its existing policy: the fetch
 					// time is the observation and rows live for 24h.
 					return {
@@ -499,9 +524,10 @@ export async function refreshExchangeRates(
 			// A snapshot the provider already published cannot move a row's
 			// observed_at/expires_at forward again: the upsert only wins when
 			// the incoming publication time is newer than the stored one. The
-			// same publication with a changed adjustment still recomputes
-			// rate/adjustment_bps from its (identical) raw rate, keeping the
-			// stored observation and expiry.
+			// same publication is rewritten only when its derived values
+			// changed (a new adjustment, or a new configured validity
+			// duration); a replay of the identical publication is a no-op
+			// because expires_at is always publication + duration.
 			const results = await db.batch(
 				snapshots.map((snapshot) =>
 					db
@@ -513,16 +539,13 @@ export async function refreshExchangeRates(
 							 ON CONFLICT(category, base, quote) DO UPDATE SET
 							 raw_rate = excluded.raw_rate, rate = excluded.rate,
 							 source = excluded.source, adjustment_bps = excluded.adjustment_bps,
-							 observed_at = excluded.observed_at,
-							 expires_at = CASE
-							   WHEN excluded.observed_at > exchange_rates.observed_at
-							     OR excluded.source <> exchange_rates.source
-							   THEN excluded.expires_at ELSE exchange_rates.expires_at END,
+							 observed_at = excluded.observed_at, expires_at = excluded.expires_at,
 							 updated_at = excluded.updated_at
 							 WHERE excluded.observed_at > exchange_rates.observed_at
 							    OR excluded.source <> exchange_rates.source
 							    OR (excluded.observed_at = exchange_rates.observed_at
-							        AND excluded.adjustment_bps <> exchange_rates.adjustment_bps)`,
+							        AND (excluded.adjustment_bps <> exchange_rates.adjustment_bps
+							             OR excluded.expires_at <> exchange_rates.expires_at))`,
 						)
 						.bind(
 							`rate-usd-${snapshot.quote.toLowerCase()}`,
@@ -726,15 +749,21 @@ export async function fetchFiatRates(
 	);
 }
 
-// Keyless ECB reference rates (about 30 currencies, published daily).
-// Currencies it does not publish keep their previous rate until it expires.
+// Keyless ECB reference rates (about 30 currencies, published once per
+// business day). Currencies it does not publish keep their previous rate
+// until it expires. The stored observation is the provider's publication
+// time; validity is `validityMs` after that publication, so re-fetching an
+// unchanged publication never extends it and a publication that has already
+// aged past the duration is refused instead of being stored as fresh.
 export async function fetchAllRatesTodayFiatRates(
 	request: (input: string, init?: RequestInit) => Promise<Response> = fetch as (
 		input: string,
 		init?: RequestInit,
 	) => Promise<Response>,
 	now = Date.now(),
+	validityMs = ALLRATESTODAY_DEFAULT_VALIDITY_MS,
 ): Promise<AllRatesTodayFiatSnapshot> {
+	const validity = validAllRatesTodayValidityMs(validityMs);
 	const response = await request(
 		"https://allratestoday.com/api/open/latest/USD",
 		{
@@ -749,23 +778,14 @@ export async function fetchAllRatesTodayFiatRates(
 		);
 	const payload = allRatesTodayLatestSchema.parse(await response.json());
 	const observedAt = payload.time_last_update_unix * 1000;
-	if (observedAt > now + 60 * 60_000)
+	if (observedAt > now)
 		throw new ExchangeRateProviderError(
-			"allratestoday snapshot is timestamped in the future",
+			"allratestoday publication is timestamped in the future",
 		);
-	if (now - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS)
+	const expiresAt = observedAt + validity;
+	if (expiresAt <= now)
 		throw new ExchangeRateProviderError(
-			"allratestoday snapshot is stale (older than 5 days)",
-		);
-	const announcedNext = payload.time_next_update_unix
-		? payload.time_next_update_unix * 1000
-		: observedAt + 24 * 60 * 60_000;
-	if (
-		announcedNext <= observedAt ||
-		announcedNext - observedAt > ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS
-	)
-		throw new ExchangeRateProviderError(
-			"allratestoday next update is not within 5 days after publication",
+			`allratestoday publication is older than the configured validity (${validity / 3_600_000}h)`,
 		);
 	return {
 		rates: Object.fromEntries(
@@ -775,12 +795,7 @@ export async function fetchAllRatesTodayFiatRates(
 			]),
 		),
 		observedAt,
-		// Never quotable past the five-day publication-age horizon, whatever
-		// the provider announces, even if later syncs fail or are disabled.
-		expiresAt: Math.min(
-			announcedNext + ALLRATESTODAY_NEXT_UPDATE_GRACE_MS,
-			observedAt + ALLRATESTODAY_MAX_SNAPSHOT_AGE_MS,
-		),
+		expiresAt,
 	} satisfies AllRatesTodayFiatSnapshot;
 }
 

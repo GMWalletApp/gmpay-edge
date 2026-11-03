@@ -145,15 +145,22 @@ export function RatesPage({ view }: { view: View }) {
 			{view === "fiat" &&
 			page.data?.syncSettings?.category === "fiat" &&
 			page.data.syncSettings.provider === "allratestoday" ? (
-				// Required by the keyless feed's terms wherever its rates are shown.
+				// Availability tradeoff of the daily feed, plus the provider's
+				// terms: commercial use is allowed; visible attribution is
+				// required only on public pages that display these rates.
 				<p className="text-muted-foreground text-xs">
+					{m.rates_allratestoday_notice({
+						hours: String(
+							page.data.syncSettings.publicationValidityMs / 3_600_000,
+						),
+					})}{" "}
 					<a
-						href="https://allratestoday.com"
+						href="https://allratestoday.com/terms/#attribution"
 						target="_blank"
 						rel="noreferrer"
 						className="underline underline-offset-2"
 					>
-						{m.rates_attribution_allratestoday()}
+						{m.rates_allratestoday_terms()}
 					</a>
 				</p>
 			) : null}
@@ -258,6 +265,21 @@ function RateSyncSettingsForm({
 							: undefined,
 				},
 				{
+					name: "publicationValidityHours",
+					label: m.rates_publication_validity(),
+					description: m.rates_publication_validity_description(),
+					hidden: (values) =>
+						category !== "fiat" || values.provider !== "allratestoday",
+					required: category === "fiat",
+					fieldProps: {
+						type: "number",
+						min: 1,
+						max: 168,
+						step: 1,
+						suffix: m.unit_hours(),
+					},
+				},
+				{
 					name: "intervalValue",
 					label: m.rates_sync_interval(),
 					required: true,
@@ -291,6 +313,10 @@ function RateSyncSettingsForm({
 					(settings?.intervalMs ??
 						(category === "crypto" ? 3_600_000 : 86_400_000)) / 1_000,
 				adjustmentBps: settings?.adjustmentBps ?? 0,
+				publicationValidityHours:
+					(settings?.category === "fiat"
+						? settings.publicationValidityMs
+						: 86_400_000) / 3_600_000,
 			}}
 			onFinish={async (values) => {
 				const runNow = runNowRef.current;
@@ -318,6 +344,8 @@ function RateSyncSettingsForm({
 								: "exchangerate_host",
 						intervalMs: Number(values.intervalValue ?? 86_400) * 1_000,
 						adjustmentBps: Number(values.adjustmentBps ?? 0),
+						publicationValidityMs:
+							Number(values.publicationValidityHours ?? 24) * 3_600_000,
 						apiKey: String(values.apiKey ?? "").trim() || undefined,
 						runNow,
 					});

@@ -4,6 +4,9 @@ import { paymentSettingsPermission } from "#/features/access/system-rbac";
 import { paymentSettingsError } from "#/features/payment-settings/errors";
 import { adminContext } from "#/features/payment-settings/server/admin-context";
 import {
+	ALLRATESTODAY_DEFAULT_VALIDITY_MS,
+	ALLRATESTODAY_MAX_VALIDITY_MS,
+	ALLRATESTODAY_MIN_VALIDITY_MS,
 	loadRateSyncConfiguration,
 	loadRatesPageData,
 	refreshExchangeRates,
@@ -88,6 +91,14 @@ const saveRateSyncSettingsInput = z.discriminatedUnion("category", [
 		provider: z.enum(["exchangerate_host", "allratestoday"]),
 		intervalMs: z.number().int().min(300_000).max(2_592_000_000),
 		adjustmentBps: z.number().int().min(-9_999).max(100_000),
+		// AllRatesToday validity measured from the provider publication time;
+		// 1h..7d, default 24h. Ignored by exchangerate.host.
+		publicationValidityMs: z
+			.number()
+			.int()
+			.min(ALLRATESTODAY_MIN_VALIDITY_MS)
+			.max(ALLRATESTODAY_MAX_VALIDITY_MS)
+			.optional(),
 		apiKey: z.string().trim().max(512).optional(),
 		runNow: z.boolean().optional(),
 	}),
@@ -147,6 +158,8 @@ export const saveRateSyncSettingsFn = createServerFn({ method: "POST" })
 			provider: data.provider,
 			intervalMs: data.intervalMs,
 			adjustmentBps: data.adjustmentBps,
+			publicationValidityMs:
+				data.publicationValidityMs ?? ALLRATESTODAY_DEFAULT_VALIDITY_MS,
 			credentials: { apiKey },
 		};
 		await saveRateSyncConfiguration(
@@ -164,6 +177,7 @@ export const saveRateSyncSettingsFn = createServerFn({ method: "POST" })
 				provider: data.provider,
 				intervalMs: data.intervalMs,
 				adjustmentBps: data.adjustmentBps,
+				publicationValidityMs: configuration.publicationValidityMs,
 				credentialsChanged: Boolean(data.apiKey?.trim()),
 			},
 			now,
@@ -186,6 +200,7 @@ async function auditRateSyncSettings(
 		provider: string;
 		intervalMs: number;
 		adjustmentBps?: number;
+		publicationValidityMs?: number;
 		credentialsChanged: boolean;
 	},
 	now: number,
