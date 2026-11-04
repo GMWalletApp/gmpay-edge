@@ -13,6 +13,7 @@ import {
 	saveRateSyncConfiguration,
 } from "#/features/payment-settings/server/exchange-rates";
 import { saveRateSyncSettingsFn } from "#/features/payment-settings/server/rate-functions";
+import { quoteUsdAmountMinor } from "#/features/payment-settings/server/rates";
 import { applyMigrations } from "./migrations";
 
 // The settings server function runs as a plain handler here (same pattern as
@@ -97,6 +98,11 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 		await db
 			.prepare(
 				"DELETE FROM audit_logs WHERE action = 'rate_sync.settings_updated'",
+			)
+			.run();
+		await db
+			.prepare(
+				"DELETE FROM exchange_rates WHERE quote IN ('EUR', 'GBP', 'JPY')",
 			)
 			.run();
 	});
@@ -316,5 +322,163 @@ describe("rate sync settings server function (fiat provider switching)", () => {
 			save({ ...base, provider: "exchangerate_host", runNow: true }),
 		).rejects.toMatchObject({ code: "fiat_rate_credentials_required" });
 		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	describe("shortening the AllRatesToday validity", () => {
+		const hour = 3_600_000;
+		const published = 1_900_000_000_000;
+		const allRatesToday = { ...base, provider: "allratestoday" as const };
+
+		function providerServes(response: () => Response) {
+			return vi
+				.spyOn(globalThis, "fetch")
+				.mockImplementation(async () => response());
+		}
+		const publication = () =>
+			Response.json({
+				result: "success",
+				base_code: "USD",
+				rates: { EUR: 0.9 },
+				time_last_update_unix: published / 1000,
+			});
+		function at(time: number) {
+			vi.spyOn(Date, "now").mockReturnValue(time);
+			return time;
+		}
+		const stored = () =>
+			db
+				.prepare(
+					"SELECT observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+				)
+				.first<{ observed_at: number; expires_at: number }>();
+		const quote = (now: number) =>
+			quoteUsdAmountMinor(db, { amount: "100", currency: "EUR", now });
+
+		// Accepted at 72h, then 30 hours old: outside a 24h validity.
+		async function storedAt72h() {
+			const fetchSpy = providerServes(publication);
+			at(published + hour);
+			await expect(
+				save({
+					...allRatesToday,
+					publicationValidityMs: 72 * hour,
+					runNow: true,
+				}),
+			).resolves.toMatchObject({ updated: 1, failed: 0 });
+			const now = at(published + 30 * hour);
+			expect(await quote(now)).not.toBeNull();
+			return { fetchSpy, now };
+		}
+		const shortened = {
+			observed_at: published,
+			expires_at: published + 24 * hour,
+		};
+
+		it("withdraws the stored publication on save, without contacting the provider", async () => {
+			const { fetchSpy, now } = await storedAt72h();
+			fetchSpy.mockClear();
+
+			await save({ ...allRatesToday, publicationValidityMs: 24 * hour });
+
+			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(await stored()).toEqual(shortened);
+			expect(await quote(now)).toBeNull();
+		});
+
+		it("withdraws it when run now gets the same, now expired, publication", async () => {
+			const { now } = await storedAt72h();
+
+			await expect(
+				save({
+					...allRatesToday,
+					publicationValidityMs: 24 * hour,
+					runNow: true,
+				}),
+			).resolves.toMatchObject({ updated: 0, failed: 1 });
+
+			expect(await stored()).toEqual(shortened);
+			expect(await quote(now)).toBeNull();
+		});
+
+		it("withdraws it when the provider fails after shortening", async () => {
+			const { fetchSpy, now } = await storedAt72h();
+			fetchSpy.mockImplementation(
+				async () => new Response("unavailable", { status: 503 }),
+			);
+
+			await expect(
+				save({
+					...allRatesToday,
+					publicationValidityMs: 24 * hour,
+					runNow: true,
+				}),
+			).resolves.toMatchObject({ updated: 0, failed: 1 });
+
+			expect(await stored()).toEqual(shortened);
+			expect(await quote(now)).toBeNull();
+		});
+
+		it("keeps a publication quotable until the exact new boundary", async () => {
+			await storedAt72h();
+			const boundary = published + 24 * hour;
+			at(boundary - 1);
+
+			await save({ ...allRatesToday, publicationValidityMs: 24 * hour });
+
+			expect(await stored()).toEqual(shortened);
+			expect(await quote(boundary - 1)).not.toBeNull();
+			expect(await quote(boundary)).toBeNull();
+		});
+
+		it("leaves a longer validity to the next sync", async () => {
+			providerServes(publication);
+			at(published + hour);
+			await save({ ...allRatesToday, runNow: true });
+			expect(await stored()).toEqual(shortened);
+
+			await save({ ...allRatesToday, publicationValidityMs: 72 * hour });
+
+			expect(await stored()).toEqual(shortened);
+		});
+
+		it("does not touch other providers, crypto or manual overrides", async () => {
+			const manualExpiry = published + 3_650 * 24 * hour;
+			const rows = [
+				["fiat", "GBP", "exchangerate_host", published + 72 * hour],
+				["crypto", "JPY", "allratestoday", published + 72 * hour],
+				["fiat", "JPY", "allratestoday", manualExpiry],
+			] as const;
+			for (const [category, quoteCurrency, source, expiresAt] of rows)
+				await db
+					.prepare(
+						`INSERT INTO exchange_rates
+						 (id, category, base, quote, raw_rate, rate, source, adjustment_bps,
+						  observed_at, expires_at, created_at, updated_at)
+						 VALUES (?, ?, 'USD', ?, '1', '1', ?, 0, ?, ?, ?, ?)`,
+					)
+					.bind(
+						`${category}-${quoteCurrency}-${source}`,
+						category,
+						quoteCurrency,
+						source,
+						published,
+						expiresAt,
+						published,
+						published,
+					)
+					.run();
+			at(published + 30 * hour);
+
+			await save({ ...allRatesToday, publicationValidityMs: 24 * hour });
+
+			const after = await db
+				.prepare(
+					"SELECT expires_at FROM exchange_rates WHERE quote IN ('GBP', 'JPY') ORDER BY category DESC, quote",
+				)
+				.all<{ expires_at: number }>();
+			expect(after.results.map((row) => row.expires_at).sort()).toEqual(
+				rows.map((row) => row[3]).sort(),
+			);
+		});
 	});
 });

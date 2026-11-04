@@ -207,6 +207,11 @@ has already aged past the configured duration, or is timestamped in the
 future, is refused with `provider_error` and leaves stored rows untouched.
 Run now on an unchanged publication reapplies a changed adjustment (or a
 changed validity duration) to its raw rate without changing `observed_at`.
+Saving a shorter duration takes effect immediately and needs no provider
+response: stored AllRatesToday rows are capped at publication time plus the
+new duration in the same write as the setting, so a publication already past
+it stops being quotable at once. `observed_at` does not change, a longer
+duration waits for the next sync, and manual overrides are not capped.
 exchangerate.host and the crypto providers keep their existing fetch-time
 validity. The provider's terms allow commercial use of the open endpoint;
 visible attribution is required only on public pages that display the rates,

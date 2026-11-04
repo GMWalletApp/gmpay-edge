@@ -282,7 +282,7 @@ export async function saveRateSyncConfiguration(
 	updatedBy: string | null,
 	now = Date.now(),
 ) {
-	await db
+	const saveSettings = db
 		.prepare(
 			`INSERT INTO system_settings
 			 (key, value, is_secret, updated_by, created_at, updated_at)
@@ -297,8 +297,36 @@ export async function saveRateSyncConfiguration(
 			updatedBy,
 			now,
 			now,
+		);
+	await db.batch(
+		"publicationValidityMs" in configuration
+			? [
+					saveSettings,
+					capAllRatesTodayExpiry(db, configuration.publicationValidityMs, now),
+				]
+			: [saveSettings],
+	);
+}
+
+// A shorter validity has to bind stored publications at once: a sync cannot
+// be relied on for this, because it refuses a publication that is already
+// past the new duration and may not reach the provider at all. Only expiry
+// moves, and only downwards, so the observation time stays the publication
+// time and a longer validity still waits for the next sync. Rows living past
+// the maximum validity are manual overrides, which keep the source of the
+// row they replaced.
+function capAllRatesTodayExpiry(
+	db: D1Database,
+	validityMs: number,
+	now: number,
+) {
+	return db
+		.prepare(
+			`UPDATE exchange_rates SET expires_at = observed_at + ?, updated_at = ?
+			 WHERE category = 'fiat' AND source = 'allratestoday' AND observed_at > 0
+			 AND expires_at > observed_at + ? AND expires_at - observed_at <= ?`,
 		)
-		.run();
+		.bind(validityMs, now, validityMs, ALLRATESTODAY_MAX_VALIDITY_MS);
 }
 
 export async function refreshDueExchangeRates(
