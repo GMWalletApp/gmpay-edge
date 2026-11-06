@@ -200,11 +200,12 @@ is not eligible for new payment quotes, which includes weekends and holidays:
 Friday's table stops being quotable on Saturday afternoon and nothing is
 quotable until Monday's publication. A longer duration restores weekend
 availability at the cost of quoting older rates; the fiat rates page states
-the active duration. Re-fetching an unchanged publication is a no-op: the
-upsert only replaces a row when the incoming publication time is newer, so
-`expires_at` never moves for the same publication, and a publication that
-has already aged past the configured duration, or is timestamped in the
-future, is refused with `provider_error` and leaves stored rows untouched.
+the active duration. Re-fetching an unchanged publication with unchanged
+settings is a no-op: with the same adjustment and duration, the upsert only
+replaces a row when the incoming publication time is newer, so `expires_at`
+does not move, and a publication that has already aged past the configured
+duration, or is timestamped in the future, is refused with `provider_error`
+and leaves stored rows untouched.
 Run now on an unchanged publication reapplies a changed adjustment (or a
 changed validity duration) to its raw rate without changing `observed_at`.
 Saving a shorter duration takes effect immediately and needs no provider
