@@ -811,7 +811,7 @@
   "rates_allratestoday_notice": "AllRatesToday는 약 30개 ECB 기준환율 통화를 영업일마다 한 번 게시합니다. 각 게시는 게시 시각부터 {hours}시간 동안만 견적에 사용할 수 있습니다. 기본값 24시간에서는 주말과 공휴일에 다음 게시까지 새 결제 견적에 환율을 사용할 수 없습니다. 상업적 사용은 허용되며, 이 환율을 표시하는 공개 페이지에서만 출처 표기가 필요합니다.",
   "rates_allratestoday_terms": "제공자 약관",
   "rates_publication_validity": "게시 유효 기간",
-  "rates_publication_validity_description": "AllRatesToday 각 게시가 게시 시각(가져온 시각이 아님)부터 견적에 사용 가능한 시간으로, 1~168시간입니다. 기본값 24시간에서는 주말과 공휴일에 사용 가능한 환율이 없습니다. 더 긴 값은 최신성을 희생하고 가용성을 얻습니다. 변경되지 않은 게시를 다시 가져와도 유효 기간은 연장되지 않습니다.",
+  "rates_publication_validity_description": "AllRatesToday 각 게시가 게시 시각(가져온 시각이 아님)부터 견적에 사용 가능한 시간으로, 1~168시간입니다. 기본값 24시간에서는 주말과 공휴일에 사용 가능한 환율이 없습니다. 더 긴 값은 최신성을 희생하고 가용성을 얻습니다.",
   "jobs_task_name": "작업",
   "jobs_schedule": "일정",
   "jobs_schedule_every": "{time}마다",

@@ -809,7 +809,7 @@
 	"rates_allratestoday_notice": "AllRatesToday publishes about 30 ECB reference-rate currencies once per business day. Each publication is quotable for {hours} hours from its publication time; at the 24-hour default, rates are unavailable for new payment quotes over weekends and holidays until the next publication. Commercial use is allowed; visible attribution is required only on public pages that display these rates.",
 	"rates_allratestoday_terms": "Provider terms",
 	"rates_publication_validity": "Publication validity",
-	"rates_publication_validity_description": "How long an AllRatesToday publication stays quotable, counted from its publication time (not the fetch time), 1 to 168 hours. The default 24 hours leaves no quotable rate over weekends and holidays; a longer value trades freshness for availability. Re-fetching an unchanged publication never extends it.",
+	"rates_publication_validity_description": "How long an AllRatesToday publication stays quotable, counted from its publication time (not the fetch time), 1 to 168 hours. The default 24 hours leaves no quotable rate over weekends and holidays; a longer value trades freshness for availability.",
 	"jobs_task_name": "Task",
 	"jobs_schedule": "Schedule",
 	"jobs_schedule_every": "Every {time}",
