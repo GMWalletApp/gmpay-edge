@@ -9,10 +9,12 @@ import {
 	vi,
 } from "vitest";
 import {
+	fetchAllRatesTodayFiatRates,
 	fetchCryptoRateQuotes,
 	fetchExchangeRateQuote,
 	fetchFiatRates,
 	refreshExchangeRates,
+	refreshRateCategoryIfDue,
 	saveRateSyncConfiguration,
 } from "#/features/payment-settings/server/exchange-rates";
 import { applyMigrations } from "./migrations";
@@ -391,6 +393,7 @@ describe("exchange-rate refresh", () => {
 				provider: "exchangerate_host",
 				intervalMs: 86_400_000,
 				adjustmentBps: 125,
+				publicationValidityMs: 86_400_000,
 				credentials: { apiKey: "secret" },
 				lastSyncedAt: now,
 			},
@@ -420,6 +423,615 @@ describe("exchange-rate refresh", () => {
 				requestCount: 1,
 			}),
 		);
+	});
+
+	it("refreshes fiat rates from the keyless AllRatesToday source", async () => {
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const now = 1_800_002_000_000;
+		// Published one hour before the sync; next table announced for +24h.
+		const publishedUnix = Math.floor(now / 1000) - 3_600;
+		const request = vi.fn((_url: string, _init?: RequestInit) =>
+			Promise.resolve(
+				Response.json({
+					result: "success",
+					base_code: "USD",
+					time_last_update_unix: publishedUnix,
+					time_next_update_unix: publishedUnix + 86_400,
+					rates: { USD: 1, CNY: 7.1, EUR: 0.86 },
+				}),
+			),
+		);
+		await expect(
+			refreshExchangeRates(db, request, now, {
+				category: "fiat",
+				configuration: {
+					enabled: true,
+					provider: "allratestoday",
+					intervalMs: 86_400_000,
+					adjustmentBps: 0,
+					publicationValidityMs: 86_400_000,
+					credentials: { apiKey: "" },
+					lastSyncedAt: null,
+				},
+			}),
+		).resolves.toMatchObject({ configured: 2, updated: 2, failed: 0 });
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(request.mock.calls[0]?.[0]).toBe(
+			"https://allratestoday.com/api/open/latest/USD",
+		);
+		const rows = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' AND quote IN ('CNY', 'EUR', 'JPY') ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		expect(rows.results).toEqual([
+			{ quote: "CNY", raw_rate: "7.1", source: "allratestoday" },
+			{ quote: "EUR", raw_rate: "0.86", source: "allratestoday" },
+			{ quote: "JPY", raw_rate: "155.2", source: "exchangerate_host" },
+		]);
+		// observed_at is the provider's publication time, not the fetch time,
+		// and validity is the default 24h from that publication (the announced
+		// next update plays no part).
+		const timing = await db
+			.prepare(
+				"SELECT observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+			)
+			.first<{ observed_at: number; expires_at: number }>();
+		expect(timing).toEqual({
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000,
+		});
+		await expect(
+			fetchAllRatesTodayFiatRates(() =>
+				Promise.resolve(
+					Response.json(
+						{ result: "error", "error-type": "unsupported-code" },
+						{ status: 400 },
+					),
+				),
+			),
+		).rejects.toThrow("HTTP 400");
+	});
+
+	it("refuses AllRatesToday payloads with a wrong or missing base and leaves stored USD rows untouched", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const now = 1_800_002_500_000;
+		const publishedUnix = Math.floor(now / 1000) - 600;
+		const before = await db
+			.prepare(
+				"SELECT quote, raw_rate, source, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all();
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		const payloads = [
+			// EUR table served where a USD one was requested
+			{
+				result: "success",
+				base_code: "EUR",
+				time_last_update_unix: publishedUnix,
+				rates: { USD: 1.16, CNY: 8.3 },
+			},
+			// base omitted entirely
+			{
+				result: "success",
+				time_last_update_unix: publishedUnix,
+				rates: { USD: 1, CNY: 7.1 },
+			},
+			// publication time missing
+			{ result: "success", base_code: "USD", rates: { USD: 1, CNY: 7.1 } },
+		];
+		for (const payload of payloads) {
+			await expect(
+				refreshExchangeRates(
+					db,
+					() => Promise.resolve(Response.json(payload)),
+					now,
+					configuration,
+				),
+			).resolves.toMatchObject({
+				updated: 0,
+				failed: 1,
+				// Schema rejections are classified as invalid_response.
+				failures: [{ source: "allratestoday", code: "invalid_response" }],
+			});
+		}
+		const after = await db
+			.prepare(
+				"SELECT quote, raw_rate, source, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all();
+		expect(after.results).toEqual(before.results);
+	});
+
+	it("does not renew validity when AllRatesToday keeps serving the same snapshot, and refuses one past its validity", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		const firstSync = 1_800_010_000_000;
+		const publishedUnix = Math.floor(firstSync / 1000) - 3_600;
+		const snapshot = {
+			result: "success",
+			base_code: "USD",
+			time_last_update_unix: publishedUnix,
+			time_next_update_unix: publishedUnix + 86_400,
+			rates: { USD: 1, EUR: 0.87 },
+		};
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				firstSync,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		const read = () =>
+			db
+				.prepare(
+					"SELECT raw_rate, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+				)
+				.first<{ raw_rate: string; observed_at: number; expires_at: number }>();
+		const stored = await read();
+		expect(stored).toEqual({
+			raw_rate: "0.87",
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000,
+		});
+		// Twelve hours later the provider still serves the identical
+		// publication: nothing is rewritten and expires_at does not move.
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				firstSync + 12 * 3_600_000,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 0, failed: 0 });
+		expect(await read()).toEqual(stored);
+		// Two days later the same publication is past its 24h validity: it is
+		// refused rather than re-published, and the stored row (now expired,
+		// so not quotable) is left alone.
+		const secondSync = firstSync + 2 * 86_400_000;
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				secondSync,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "provider_error" }],
+		});
+		expect(await read()).toEqual(stored);
+		// A genuinely newer publication replaces it.
+		const newerUnix = publishedUnix + 2 * 86_400 - 1_800;
+		await expect(
+			refreshExchangeRates(
+				db,
+				() =>
+					Promise.resolve(
+						Response.json({
+							...snapshot,
+							time_last_update_unix: newerUnix,
+							time_next_update_unix: newerUnix + 86_400,
+							rates: { USD: 1, EUR: 0.88 },
+						}),
+					),
+				secondSync,
+				configuration,
+			),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		expect(await read()).toEqual({
+			raw_rate: "0.88",
+			observed_at: newerUnix * 1000,
+			expires_at: (newerUnix + 86_400) * 1000,
+		});
+	});
+
+	it("measures AllRatesToday validity from the publication time: default, configured duration and the exact expiry boundary", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		// Friday 2027-02-05 15:00 UTC publication (later than anything the
+		// previous cases stored, so the sync below replaces their rows).
+		const fridayUnix = Date.UTC(2027, 1, 5, 15) / 1000;
+		const published = fridayUnix * 1000;
+		const payload = {
+			result: "success",
+			base_code: "USD",
+			time_last_update_unix: fridayUnix,
+			// Announced next update is ignored for validity.
+			time_next_update_unix: fridayUnix + 3 * 86_400,
+			rates: { USD: 1, EUR: 0.87 },
+		};
+		const fetchAt = (now: number, validityMs?: number) =>
+			fetchAllRatesTodayFiatRates(
+				() => Promise.resolve(Response.json(payload)),
+				now,
+				validityMs,
+			);
+		// Default: strictly 24h from publication, so the Friday table is not
+		// quotable over the weekend.
+		await expect(fetchAt(published + 3_600_000)).resolves.toMatchObject({
+			observedAt: published,
+			expiresAt: published + 86_400_000,
+		});
+		// Exact boundary: one millisecond before expiry the publication is
+		// still accepted (and expires at that same instant); at expiry it is
+		// refused.
+		await expect(fetchAt(published + 86_400_000 - 1)).resolves.toMatchObject({
+			expiresAt: published + 86_400_000,
+		});
+		await expect(fetchAt(published + 86_400_000)).rejects.toThrow(
+			/older than the configured validity \(24h\)/,
+		);
+		// A configured 72h duration keeps the same publication quotable over
+		// the weekend; the boundary moves with it.
+		const seventyTwoHours = 72 * 3_600_000;
+		await expect(
+			fetchAt(published + 2 * 86_400_000, seventyTwoHours),
+		).resolves.toMatchObject({
+			observedAt: published,
+			expiresAt: published + seventyTwoHours,
+		});
+		await expect(
+			fetchAt(published + seventyTwoHours, seventyTwoHours),
+		).rejects.toThrow(/older than the configured validity \(72h\)/);
+		// Out-of-range durations fall back to the 24h default.
+		await expect(fetchAt(published + 3_600_000, 0)).resolves.toMatchObject({
+			expiresAt: published + 86_400_000,
+		});
+		await expect(
+			fetchAt(published + 3_600_000, 365 * 86_400_000),
+		).resolves.toMatchObject({ expiresAt: published + 86_400_000 });
+		// The quoting side treats expires_at as exclusive, so a row stored
+		// with the default duration is quotable up to, not at, expiry.
+		const quotable = (at: number) =>
+			db
+				.prepare(
+					"SELECT COUNT(*) AS n FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR' AND (observed_at = 0 OR expires_at > ?)",
+				)
+				.bind(at)
+				.first<{ n: number }>();
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(payload)),
+				published + 3_600_000,
+				{
+					category: "fiat" as const,
+					configuration: {
+						enabled: true,
+						provider: "allratestoday" as const,
+						intervalMs: 86_400_000,
+						adjustmentBps: 0,
+						publicationValidityMs: 86_400_000,
+						credentials: { apiKey: "" },
+						lastSyncedAt: null,
+					},
+				},
+			),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		expect(await quotable(published + 86_400_000 - 1)).toEqual({ n: 1 });
+		expect(await quotable(published + 86_400_000)).toEqual({ n: 0 });
+	});
+
+	it("rewrites expiry of an unchanged AllRatesToday publication only when the configured duration changes", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const configuration = (publicationValidityMs: number) => ({
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				publicationValidityMs,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		});
+		const firstSync = 1_802_000_000_000;
+		const publishedUnix = Math.floor(firstSync / 1000) - 3_600;
+		const sync = (at: number, validityMs: number) =>
+			refreshExchangeRates(
+				db,
+				() =>
+					Promise.resolve(
+						Response.json({
+							result: "success",
+							base_code: "USD",
+							time_last_update_unix: publishedUnix,
+							rates: { USD: 1, EUR: 0.81 },
+						}),
+					),
+				at,
+				configuration(validityMs),
+			);
+		const read = () =>
+			db
+				.prepare(
+					"SELECT observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+				)
+				.first<{ observed_at: number; expires_at: number }>();
+		await expect(sync(firstSync, 86_400_000)).resolves.toMatchObject({
+			updated: 1,
+		});
+		expect(await read()).toEqual({
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000,
+		});
+		// The administrator extends validity to 72h and runs now: the same
+		// publication keeps its observed_at and gets the new expiry.
+		await expect(
+			sync(firstSync + 3_600_000, 72 * 3_600_000),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		expect(await read()).toEqual({
+			observed_at: publishedUnix * 1000,
+			expires_at: publishedUnix * 1000 + 72 * 3_600_000,
+		});
+		// Replaying with the same duration is a no-op.
+		await expect(
+			sync(firstSync + 7_200_000, 72 * 3_600_000),
+		).resolves.toMatchObject({ updated: 0, failed: 0 });
+		// Shortening back to 24h applies too; the publication is only 3h old
+		// here, so it is still accepted and simply expires sooner.
+		await expect(
+			sync(firstSync + 7_200_000, 86_400_000),
+		).resolves.toMatchObject({ updated: 1, failed: 0 });
+		expect(await read()).toEqual({
+			observed_at: publishedUnix * 1000,
+			expires_at: (publishedUnix + 86_400) * 1000,
+		});
+	});
+
+	it("refuses AllRatesToday publications with malformed or future timestamps and leaves stored rows untouched", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const now = 1_803_000_000_000;
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		const storedRows = () =>
+			db
+				.prepare(
+					"SELECT quote, raw_rate, source, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+				)
+				.all();
+		const before = await storedRows();
+		const withTimestamp = (time_last_update_unix: unknown) => ({
+			result: "success",
+			base_code: "USD",
+			time_last_update_unix,
+			rates: { USD: 1, EUR: 0.87 },
+		});
+		// Malformed: wrong type, non-integer, zero, negative, missing.
+		for (const payload of [
+			withTimestamp("1803000000"),
+			withTimestamp(1_802_999_000.5),
+			withTimestamp(0),
+			withTimestamp(-1),
+			withTimestamp(undefined),
+			withTimestamp(null),
+		])
+			await expect(
+				refreshExchangeRates(
+					db,
+					() => Promise.resolve(Response.json(payload)),
+					now,
+					configuration,
+				),
+			).resolves.toMatchObject({
+				updated: 0,
+				failed: 1,
+				failures: [{ source: "allratestoday", code: "invalid_response" }],
+			});
+		// Future: even one second ahead of the sync clock is refused.
+		await expect(
+			fetchAllRatesTodayFiatRates(
+				() =>
+					Promise.resolve(
+						Response.json(withTimestamp(Math.floor(now / 1000) + 1)),
+					),
+				now,
+			),
+		).rejects.toThrow(/future/);
+		for (const ahead of [1, 3_600, 365 * 86_400])
+			await expect(
+				refreshExchangeRates(
+					db,
+					() =>
+						Promise.resolve(
+							Response.json(withTimestamp(Math.floor(now / 1000) + ahead)),
+						),
+					now,
+					configuration,
+				),
+			).resolves.toMatchObject({
+				updated: 0,
+				failed: 1,
+				failures: [{ source: "allratestoday", code: "provider_error" }],
+			});
+		expect((await storedRows()).results).toEqual(before.results);
+	});
+
+	it("reapplies a changed adjustment to an unchanged AllRatesToday snapshot without renewing it", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const configuration = (adjustmentBps: number) => ({
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps,
+				publicationValidityMs: 86_400_000,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		});
+		// Later than the publications stored by the previous cases.
+		const firstSync = 1_803_000_000_000;
+		const publishedUnix = Math.floor(firstSync / 1000) - 3_600;
+		const snapshot = {
+			result: "success",
+			base_code: "USD",
+			time_last_update_unix: publishedUnix,
+			time_next_update_unix: publishedUnix + 86_400,
+			rates: { USD: 1, EUR: 0.8 },
+		};
+		const sync = (at: number, bps: number) =>
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(Response.json(snapshot)),
+				at,
+				configuration(bps),
+			);
+		const read = () =>
+			db
+				.prepare(
+					"SELECT raw_rate, rate, adjustment_bps, observed_at, expires_at FROM exchange_rates WHERE category = 'fiat' AND quote = 'EUR'",
+				)
+				.first<{
+					raw_rate: string;
+					rate: string;
+					adjustment_bps: number;
+					observed_at: number;
+					expires_at: number;
+				}>();
+		await expect(sync(firstSync, 0)).resolves.toMatchObject({ updated: 1 });
+		const before = await read();
+		await expect(sync(firstSync + 3_600_000, 100)).resolves.toMatchObject({
+			updated: 1,
+			failed: 0,
+		});
+		const after = await read();
+		expect(after).toMatchObject({
+			raw_rate: "0.8",
+			adjustment_bps: 100,
+			observed_at: before?.observed_at,
+			expires_at: before?.expires_at,
+		});
+		expect(Number(after?.rate)).not.toBe(Number(before?.rate));
+		// Same snapshot, same adjustment: nothing to rewrite.
+		await expect(sync(firstSync + 7_200_000, 100)).resolves.toMatchObject({
+			updated: 0,
+		});
+		expect(await read()).toEqual(after);
+	});
+
+	it("keeps prior fiat rows and reports a structured failure when AllRatesToday is rate limited or down", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const before = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		const configuration = {
+			category: "fiat" as const,
+			configuration: {
+				enabled: true,
+				provider: "allratestoday" as const,
+				intervalMs: 86_400_000,
+				adjustmentBps: 0,
+				publicationValidityMs: 86_400_000,
+				credentials: { apiKey: "" },
+				lastSyncedAt: null,
+			},
+		};
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.resolve(new Response("slow down", { status: 429 })),
+				1_800_003_000_000,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "http_429" }],
+		});
+		await expect(
+			refreshExchangeRates(
+				db,
+				() => Promise.reject(new Error("socket hang up")),
+				1_800_003_000_001,
+				configuration,
+			),
+		).resolves.toMatchObject({
+			updated: 0,
+			failed: 1,
+			failures: [{ source: "allratestoday", code: "provider_error" }],
+		});
+		const after = await db
+			.prepare(
+				"SELECT quote, raw_rate, source FROM exchange_rates WHERE category = 'fiat' ORDER BY quote",
+			)
+			.all<{ quote: string; raw_rate: string; source: string }>();
+		expect(after.results).toEqual(before.results);
+	});
+
+	it("runs the keyless provider on schedule without an API key but still gates exchangerate.host on one", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const request = vi.fn(() =>
+			Promise.resolve(
+				Response.json({
+					result: "success",
+					base_code: "USD",
+					time_last_update_unix: 1_800_004_000 - 3_600,
+					rates: { USD: 1, EUR: 0.86 },
+				}),
+			),
+		);
+		const base = {
+			enabled: true,
+			intervalMs: 86_400_000,
+			adjustmentBps: 0,
+			publicationValidityMs: 86_400_000,
+			credentials: { apiKey: "" },
+			lastSyncedAt: null,
+		};
+		await expect(
+			refreshRateCategoryIfDue(db, "fiat", request, 1_800_004_000_000, {
+				...base,
+				provider: "exchangerate_host",
+			}),
+		).resolves.toBeNull();
+		expect(request).not.toHaveBeenCalled();
+		await expect(
+			refreshRateCategoryIfDue(db, "fiat", request, 1_800_004_000_000, {
+				...base,
+				provider: "allratestoday",
+			}),
+		).resolves.toMatchObject({ failed: 0 });
+		expect(request).toHaveBeenCalledTimes(1);
 	});
 
 	it("surfaces exchangerate.host API errors without exposing credentials", async () => {

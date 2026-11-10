@@ -183,9 +183,41 @@ update. Catalog defaults seeded with `observed_at = 0` remain quotable until
 the first synchronization replaces them.
 
 Each rate page has its own sync settings. Crypto settings select Binance or OKX
-and an automatic interval. Fiat settings select a provider (currently
-`exchangerate.host`), its API Key, an automatic interval, and an adjustment in
-basis points. Each category has an independent automatic-sync switch. The
+and an automatic interval. Fiat settings select a provider
+(`exchangerate.host` with its API Key, or the keyless AllRatesToday ECB
+reference-rate feed), an automatic interval, and an adjustment in basis points.
+AllRatesToday serves the European Central Bank reference rates (about 30
+currencies) and publishes once per ECB business day; fiat rows it does not
+cover keep their last rate until it expires. Its payload must declare
+`base_code: "USD"` and a publication time (`time_last_update_unix`):
+`observed_at` is that publication time, never the fetch time, and
+`expires_at` is the publication time plus the administrator-configured
+**Publication validity**. The default is a strict 24 hours (supported range
+1 to 168 hours, enforced by the settings server function); values outside
+the range are rejected, and a stored value outside it falls back to 24 hours.
+Because the feed is daily, at the default a publication older than 24 hours
+is not eligible for new payment quotes, which includes weekends and holidays:
+Friday's table stops being quotable on Saturday afternoon and nothing is
+quotable until Monday's publication. A longer duration restores weekend
+availability at the cost of quoting older rates; the fiat rates page states
+the active duration. Re-fetching an unchanged publication with unchanged
+settings is a no-op: with the same adjustment and duration, the upsert only
+replaces a row when the incoming publication time is newer, so `expires_at`
+does not move, and a publication that has already aged past the configured
+duration, or is timestamped in the future, is refused with `provider_error`
+and leaves stored rows untouched.
+Run now on an unchanged publication reapplies a changed adjustment (or a
+changed validity duration) to its raw rate without changing `observed_at`.
+Saving a shorter duration takes effect immediately and needs no provider
+response: stored AllRatesToday rows are capped at publication time plus the
+new duration in the same write as the setting, so a publication already past
+it stops being quotable at once. `observed_at` does not change, a longer
+duration waits for the next sync, and manual overrides are not capped.
+exchangerate.host and the crypto providers keep their existing fetch-time
+validity. The provider's terms allow commercial use of the open endpoint;
+visible attribution is required only on public pages that display the rates,
+not for back-end processing such as this sync
+(https://allratestoday.com/terms/#attribution). Each category has an independent automatic-sync switch. The
 one-minute Cron skips disabled categories and otherwise executes only when the
 saved interval is due. **Run now** first saves the current settings and then
 bypasses both the automatic-sync switch and due-time check.

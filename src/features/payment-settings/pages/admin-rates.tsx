@@ -142,6 +142,28 @@ export function RatesPage({ view }: { view: View }) {
 				}}
 				table={{ stickyHeader: true }}
 			/>
+			{view === "fiat" &&
+			page.data?.syncSettings?.category === "fiat" &&
+			page.data.syncSettings.provider === "allratestoday" ? (
+				// Availability tradeoff of the daily feed, plus the provider's
+				// terms: commercial use is allowed; visible attribution is
+				// required only on public pages that display these rates.
+				<p className="text-muted-foreground text-xs">
+					{m.rates_allratestoday_notice({
+						hours: String(
+							page.data.syncSettings.publicationValidityMs / 3_600_000,
+						),
+					})}{" "}
+					<a
+						href="https://allratestoday.com/terms/#attribution"
+						target="_blank"
+						rel="noreferrer"
+						className="underline underline-offset-2"
+					>
+						{m.rates_allratestoday_terms()}
+					</a>
+				</p>
+			) : null}
 			<ModalForm
 				open={Boolean(editingRate)}
 				onOpenChange={(open) => {
@@ -222,14 +244,18 @@ function RateSyncSettingsForm({
 										{ label: "Binance", value: "binance" },
 										{ label: "OKX", value: "okx" },
 									]
-								: [{ label: "exchangerate.host", value: "exchangerate_host" }],
+								: [
+										{ label: "exchangerate.host", value: "exchangerate_host" },
+										{ label: "AllRatesToday", value: "allratestoday" },
+									],
 					},
 				},
 				{
 					name: "apiKey",
 					label: m.api_key_secret(),
 					valueType: "password",
-					hidden: category !== "fiat",
+					hidden: (values) =>
+						category !== "fiat" || values.provider === "allratestoday",
 					required:
 						category === "fiat" &&
 						!(settings?.category === "fiat" && settings.hasCredentials),
@@ -237,6 +263,21 @@ function RateSyncSettingsForm({
 						settings?.category === "fiat" && settings.hasCredentials
 							? m.settings_secret_configured()
 							: undefined,
+				},
+				{
+					name: "publicationValidityHours",
+					label: m.rates_publication_validity(),
+					description: m.rates_publication_validity_description(),
+					hidden: (values) =>
+						category !== "fiat" || values.provider !== "allratestoday",
+					required: category === "fiat",
+					fieldProps: {
+						type: "number",
+						min: 1,
+						max: 168,
+						step: 1,
+						suffix: m.unit_hours(),
+					},
 				},
 				{
 					name: "intervalValue",
@@ -272,6 +313,10 @@ function RateSyncSettingsForm({
 					(settings?.intervalMs ??
 						(category === "crypto" ? 3_600_000 : 86_400_000)) / 1_000,
 				adjustmentBps: settings?.adjustmentBps ?? 0,
+				publicationValidityHours:
+					(settings?.category === "fiat"
+						? settings.publicationValidityMs
+						: 86_400_000) / 3_600_000,
 			}}
 			onFinish={async (values) => {
 				const runNow = runNowRef.current;
@@ -293,9 +338,14 @@ function RateSyncSettingsForm({
 					await onSave({
 						category,
 						enabled,
-						provider: "exchangerate_host",
+						provider:
+							values.provider === "allratestoday"
+								? "allratestoday"
+								: "exchangerate_host",
 						intervalMs: Number(values.intervalValue ?? 86_400) * 1_000,
 						adjustmentBps: Number(values.adjustmentBps ?? 0),
+						publicationValidityMs:
+							Number(values.publicationValidityHours ?? 24) * 3_600_000,
 						apiKey: String(values.apiKey ?? "").trim() || undefined,
 						runNow,
 					});
