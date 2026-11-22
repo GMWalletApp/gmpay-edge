@@ -2,7 +2,7 @@
   "name": "gmpay-edge",
   "version": "1.2.0",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "cloudflare": {
     "label": "GMPay Edge",
